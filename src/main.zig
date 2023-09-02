@@ -15,10 +15,32 @@ pub fn main() !void {
     var gm = try GuestMemory.new(128 << 20);
     const kernel_load_address = try gm.load_linux_kernel("vmlinux-5.10.186");
     std.log.info("kernel_load_address: {}", .{kernel_load_address});
+
+    // create kvm objects
+    const kvm = try Kvm.new();
+
+    const version = try kvm.version();
+    std.log.info("kvm version: {}", .{version});
+
+    const vm = try Vm.new(&kvm);
+    try vm.set_memory(&gm);
 }
 
 const Error = error{
-    GuestMemoryLoadKernel,
+    KvmVersion,
+    VmNew,
+    VmSetMemory,
+    VmGetPreferredTarget,
+    GuestMemory,
+    VcpuNew,
+    VcpuInit,
+};
+
+const GuestMemoryAddress = struct {};
+
+const GuestMemoryRegion = struct {
+    guest_address: u64,
+    size: u64,
 };
 
 const GuestMemory = struct {
@@ -80,7 +102,7 @@ const GuestMemory = struct {
         // Validate that kernel_offset is 2 MB aligned, as required by the
         // arm64 boot protocol
         if (kernel_offset % 0x0020_0000 != 0) {
-            return Error.GuestMemoryLoadKernel;
+            return Error.GuestMemory;
         }
 
         const mem_offset = kernel_offset + text_offset;
@@ -95,6 +117,61 @@ const GuestMemory = struct {
         _ = try file.read(self.mem[0..kernel_size]);
 
         return mem_offset;
+    }
+};
+
+const Kvm = struct {
+    file: std.fs.File,
+
+    const Self = @This();
+
+    fn new() !Self {
+        return .{ .file = try std.fs.openFileAbsolute("/dev/kvm", .{}) };
+    }
+
+    fn version(self: *const Self) Error!i32 {
+        const v = ioctl(self.file.handle, KVM.KVM_GET_API_VERSION, @as(usize, 0));
+        if (v < 0) {
+            return Error.KvmVersion;
+        } else {
+            return v;
+        }
+    }
+
+    fn fd(self: *const Self) std.os.fd_t {
+        return self.file.handle;
+    }
+};
+
+const Vm = struct {
+    fd: std.os.fd_t,
+
+    const Self = @This();
+
+    fn new(kvm: *const Kvm) Error!Self {
+        const fd = ioctl(kvm.*.file.handle, KVM.KVM_CREATE_VM, @as(usize, 0));
+        if (fd < 0) {
+            return Error.VmNew;
+        } else {
+            return Vm{
+                .fd = fd,
+            };
+        }
+    }
+
+    fn set_memory(self: *const Self, guest_memory: *GuestMemory) !void {
+        const memory_region: KVM.kvm_userspace_memory_region = .{
+            .slot = 0,
+            .flags = 0,
+            .guest_phys_addr = guest_memory.guest_addr,
+            .memory_size = @as(u64, guest_memory.mem.len),
+            .userspace_addr = @intFromPtr(guest_memory.mem.ptr),
+        };
+
+        const r = ioctl(self.fd, KVM.KVM_SET_USER_MEMORY_REGION, @intFromPtr(&memory_region));
+        if (r < 0) {
+            return Error.VmSetMemory;
+        }
     }
 };
 
