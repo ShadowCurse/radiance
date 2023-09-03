@@ -24,6 +24,10 @@ pub fn main() !void {
 
     const vm = try Vm.new(&kvm);
     try vm.set_memory(&gm);
+
+    const vcpu = try Vcpu.new(&vm, 0);
+    const kvi = try vm.get_preferred_target();
+    try vcpu.init(kvi);
 }
 
 const Error = error{
@@ -171,6 +175,45 @@ const Vm = struct {
         const r = ioctl(self.fd, KVM.KVM_SET_USER_MEMORY_REGION, @intFromPtr(&memory_region));
         if (r < 0) {
             return Error.VmSetMemory;
+        }
+    }
+
+    fn get_preferred_target(self: *const Self) !Vcpu.kvm_vcpu_init {
+        var kvi: Vcpu.kvm_vcpu_init = undefined;
+        const r = ioctl(self.fd, KVM.KVM_ARM_PREFERRED_TARGET, @intFromPtr(&kvi));
+        if (r < 0) {
+            return Error.VmGetPreferredTarget;
+        }
+        return kvi;
+    }
+};
+
+const Vcpu = struct {
+    fd: std.os.fd_t,
+
+    const Self = @This();
+
+    const kvm_vcpu_init = struct {
+        target: u32,
+        features: [7]u32,
+    };
+
+    fn new(vm: *const Vm, index: u64) !Self {
+        const fd = ioctl(vm.fd, KVM.KVM_CREATE_VCPU, index);
+        if (fd < 0) {
+            return Error.VcpuNew;
+        }
+        return Self{
+            .fd = fd,
+        };
+    }
+
+    fn init(self: *const Self, preferred_target: Self.kvm_vcpu_init) !void {
+        var kvi = preferred_target;
+        kvi.features[0] |= 1 << KVM.KVM_ARM_VCPU_PSCI_0_2;
+        const r = ioctl(self.fd, KVM.KVM_ARM_VCPU_INIT, @intFromPtr(&kvi));
+        if (r < 0) {
+            return Error.VcpuInit;
         }
     }
 };
