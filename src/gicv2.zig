@@ -18,11 +18,17 @@ pub const Gicv2Error = error{
 pub const GICv2 = struct {
     fd: std.os.fd_t,
 
-    const VERSION = 5;
-    const KVM_VGIC_V2_DIST_SIZE: u64 = 0x1000;
-    const KVM_VGIC_V2_CPU_SIZE: u64 = 0x2000;
+    pub const VERSION = 5;
     // Device trees specific constants
-    const ARCH_GIC_V2_MAINT_IRQ: u32 = 8;
+    pub const ARCH_GIC_V2_MAINT_IRQ: u32 = 8;
+
+    pub const DISTRIBUTOR_ADDRESS: u64 = MemoryLayout.MAPPED_IO_START - Self.KVM_VGIC_V2_DIST_SIZE;
+    pub const KVM_VGIC_V2_DIST_SIZE: u64 = 0x1000;
+
+    pub const CPU_ADDRESS: u64 = DISTRIBUTOR_ADDRESS - Self.KVM_VGIC_V2_CPU_SIZE;
+    pub const KVM_VGIC_V2_CPU_SIZE: u64 = 0x2000;
+
+    pub const FDT_COMPATIBILITY: [:0]const u8 = "arm,gic-400";
 
     const Self = @This();
 
@@ -41,7 +47,7 @@ pub const GICv2 = struct {
 
         // Setting up the distributor attribute.
         // We are placing the GIC below 1GB so we need to substract the size of the distributor.
-        const dist_addr = MemoryLayout.MAPPED_IO_START - Self.KVM_VGIC_V2_DIST_SIZE;
+        const dist_addr = Self.DISTRIBUTOR_ADDRESS;
         std.log.info("gic addr dist_addr: {}", .{dist_addr});
         try Self.set_attributes(
             fd,
@@ -52,7 +58,7 @@ pub const GICv2 = struct {
         );
 
         // Setting up the CPU attribute.
-        const cpu_addr = dist_addr - Self.KVM_VGIC_V2_CPU_SIZE;
+        const cpu_addr = Self.CPU_ADDRESS;
         std.log.info("gic addr cpu_addr: {}", .{cpu_addr});
         try Self.set_attributes(
             fd,
