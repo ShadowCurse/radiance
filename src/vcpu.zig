@@ -3,6 +3,7 @@ const linux = std.os.linux;
 
 const KVM = @cImport(@cInclude("linux/kvm.h"));
 
+const Kvm = @import("kvm.zig").Kvm;
 const Vm = @import("vm.zig").Vm;
 
 // ioctl in std uses c_int as a request type which is incorrect.
@@ -12,10 +13,12 @@ const VcpuError = error{
     New,
     Init,
     SetReg,
+    Run,
 };
 
 pub const Vcpu = struct {
     fd: std.os.fd_t,
+    kvm_run: *KVM.kvm_run,
 
     const Self = @This();
 
@@ -24,13 +27,21 @@ pub const Vcpu = struct {
         features: [7]u32,
     };
 
-    pub fn new(vm: *const Vm, index: u64) !Self {
+    pub fn new(kvm: *const Kvm, vm: *const Vm, index: u64) !Self {
         const fd = ioctl(vm.fd, KVM.KVM_CREATE_VCPU, index);
         if (fd < 0) {
             return VcpuError.New;
         }
+        const vcpu_mmap_size = ioctl(kvm.file.handle, KVM.KVM_GET_VCPU_MMAP_SIZE, @as(u32, 0));
+        if (vcpu_mmap_size <= 0) {
+            return VcpuError.New;
+        }
+
+        const size: usize = @intCast(vcpu_mmap_size);
+        const kvm_run = try std.os.mmap(null, size, linux.PROT.READ | linux.PROT.WRITE, linux.MAP.SHARED, fd, @as(u64, 0));
         return Self{
             .fd = fd,
+            .kvm_run = @ptrCast(kvm_run.ptr),
         };
     }
 
@@ -60,6 +71,18 @@ pub const Vcpu = struct {
         const r = ioctl(self.fd, KVM.KVM_SET_ONE_REG, @intFromPtr(&kor));
         if (r < 0) {
             return VcpuError.SetReg;
+        }
+    }
+
+    pub fn run(self: *const Self) !void {
+        const r = ioctl(self.fd, KVM.KVM_RUN, @as(u32, 0));
+        if (r < 0) {
+            std.log.err("vcpu run error: {}", .{std.c.getErrno(r)});
+            return VcpuError.Run;
+        }
+
+        switch (self.kvm_run.exit_reason) {
+            else => |exit| std.log.info("Got KVM_EXIT: {}", .{exit}),
         }
     }
 };
