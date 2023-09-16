@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 
 const CacheDir = @import("cache.zig").CacheDir;
 const Gicv2 = @import("gicv2.zig").GICv2;
+const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
 const m_memory = @import("memory.zig");
 const GuestMemory = m_memory.GuestMemory;
 const MemoryLayout = m_memory.MemoryLayout;
@@ -31,6 +32,8 @@ pub const FdtBuilder = struct {
     strings_map: std.StringHashMap(usize),
     stored_strings: std.ArrayList(u8),
 
+    /// Maximum size of the device tree blob as specified in https://www.kernel.org/doc/Documentation/arm64/booting.txt.
+    const FDT_MAX_SIZE: usize = 0x20_0000;
     const FDT_VERSION: u32 = 17;
     const FDT_LAST_COMP_VERSION: u32 = 16;
     const FDT_MAGIC: u32 = 0xd00dfeed;
@@ -87,6 +90,10 @@ pub const FdtBuilder = struct {
         self.data.deinit();
         self.strings_map.deinit();
         self.stored_strings.deinit();
+    }
+
+    pub fn fdt_addr(last_addr: u64) u64 {
+        return last_addr - Self.FDT_MAX_SIZE + 1;
     }
 
     fn align_data(data: *std.ArrayList(u8), alignment: usize) !void {
@@ -198,6 +205,7 @@ pub fn create_fdt(
     mpidrs: []const u64,
     cmdline: [:0]const u8,
     gic: *const Gicv2,
+    serial_device_info: MmioDeviceInfo,
 ) !FdtBuilder {
     const ADDRESS_CELLS: u32 = 0x2;
     const SIZE_CELLS: u32 = 0x2;
@@ -218,7 +226,7 @@ pub fn create_fdt(
     try create_memory_fdt(&fdt_builder, guest_mem);
     try create_cmdline_fdt(&fdt_builder, cmdline);
     try create_gic_fdt(&fdt_builder, gic);
-    try create_serial_node(&fdt_builder);
+    try create_serial_node(&fdt_builder, serial_device_info);
 
     // End Header node.
     try fdt_builder.end_node();
@@ -246,7 +254,7 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
         try builder.add_property([:0]const u8, "enable-method", "psci");
         // Set the field to first 24 bits of the MPIDR - Multiprocessor Affinity Register.
         // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0488c/BABHBJCI.html.
-        try builder.add_property(u64, "reg", @byteSwap(mpidr & 0x7FFFFF));
+        try builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
         for (cache_entries) |entry| {
             const cache = entry orelse continue;
             if (cache.level != 1) {
@@ -277,7 +285,7 @@ fn create_memory_fdt(builder: *FdtBuilder, guest_memory: *const GuestMemory) !vo
     const mem_size = guest_memory.guest_addr + guest_memory.mem.len - MemoryLayout.DRAM_MEM_START;
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
     // for an explanation of this.
-    const mem_reg_prop = [_]u64{ @byteSwap(MemoryLayout.DRAM_MEM_START), @byteSwap(mem_size) };
+    const mem_reg_prop = [_]u64{ MemoryLayout.DRAM_MEM_START, mem_size };
 
     try builder.begin_node("memory");
     try builder.add_property([:0]const u8, "device_type", "memory");
@@ -302,10 +310,10 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
     try builder.add_property(u32, "#interrupt-cells", 3);
 
     const device_properties = [_]u64{
-        @byteSwap(Gicv2.DISTRIBUTOR_ADDRESS),
-        @byteSwap(Gicv2.KVM_VGIC_V2_DIST_SIZE),
-        @byteSwap(Gicv2.CPU_ADDRESS),
-        @byteSwap(Gicv2.KVM_VGIC_V2_CPU_SIZE),
+        Gicv2.DISTRIBUTOR_ADDRESS,
+        Gicv2.KVM_VGIC_V2_DIST_SIZE,
+        Gicv2.CPU_ADDRESS,
+        Gicv2.KVM_VGIC_V2_CPU_SIZE,
     };
     try builder.add_property([]const u64, "reg", &device_properties);
 
@@ -324,13 +332,13 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
     try builder.end_node();
 }
 
-fn create_serial_node(
-    builder: *FdtBuilder,
-) !void {
-    try builder.begin_node("uart@0x40001000");
+fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) !void {
+    var buff: [20]u8 = undefined;
+    const name = try std.fmt.bufPrintZ(&buff, "uart@0x{x:.8}", .{device_info.addr});
+    try builder.begin_node(name);
 
     try builder.add_property([:0]const u8, "compatible", "ns16550a");
-    try builder.add_property([]const u64, "reg", &.{ 0x40001000, 0x1000 });
+    try builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
     try builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
     try builder.add_property([:0]const u8, "clock-names", "apb_pclk");
     try builder.add_property(
