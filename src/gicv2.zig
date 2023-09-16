@@ -48,7 +48,7 @@ pub const GICv2 = struct {
         // Setting up the distributor attribute.
         // We are placing the GIC below 1GB so we need to substract the size of the distributor.
         const dist_addr = Self.DISTRIBUTOR_ADDRESS;
-        std.log.info("gic addr dist_addr: {}", .{dist_addr});
+        std.log.info("gic dist_addr: 0x{x}", .{dist_addr});
         try Self.set_attributes(
             fd,
             0,
@@ -59,7 +59,7 @@ pub const GICv2 = struct {
 
         // Setting up the CPU attribute.
         const cpu_addr = Self.CPU_ADDRESS;
-        std.log.info("gic addr cpu_addr: {}", .{cpu_addr});
+        std.log.info("gic cpu_addr: 0x{x}", .{cpu_addr});
         try Self.set_attributes(
             fd,
             0,
