@@ -62,7 +62,10 @@ pub const FdtBuilder = struct {
     pub fn new(allocator: Allocator) !Self {
         var data = std.ArrayList(u8).init(allocator);
 
-        try data.resize(@sizeOf(FdtHeader));
+        // Allocation 40 bytes. This is a size of FdtHeader struct.
+        // For some reason @sizeOf(FdtHeader) returns 48.
+        try data.resize(40);
+        @memset(data.items, 0);
 
         // The memory reservation block shall be aligned to an 8-byte boundary
         try Self.align_data(&data, 8);
@@ -76,8 +79,9 @@ pub const FdtBuilder = struct {
         const off_dt_struct: u32 = @intCast(data.items.len);
 
         const header_ptr: *FdtHeader = @ptrCast(@alignCast(data.items.ptr));
-        header_ptr.off_dt_struct = off_dt_struct;
-        header_ptr.off_mem_rsvmap = off_mem_rsvmap;
+        // All values in the FDT should be in big endian format.
+        header_ptr.off_dt_struct = @byteSwap(off_dt_struct);
+        header_ptr.off_mem_rsvmap = @byteSwap(off_mem_rsvmap);
 
         return Self{
             .data = data,
@@ -129,8 +133,12 @@ pub const FdtBuilder = struct {
                     try data.appendSlice(@as([]const u8, std.mem.asBytes(&s)));
                 }
             },
-            []const u8, [:0]const u8 => {
+            []const u8 => {
                 try data.appendSlice(item);
+            },
+            [:0]const u8 => {
+                try data.appendSlice(item);
+                try data.append(0);
             },
             else => std.debug.panic("Unknown type: {any}", .{t}),
         }
@@ -146,14 +154,14 @@ pub const FdtBuilder = struct {
         try Self.data_append(u32, &self.data, FDT_END_NODE);
     }
 
-    // expects integer types to be in big endian format
+    /// Expects integer types to be in big endian format. (use @byteSwap(..) before passing integers)
     pub fn add_property(self: *Self, comptime t: type, name: [:0]const u8, item: t) !void {
         const name_offset = try self.string_offset(name);
         try Self.data_append(u32, &self.data, FDT_PROP);
         const bytes: usize = switch (t) {
             void => 0,
             u32, u64 => @sizeOf(t),
-            [:0]const u8 => @sizeOf(u8) * item.len,
+            [:0]const u8 => @sizeOf(u8) * item.len + 1,
             []const u32 => @sizeOf(u32) * item.len,
             []const u64 => @sizeOf(u64) * item.len,
             else => std.debug.panic("Unknown type: {any}", .{t}),
@@ -164,17 +172,18 @@ pub const FdtBuilder = struct {
         try Self.data_append(u32, &self.data, offset);
         try Self.data_append(t, &self.data, item);
         // All tokens shall be aligned on a 32-bit boundary,
-        // which may require padding bytes (with a value of 0x0)
+        // which may require padding bytes (with 0)
         // to be inserted after the previous token’s data
         try Self.align_data(&self.data, 4);
     }
 
-    fn string_offset(self: *Self, s: []const u8) !usize {
+    fn string_offset(self: *Self, s: [:0]const u8) !usize {
         if (self.strings_map.get(s)) |offset| {
             return offset;
         } else {
             const new_offset = self.stored_strings.items.len;
             try self.stored_strings.appendSlice(s);
+            try self.stored_strings.append(0);
             try self.strings_map.put(s, new_offset);
             return new_offset;
         }
@@ -184,16 +193,19 @@ pub const FdtBuilder = struct {
         try Self.data_append(u32, &self.data, FDT_END);
 
         const header_ptr: *FdtHeader = @ptrCast(@alignCast(self.data.items.ptr));
-        header_ptr.magic = FDT_MAGIC;
-        header_ptr.totalsize = @intCast(self.data.items.len + self.stored_strings.items.len);
+        // All values in the FDT should be in big endian format.
+        header_ptr.magic = @byteSwap(FDT_MAGIC);
+        header_ptr.totalsize = @byteSwap(@as(u32, @intCast(self.data.items.len + self.stored_strings.items.len)));
+        // Already set.
         // header_ptr.off_dt_struct: u32,
-        header_ptr.off_dt_strings = @intCast(self.data.items.len);
+        header_ptr.off_dt_strings = @byteSwap(@as(u32, @intCast(self.data.items.len)));
+        // Already set.
         // header_ptr.off_mem_rsvmap: u32,
-        header_ptr.version = FDT_VERSION;
-        header_ptr.last_comp_version = FDT_LAST_COMP_VERSION;
+        header_ptr.version = @byteSwap(FDT_VERSION);
+        header_ptr.last_comp_version = @byteSwap(FDT_LAST_COMP_VERSION);
         header_ptr.boot_cpuid_phys = 0;
-        header_ptr.size_dt_strings = @intCast(self.stored_strings.items.len);
-        header_ptr.size_dt_struct = @as(u32, @intCast(self.data.items.len)) - header_ptr.off_dt_struct;
+        header_ptr.size_dt_strings = @byteSwap(@as(u32, @intCast(self.stored_strings.items.len)));
+        header_ptr.size_dt_struct = @byteSwap(@as(u32, @intCast(self.data.items.len)) - @byteSwap(header_ptr.off_dt_struct));
 
         try Self.data_append([]const u8, &self.data, self.stored_strings.items);
     }
@@ -212,6 +224,9 @@ pub fn create_fdt(
     const GIC_PHANDLE: u32 = 1;
 
     var fdt_builder = try FdtBuilder.new(allocator);
+
+    // use &.{0} to make an empty string with 0 at the end
+    try fdt_builder.begin_node(&.{0});
 
     try fdt_builder.add_property([:0]const u8, "compatible", "linux,dummy-virt");
     // For info on #address-cells and size-cells read "Note about cells and address representation"
@@ -235,6 +250,12 @@ pub fn create_fdt(
 }
 
 fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
+    // This phandle is used to uniquely identify the FDT nodes containing cache information. Each cpu
+    // can have a variable number of caches, some of these caches may be shared with other cpus.
+    // So, we start the indexing of the phandles used from a really big number and then substract from
+    // it as we need more and more phandle for each cache representation.
+    const LAST_CACHE_PHANDLE: u32 = 4000;
+
     const cache_dir = try CacheDir.new();
     const cache_entries = try cache_dir.get_caches();
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml.
@@ -244,7 +265,7 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
     try builder.add_property(u32, "#size-cells", 0x0);
 
     for (mpidrs, 0..) |mpidr, i| {
-        var print_buff: [10]u8 = undefined;
+        var print_buff: [20]u8 = undefined;
         const cpu_name = try std.fmt.bufPrintZ(&print_buff, "cpu@{x}", .{i});
         try builder.begin_node(cpu_name);
         try builder.add_property([:0]const u8, "device_type", "cpu");
@@ -263,19 +284,51 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
             // https://github.com/devicetree-org/devicetree-specification/releases/download/v0.3/devicetree-specification-v0.3.pdf
             const cache_size: u32 = @intCast(cache.size);
             try builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+
             const line_size: u32 = @intCast(cache.line_size);
             try builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+
             const number_of_sets: u32 = @intCast(cache.number_of_sets);
             try builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
         }
+        var prev_level: u8 = 1;
+        var in_cache_node: bool = false;
         for (cache_entries) |entry| {
             const cache = entry orelse continue;
             if (cache.level == 1) {
                 continue;
             }
             // skip ather levels for now
-            continue;
+            const cache_phandle: u32 = LAST_CACHE_PHANDLE - (@as(u32, @intCast(mpidrs.len)) * @as(u32, cache.level - 2) + @as(u32, @intCast(i)) / cache.cpus_per_unit);
+            if (prev_level != cache.level) {
+                try builder.add_property(u32, "next-level-cache", cache_phandle);
+                if (prev_level > 1 and in_cache_node) {
+                    try builder.end_node();
+                }
+            }
+            if (i % cache.cpus_per_unit == 0) {
+                in_cache_node = true;
+                const node_name = try std.fmt.bufPrintZ(&print_buff, "l{}-{}-cache", .{ cache.level, i / cache.cpus_per_unit });
+                try builder.begin_node(node_name);
+                try builder.add_property(u32, "phandle", cache_phandle);
+                try builder.add_property([:0]const u8, "compatible", "cache");
+                try builder.add_property(u32, "cache-level", cache.level);
+                const cache_size: u32 = @intCast(cache.size);
+                try builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+                const line_size: u32 = @intCast(cache.line_size);
+                try builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+                const number_of_sets: u32 = @intCast(cache.number_of_sets);
+                try builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
+                if (cache.cache_type.cache_type_str()) |s| {
+                    try builder.add_property(void, s, void);
+                }
+                prev_level = cache.level;
+            }
         }
+        if (in_cache_node) {
+            try builder.end_node();
+        }
+
         try builder.end_node();
     }
     try builder.end_node();
@@ -334,7 +387,7 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
 
 fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) !void {
     var buff: [20]u8 = undefined;
-    const name = try std.fmt.bufPrintZ(&buff, "uart@0x{x:.8}", .{device_info.addr});
+    const name = try std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{device_info.addr});
     try builder.begin_node(name);
 
     try builder.add_property([:0]const u8, "compatible", "ns16550a");
