@@ -4,6 +4,8 @@ const linux = std.os.linux;
 
 const KVM = @cImport(@cInclude("linux/kvm.h"));
 
+const FdtBuilder = @import("fdt.zig").FdtBuilder;
+
 pub const MemoryError = error{
     InvalidMagicNumber,
     NotAllignedKernelOffset,
@@ -40,6 +42,7 @@ pub const MemoryLayout = struct {
 
 pub const GuestMemory = struct {
     guest_addr: u64,
+    kernel_end: usize,
     mem: []align(std.mem.page_size) u8,
 
     const Self = @This();
@@ -59,17 +62,21 @@ pub const GuestMemory = struct {
 
     pub fn init(size: usize) !Self {
         const prot = linux.PROT.READ | linux.PROT.WRITE;
-        const flags = linux.MAP.PRIVATE | linux.MAP.ANONYMOUS | 0x4000; //std.os.system.MAP.NORESERVE;
+        const flags = linux.MAP.PRIVATE | linux.MAP.ANONYMOUS; //std.os.system.MAP.NORESERVE;
         const mem = try std.os.mmap(null, size, prot, flags, -1, 0);
 
         std.log.info("mem size: 0x{x}", .{size});
         std.log.info("guest_addr: 0x{x}", .{MemoryLayout.DRAM_MEM_START});
 
-        return Self{ .guest_addr = MemoryLayout.DRAM_MEM_START, .mem = mem };
+        return Self{ .guest_addr = MemoryLayout.DRAM_MEM_START, .kernel_end = 0, .mem = mem };
     }
 
     pub fn deinit(self: *const Self) void {
         std.os.munmap(self.mem);
+    }
+
+    pub fn last_addr(self: *const Self) u64 {
+        return self.guest_addr + self.mem.len - 1;
     }
 
     pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
@@ -78,6 +85,7 @@ pub const GuestMemory = struct {
 
         const file_meta = try file.metadata();
         const kernel_size = file_meta.size();
+        std.log.debug("kernel_size: 0x{x}", .{kernel_size});
 
         try file.seekTo(0);
 
@@ -86,19 +94,20 @@ pub const GuestMemory = struct {
         const n = try file.read(@as([]u8, header_slice));
         std.debug.assert(n == header_slice.len);
 
-        std.log.info("header: {any}", .{arm64_header});
+        std.log.debug("header: {any}", .{arm64_header});
 
         if (arm64_header.magic != 0x644d_5241) {
             return MemoryError.InvalidMagicNumber;
         }
 
         var text_offset = arm64_header.text_offset;
-        if (text_offset == 0) {
+        if (arm64_header.image_size == 0) {
             text_offset = 0x80000;
         }
-        std.log.info("text_offset: 0x{x}", .{text_offset});
+        std.log.debug("text_offset: 0x{x}", .{text_offset});
 
         const kernel_offset = MemoryLayout.DRAM_MEM_START;
+        std.log.debug("kernel_offset: 0x{x}", .{kernel_offset});
 
         // Validate that kernel_offset is 2 MB aligned, as required by the
         // arm64 boot protocol
@@ -108,15 +117,22 @@ pub const GuestMemory = struct {
 
         const mem_offset = kernel_offset + text_offset;
         const kernel_end = mem_offset + kernel_size;
-
-        std.log.info("mem_offset: 0x{x}", .{mem_offset});
-        std.log.info("kernel_end: 0x{x}", .{kernel_end});
+        std.log.debug("mem_offset: 0x{x}", .{mem_offset});
+        std.log.debug("kernel_end: 0x{x}", .{kernel_end});
 
         try file.seekTo(0);
 
         // _ = try file.read(self.mem[mem_offset..kernel_end]);
         _ = try file.read(self.mem[0..kernel_size]);
 
+        self.kernel_end = kernel_size;
+
         return mem_offset;
+    }
+
+    pub fn load_fdt(self: *Self, fdt: *const FdtBuilder) !u64 {
+        const fdt_addr = FdtBuilder.fdt_addr(self.last_addr());
+        @memcpy(self.mem[fdt_addr - self.guest_addr .. fdt_addr - self.guest_addr + fdt.data.items.len], fdt.data.items[0..fdt.data.items.len]);
+        return fdt_addr;
     }
 };
