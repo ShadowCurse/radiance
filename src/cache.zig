@@ -75,8 +75,12 @@ pub const CacheEntry = struct {
         const cache_type = CacheType.from_str(read_buff[0..cache_type_bytes]);
 
         const scm_bytes = try cache_dir.read_info(index, "shared_cpu_map", &read_buff) - 1;
-        const scm: u16 =
-            @intCast(std.mem.count(u8, read_buff[0..scm_bytes], "1"));
+        var scm: u16 = 0;
+        var scm_iter = std.mem.splitScalar(u8, read_buff[0..scm_bytes], ',');
+        while (scm_iter.next()) |slice| {
+            const v = try std.fmt.parseInt(u8, slice, 16);
+            scm += @popCount(v);
+        }
 
         const cls_bytes = try cache_dir.read_info(index, "coherency_line_size", &read_buff) - 1;
         const cls = try std.fmt.parseInt(u16, read_buff[0..cls_bytes], 10);
