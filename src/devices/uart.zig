@@ -78,21 +78,6 @@ const MSR_DCD_MASK: u8 = 1 << 7;
 const DEFAULT_BAUD_DIVISOR_HIGH: u8 = 0x00;
 const DEFAULT_BAUD_DIVISOR_LOW: u8 = 0x0C;
 
-// No interrupts enabled.
-const DEFAULT_INTERRUPT_ENABLE: u8 = 0x00;
-// No pending interrupt.
-const DEFAULT_INTERRUPT_IDENTIFICATION: u8 = IIR_NO_INT;
-// We're setting the default to include LSR_EMPTY_THR_BIT and LSR_IDLE_BIT
-// and never update those bits because we're working with a virtual device,
-// hence we should always be ready to receive more data.
-const DEFAULT_LINE_STATUS: u8 = LSR_THR_EMPTY_MASK | LSR_IDLE_MASK;
-// 8 bits word length.
-const DEFAULT_LINE_CONTROL: u8 = 0b0000_0011;
-// Most UARTs need Auxiliary Output 2 set to '1' to enable interrupts.
-const DEFAULT_MODEM_CONTROL: u8 = MCR_OUT2_MASK;
-const DEFAULT_MODEM_STATUS: u8 = MSR_DSR_MASK | MSR_CTS_MASK | MSR_DCD_MASK;
-const DEFAULT_SCRATCH: u8 = 0x00;
-
 // 16550 UART device with baud of 9600
 pub const Uart = struct {
     in: std.os.fd_t,
@@ -103,20 +88,18 @@ pub const Uart = struct {
     baud_divisor_high: u8,
     IER: u8,
     IIR: u8,
-    LSR: u8,
+    LCR: u8,
     LSR: u8,
     MCR: u8,
-    MCR: u8,
+    MSR: u8,
     SCR: u8,
     // The RBR, receiver buffer register contains the byte received if no FIFO is used, or the oldest unread byte with FIFO’s.
     // If FIFO buffering is used, each new read action of the register will return the next byte,
     // until no more bytes are present. Bit 0 in the LSR line status register can be used to check
     // if all received bytes have been read. This bit will change to zero if no more bytes are present.
-    rbr: [FIFO_SIZE]u8,
+    // rbr: [FIFO_SIZE]u8,
 
-    // Used for notifying the driver about some in/out events.
     // interrupt_evt: T,
-    // events: EV,
     // out: W,
 
     const Self = @This();
@@ -129,13 +112,20 @@ pub const Uart = struct {
 
             .baud_divisor_low = DEFAULT_BAUD_DIVISOR_LOW,
             .baud_divisor_high = DEFAULT_BAUD_DIVISOR_HIGH,
-            .interrupt_enable = DEFAULT_INTERRUPT_ENABLE,
-            .interrupt_identification = DEFAULT_INTERRUPT_IDENTIFICATION,
-            .line_control = DEFAULT_LINE_CONTROL,
-            .line_status = DEFAULT_LINE_STATUS,
-            .modem_control = DEFAULT_MODEM_CONTROL,
-            .modem_status = DEFAULT_MODEM_STATUS,
-            .scratch = DEFAULT_SCRATCH,
+
+            // No interrupts enabled.
+            .IER = 0,
+            .IIR = IIR_NO_INT,
+            // 8 bits word length.
+            .LCR = 0b0000_0011, //DEFAULT_LINE_CONTROL,
+            // We're setting the default to include LSR_EMPTY_THR_BIT and LSR_IDLE_BIT
+            // and never update those bits because we're working with a virtual device,
+            // hence we should always be ready to receive more data.
+            .LSR = LSR_THR_EMPTY_MASK | LSR_IDLE_MASK, //DEFAULT_LINE_STATUS,
+            // Most UARTs need Auxiliary Output 2 set to '1' to enable interrupts.
+            .MCR = MCR_OUT2_MASK,
+            .MSR = MSR_DSR_MASK | MSR_CTS_MASK | MSR_DCD_MASK,
+            .SCR = 0,
         };
     }
 
@@ -146,7 +136,7 @@ pub const Uart = struct {
     }
 
     fn dlab_set(self: *const Self) bool {
-        return (self.LSR & LCR_DLAB_MASK) != 0;
+        return (self.LCR & LCR_DLAB_MASK) != 0;
     }
 
     fn rda_interrupt_enabled(self: *const Self) bool {
@@ -204,10 +194,6 @@ pub const Uart = struct {
     //     Ok(())
     // }
 
-    fn reset_iir(self: *Self) void {
-        self.IIR = DEFAULT_INTERRUPT_IDENTIFICATION;
-    }
-
     /// Handles a write request from the driver at `offset` offset from the
     /// base Port I/O address.
     ///
@@ -261,7 +247,7 @@ pub const Uart = struct {
                     self.IER = value & IER_UART_VALID_MASK;
                 }
             },
-            3 => self.LSR = value,
+            3 => self.LCR = value,
             4 => self.MCR = value,
             7 => self.SCR = value,
             else => {},
@@ -300,9 +286,7 @@ pub const Uart = struct {
                     const byte = 0; //self.in_buffer.pop_front().unwrap_or_default();
                     // if (self.in_buffer.is_empty()) {
                     self.LSR &= ~LSR_DATA_READY_MASK;
-                    // self.events.in_buffer_empty();
                     // }
-                    // self.events.buffer_read();
                     break :blk byte;
                 }
             },
@@ -317,10 +301,11 @@ pub const Uart = struct {
                 // We're enabling FIFO capability by setting the serial port to 16550A:
                 // https://elixir.bootlin.com/linux/latest/source/drivers/tty/serial/8250/8250_port.c#L1299.
                 const iir = self.IIR | IIR_FIFO_MASK;
-                self.reset_iir();
+                // resetting IIR
+                self.IIR = IIR_NO_INT;
                 break :blk iir;
             },
-            3 => self.LSR,
+            3 => self.LCR,
             4 => self.MCR,
             5 => self.LSR,
             6 => blk: {
@@ -330,7 +315,7 @@ pub const Uart = struct {
                     // This way CTS is controlled by RTS, DSR by DTR, RI by OUT1 and DCD by OUT2.
                     // (so they will basically contain the same value).
                     var msr =
-                        self.MCR & ~(MSR_DSR_MASK | MSR_CTS_MASK | MSR_RI_MASK | MSR_DCD_MASK);
+                        self.MSR & ~(MSR_DSR_MASK | MSR_CTS_MASK | MSR_RI_MASK | MSR_DCD_MASK);
                     if ((self.MCR & MCR_DTR_MASK) != 0) {
                         msr |= MSR_DSR_MASK;
                     }
@@ -345,7 +330,7 @@ pub const Uart = struct {
                     }
                     break :blk msr;
                 } else {
-                    break :blk self.MCR;
+                    break :blk self.MSR;
                 }
             },
             7 => self.SCR,
