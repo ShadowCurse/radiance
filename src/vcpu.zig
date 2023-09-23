@@ -4,6 +4,7 @@ const linux = std.os.linux;
 const KVM = @cImport(@cInclude("linux/kvm.h"));
 
 const Kvm = @import("kvm.zig").Kvm;
+const Mmio = @import("mmio.zig").Mmio;
 const Vm = @import("vm.zig").Vm;
 
 // ioctl in std uses c_int as a request type which is incorrect.
@@ -125,7 +126,7 @@ pub const Vcpu = struct {
         return value;
     }
 
-    pub fn run(self: *const Self) !void {
+    pub fn run(self: *const Self, mmio: *Mmio) !void {
         const r = ioctl(self.fd, KVM.KVM_RUN, @as(u32, 0));
         // -4 == -EINTR - if vcpu was interrupted
         if (r < 0 and r != -4) {
@@ -136,17 +137,23 @@ pub const Vcpu = struct {
         switch (self.kvm_run.exit_reason) {
             KVM.KVM_EXIT_IO => std.log.info("Got KVM_EXIT_IO", .{}),
             KVM.KVM_EXIT_HLT => std.log.info("Got KVM_EXIT_HLT", .{}),
-            KVM.KVM_EXIT_MMIO => std.log.info("Got KVM_EXIT_MMIO: phys_addr: {x}, data: {any}, len: {}, is_write: {}", .{ self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data, self.kvm_run.unnamed_0.mmio.len, self.kvm_run.unnamed_0.mmio.is_write }),
+            KVM.KVM_EXIT_MMIO => {
+                // std.log.info("Got KVM_EXIT_MMIO: phys_addr: {x}, data: {any}, len: {}, is_write: {}", .{ self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data, self.kvm_run.unnamed_0.mmio.len, self.kvm_run.unnamed_0.mmio.is_write });
+                if (self.kvm_run.unnamed_0.mmio.is_write == 1) {
+                    try mmio.write(self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len]);
+                } else {
+                    try mmio.read(self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len]);
+                }
+            },
             else => |exit| std.log.info("Got KVM_EXIT: {}", .{exit}),
         }
-
-        const pc = try self.get_reg(Self.PC);
-        std.log.info("pc: 0x{x}", .{pc});
     }
 
-    pub fn run_threaded(self: *Self) !void {
+    pub fn run_threaded(self: *Self, mmio: *Mmio) !void {
         v = self;
         std.log.info("vcpu run", .{});
-        try self.run();
+        while (true) {
+            try self.run(mmio);
+        }
     }
 };
