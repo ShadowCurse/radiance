@@ -4,22 +4,21 @@ const linux = std.os.linux;
 
 const KVM = @cImport(@cInclude("linux/kvm.h"));
 
-const Serial = @import("devices/serial.zig").Serial;
+const Uart = @import("devices/uart.zig").Uart;
 const CacheDir = @import("cache.zig").CacheDir;
 const CmdLine = @import("cmdline.zig").CmdLine;
 const FDT = @import("fdt.zig");
 const GICv2 = @import("gicv2.zig").GICv2;
 const Kvm = @import("kvm.zig").Kvm;
 const GuestMemory = @import("memory.zig").GuestMemory;
-const Mmio = @import("mmio.zig").Mmio;
+const MMIO = @import("mmio.zig");
+const Mmio = MMIO.Mmio;
+const MmioDevice = MMIO.MmioDevice;
 const VCPU = @import("vcpu.zig");
 const Vcpu = VCPU.Vcpu;
 const set_thread_handler = VCPU.set_thread_handler;
 const kick_thread = VCPU.kick_thread;
 const Vm = @import("vm.zig").Vm;
-
-// ioctl in std uses c_int as a request type which is incorrect.
-pub extern "c" fn ioctl(fd: std.os.fd_t, request: c_ulong, ...) c_int;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -31,9 +30,6 @@ pub fn main() !void {
     defer gm.deinit();
     const kernel_load_address = try gm.load_linux_kernel("vmlinux-5.10.186");
     std.log.info("kernel_load_address: 0x{x}", .{kernel_load_address});
-    // for (0..10) |i| {
-    //     std.log.info("kernel {}: 0x{x}", .{ i, gm.mem[i] });
-    // }
 
     // create kvm context
     const kvm = try Kvm.new();
@@ -57,21 +53,23 @@ pub fn main() !void {
     const gicv2 = try GICv2.new(&vm);
 
     var mmio = Mmio.new();
-    const serial_device_info = mmio.allocate();
+    const uart_device_info = mmio.allocate();
 
-    const serial = Serial.new(std.os.STDIN_FILENO, std.os.STDOUT_FILENO, serial_device_info);
+    var uart = Uart.new(std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
+
+    mmio.add_device(MmioDevice{ .Uart = &uart });
     // const block = try Block.new();
 
     var cmdline = try CmdLine.new(allocator, 50);
     defer cmdline.deinit();
 
     try cmdline.append("console=ttyS0 reboot=k panic=1 pci=off");
-    try serial.add_to_cmdline(&cmdline);
+    try uart.add_to_cmdline(&cmdline);
 
     const cmdline_0 = try cmdline.sentinel_str();
     std.log.info("cmdline: {s}", .{cmdline_0});
 
-    var fdt = try FDT.create_fdt(allocator, &gm, &.{vcpu_mpidr}, cmdline_0, &gicv2, serial_device_info);
+    var fdt = try FDT.create_fdt(allocator, &gm, &.{vcpu_mpidr}, cmdline_0, &gicv2, uart_device_info);
     defer fdt.deinit();
 
     const fdt_addr = try gm.load_fdt(&fdt);
@@ -83,10 +81,10 @@ pub fn main() !void {
     std.log.info("fdt built", .{});
 
     const sig = try set_thread_handler();
-    const t = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{&vcpu});
+    const t = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ &vcpu, &mmio });
 
     std.log.info("sleeping...", .{});
-    // 5 seconds
+    // 1 second
     std.time.sleep(5 * 1000_000_000);
     kick_thread(&t, sig);
     std.log.info("immediate_exit set", .{});
