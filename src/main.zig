@@ -5,6 +5,7 @@ const linux = std.os.linux;
 const KVM = @cImport(@cInclude("linux/kvm.h"));
 
 const Uart = @import("devices/uart.zig").Uart;
+const Rtc = @import("devices/rtc.zig").Rtc;
 const CacheDir = @import("cache.zig").CacheDir;
 const CmdLine = @import("cmdline.zig").CmdLine;
 const FDT = @import("fdt.zig");
@@ -54,11 +55,13 @@ pub fn main() !void {
 
     var mmio = Mmio.new();
     const uart_device_info = mmio.allocate();
+    const rtc_device_info = mmio.allocate();
 
     var uart = Uart.new(std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
+    var rtc = Rtc.new(rtc_device_info);
 
     mmio.add_device(MmioDevice{ .Uart = &uart });
-    // const block = try Block.new();
+    mmio.add_device(MmioDevice{ .Rtc = &rtc });
 
     var cmdline = try CmdLine.new(allocator, 50);
     defer cmdline.deinit();
@@ -85,7 +88,7 @@ pub fn main() !void {
 
     std.log.info("sleeping...", .{});
     // 1 second
-    std.time.sleep(5 * 1000_000_000);
+    std.time.sleep(1 * 1000_000_000);
     kick_thread(&t, sig);
     std.log.info("immediate_exit set", .{});
 
