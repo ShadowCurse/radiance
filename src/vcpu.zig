@@ -68,7 +68,7 @@ pub const Vcpu = struct {
     pub const PC = core_reg_id("pc");
     pub const REGS0 = core_reg_id("regs");
     pub const PSTATE = core_reg_id("pstate");
-    pub const MIDR_EL1 = sys_reg_id(3, 0, 0, 0, 0);
+    pub const MIDR_EL1 = sys_reg_id(3, 0, 0, 0, 5);
 
     /// PSR (Processor State Register) bits.
     /// Taken from arch/arm64/include/uapi/asm/ptrace.h.
@@ -123,6 +123,7 @@ pub const Vcpu = struct {
         if (r < 0) {
             return VcpuError.GetReg;
         }
+        std.log.debug("vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
         return value;
     }
 
@@ -138,7 +139,6 @@ pub const Vcpu = struct {
             KVM.KVM_EXIT_IO => std.log.info("Got KVM_EXIT_IO", .{}),
             KVM.KVM_EXIT_HLT => std.log.info("Got KVM_EXIT_HLT", .{}),
             KVM.KVM_EXIT_MMIO => {
-                // std.log.info("Got KVM_EXIT_MMIO: phys_addr: {x}, data: {any}, len: {}, is_write: {}", .{ self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data, self.kvm_run.unnamed_0.mmio.len, self.kvm_run.unnamed_0.mmio.is_write });
                 if (self.kvm_run.unnamed_0.mmio.is_write == 1) {
                     try mmio.write(self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len]);
                 } else {
