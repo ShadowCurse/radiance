@@ -241,6 +241,9 @@ pub fn create_fdt(
     try create_memory_fdt(&fdt_builder, guest_mem);
     try create_cmdline_fdt(&fdt_builder, cmdline);
     try create_gic_fdt(&fdt_builder, gic);
+    try create_timer_node(&fdt_builder);
+    try create_clock_node(&fdt_builder);
+    try create_psci_node(&fdt_builder);
     try create_serial_node(&fdt_builder, serial_device_info);
 
     // End Header node.
@@ -275,6 +278,7 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
         try builder.add_property([:0]const u8, "enable-method", "psci");
         // Set the field to first 24 bits of the MPIDR - Multiprocessor Affinity Register.
         // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0488c/BABHBJCI.html.
+        std.log.debug("fdt: cpu mpidr: 0x{x}", .{mpidr});
         try builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
         for (cache_entries) |entry| {
             const cache = entry orelse continue;
@@ -382,6 +386,54 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
     };
 
     try builder.add_property([]const u32, "interrupts", &gic_intr);
+    try builder.end_node();
+}
+
+fn create_clock_node(builder: *FdtBuilder) !void {
+    // The Advanced Peripheral Bus (APB) is part of the Advanced Microcontroller Bus Architecture
+    // (AMBA) protocol family. It defines a low-cost interface that is optimized for minimal power
+    // consumption and reduced interface complexity.
+    // PCLK is the clock source and this node defines exactly the clock for the APB.
+    try builder.begin_node("apb-pclk");
+    try builder.add_property([:0]const u8, "compatible", "fixed-clock");
+    try builder.add_property(u32, "#clock-cells", 0x0);
+    try builder.add_property(u32, "clock-frequency", 24_000_000);
+    try builder.add_property([:0]const u8, "clock-output-names", "clk24mhz");
+    try builder.add_property(u32, "phandle", FdtBuilder.CLOCK_PHANDLE);
+    try builder.end_node();
+}
+
+fn create_timer_node(builder: *FdtBuilder) !void {
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arch_timer.txt
+    // These are fixed interrupt numbers for the timer device.
+    const interrupts: [12]u32 = .{
+        FdtBuilder.GIC_FDT_IRQ_TYPE_PPI,
+        13,
+        FdtBuilder.IRQ_TYPE_LEVEL_HI,
+        FdtBuilder.GIC_FDT_IRQ_TYPE_PPI,
+        14,
+        FdtBuilder.IRQ_TYPE_LEVEL_HI,
+        FdtBuilder.GIC_FDT_IRQ_TYPE_PPI,
+        11,
+        FdtBuilder.IRQ_TYPE_LEVEL_HI,
+        FdtBuilder.GIC_FDT_IRQ_TYPE_PPI,
+        10,
+        FdtBuilder.IRQ_TYPE_LEVEL_HI,
+    };
+    try builder.begin_node("timer");
+    try builder.add_property([:0]const u8, "compatible", "arm,armv8-timer");
+    try builder.add_property(void, "always-on", void);
+    try builder.add_property([]const u32, "interrupts", &interrupts);
+    try builder.end_node();
+}
+
+fn create_psci_node(builder: *FdtBuilder) !void {
+    try builder.begin_node("psci");
+    try builder.add_property([:0]const u8, "compatible", "arm,psci-0.2");
+    // Two methods available: hvc and smc.
+    // As per documentation, PSCI calls between a guest and hypervisor may use the HVC conduit
+    // instead of SMC. So, since we are using kvm, we need to use hvc.
+    try builder.add_property([:0]const u8, "method", "hvc");
     try builder.end_node();
 }
 
