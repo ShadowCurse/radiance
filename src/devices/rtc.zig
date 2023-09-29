@@ -21,101 +21,98 @@ const RTCMIS: u16 = 0x018;
 // Interrupt Clear Register (WO).
 const RTCICR: u16 = 0x01C;
 
-pub const Rtc = struct {
-    mmio_info: MmioDeviceInfo,
+mmio_info: MmioDeviceInfo,
+// The load register.
+lr: u32,
+// The offset applied to the counter to get the RTC value.
+offset: u32,
+// TODO: Implement the match register functionality.
+mr: u32,
+// The interrupt mask.
+imsc: u32,
+// The raw interrupt value.
+ris: u32,
 
-    // The load register.
-    lr: u32,
-    // The offset applied to the counter to get the RTC value.
-    offset: u32,
-    // TODO: Implement the match register functionality.
-    mr: u32,
-    // The interrupt mask.
-    imsc: u32,
-    // The raw interrupt value.
-    ris: u32,
+const Self = @This();
 
-    const Self = @This();
+pub fn new(mmio_info: MmioDeviceInfo) Self {
+    return Self{
+        .mmio_info = mmio_info,
+        .lr = 0,
+        .offset = 0,
+        .mr = 0,
+        .imsc = 0,
+        .ris = 0,
+    };
+}
 
-    pub fn new(mmio_info: MmioDeviceInfo) Self {
-        return Self{
-            .mmio_info = mmio_info,
-            .lr = 0,
-            .offset = 0,
-            .mr = 0,
-            .imsc = 0,
-            .ris = 0,
-        };
+fn now() !u32 {
+    const n = try std.time.Instant.now();
+    return @intCast(n.timestamp.tv_sec);
+}
+
+pub fn write(self: *Self, addr: u64, data: []u8) !bool {
+    if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len < addr) {
+        return false;
     }
+    const offset = addr - self.mmio_info.addr;
+    const val: *u32 = @alignCast(@ptrCast(data.ptr));
 
-    fn now() !u32 {
-        const n = try std.time.Instant.now();
-        return @intCast(n.timestamp.tv_sec);
+    switch (offset) {
+        RTCMR => self.mr = val.*,
+        RTCLR => {
+            // The guest can make adjustments to its time by writing to
+            // this register. When these adjustments happen, we calculate the
+            // offset as the difference between the LR value and the host time.
+            // This offset is later used to calculate the RTC value.
+            self.lr = val.*;
+            self.offset = self.lr - try now();
+        },
+        RTCCR => {
+            if (val.* == 1) {
+                self.lr = 0;
+                self.offset = 0;
+            }
+        },
+        RTCIMSC => self.imsc = val.*,
+        RTCICR => {
+            if (val.* == 1) {
+                self.ris = 0;
+            }
+        },
+        else => {},
     }
+    return true;
+}
 
-    pub fn write(self: *Self, addr: u64, data: []u8) !bool {
-        if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len < addr) {
-            return false;
-        }
-        const offset = addr - self.mmio_info.addr;
-        const val: *u32 = @alignCast(@ptrCast(data.ptr));
-
-        switch (offset) {
-            RTCMR => self.mr = val.*,
-            RTCLR => {
-                // The guest can make adjustments to its time by writing to
-                // this register. When these adjustments happen, we calculate the
-                // offset as the difference between the LR value and the host time.
-                // This offset is later used to calculate the RTC value.
-                self.lr = val.*;
-                self.offset = self.lr - try now();
-            },
-            RTCCR => {
-                if (val.* == 1) {
-                    self.lr = 0;
-                    self.offset = 0;
-                }
-            },
-            RTCIMSC => self.imsc = val.*,
-            RTCICR => {
-                if (val.* == 1) {
-                    self.ris = 0;
-                }
-            },
-            else => {},
-        }
-        return true;
+pub fn read(self: *Self, addr: u64, data: []u8) !bool {
+    if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len < addr) {
+        return false;
     }
+    const offset = addr - self.mmio_info.addr;
 
-    pub fn read(self: *Self, addr: u64, data: []u8) !bool {
-        if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len < addr) {
-            return false;
-        }
-        const offset = addr - self.mmio_info.addr;
+    const v = switch (offset) {
+        // The RTC value is the time + offset as per:
+        // https://developer.arm.com/documentation/ddi0224/c/Functional-overview/RTC-functional-description/Update-block
+        RTCDR => try now() + self.offset,
+        RTCMR => self.mr,
+        RTCLR => self.lr,
+        RTCCR => @as(u32, 1), // RTC is always enabled.
+        RTCIMSC => self.imsc,
+        RTCRIS => self.ris,
+        RTCMIS => self.ris & self.imsc,
+        0xFE0 => @as(u32, 0x31),
+        0xFE4 => @as(u32, 0x10),
+        0xFE8 => @as(u32, 0x04),
+        0xFEC => @as(u32, 0x00),
+        0xFF0 => @as(u32, 0x0D),
+        0xFF4 => @as(u32, 0xF0),
+        0xFF8 => @as(u32, 0x05),
+        0xFFC => @as(u32, 0xB1),
+        else => return true,
+    };
 
-        const v = switch (offset) {
-            // The RTC value is the time + offset as per:
-            // https://developer.arm.com/documentation/ddi0224/c/Functional-overview/RTC-functional-description/Update-block
-            RTCDR => try now() + self.offset,
-            RTCMR => self.mr,
-            RTCLR => self.lr,
-            RTCCR => @as(u32, 1), // RTC is always enabled.
-            RTCIMSC => self.imsc,
-            RTCRIS => self.ris,
-            RTCMIS => self.ris & self.imsc,
-            0xFE0 => @as(u32, 0x31),
-            0xFE4 => @as(u32, 0x10),
-            0xFE8 => @as(u32, 0x04),
-            0xFEC => @as(u32, 0x00),
-            0xFF0 => @as(u32, 0x0D),
-            0xFF4 => @as(u32, 0xF0),
-            0xFF8 => @as(u32, 0x05),
-            0xFFC => @as(u32, 0xB1),
-            else => return true,
-        };
-
-        const bytes = std.mem.asBytes(&v);
-        @memcpy(data, bytes);
-        return true;
-    }
-};
+    const bytes = std.mem.asBytes(&v);
+    @memcpy(data, bytes);
+    return true;
+}

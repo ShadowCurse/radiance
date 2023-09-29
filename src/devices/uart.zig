@@ -1,11 +1,12 @@
-// https://uart16550.readthedocs.io/en/latest/uart16550doc.html
-
 const std = @import("std");
 
-const CmdLine = @import("../cmdline.zig").CmdLine;
+const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 
-// Fronm  https://www.lammertbies.nl/comm/info/serial-uart
+// Impementation of 16550 UART device with baud of 9600
+
+// https://uart16550.readthedocs.io/en/latest/uart16550doc.html
+// From  https://www.lammertbies.nl/comm/info/serial-uart
 //
 // I/O port | Read (DLAB=0)                | Write (DLAB=0)          | Read (DLAB=1)                | Write (DLAB=1)
 // -------------------------------------------------------------------------------------------------------------------------
@@ -78,264 +79,219 @@ const MSR_DCD_MASK: u8 = 1 << 7;
 const DEFAULT_BAUD_DIVISOR_HIGH: u8 = 0x00;
 const DEFAULT_BAUD_DIVISOR_LOW: u8 = 0x0C;
 
-// 16550 UART device with baud of 9600
-pub const Uart = struct {
-    in: std.os.fd_t,
-    out: std.os.fd_t,
-    mmio_info: MmioDeviceInfo,
+in: std.os.fd_t,
+out: std.os.fd_t,
+mmio_info: MmioDeviceInfo,
 
-    baud_divisor_low: u8,
-    baud_divisor_high: u8,
-    IER: u8,
-    IIR: u8,
-    LCR: u8,
-    LSR: u8,
-    MCR: u8,
-    MSR: u8,
-    SCR: u8,
-    // The RBR, receiver buffer register contains the byte received if no FIFO is used, or the oldest unread byte with FIFO’s.
-    // If FIFO buffering is used, each new read action of the register will return the next byte,
-    // until no more bytes are present. Bit 0 in the LSR line status register can be used to check
-    // if all received bytes have been read. This bit will change to zero if no more bytes are present.
-    // rbr: [FIFO_SIZE]u8,
+baud_divisor_low: u8,
+baud_divisor_high: u8,
+IER: u8,
+IIR: u8,
+LCR: u8,
+LSR: u8,
+MCR: u8,
+MSR: u8,
+SCR: u8,
+// The RBR, receiver buffer register contains the byte received if no FIFO is used, or the oldest unread byte with FIFO’s.
+// If FIFO buffering is used, each new read action of the register will return the next byte,
+// until no more bytes are present. Bit 0 in the LSR line status register can be used to check
+// if all received bytes have been read. This bit will change to zero if no more bytes are present.
+// rbr: [FIFO_SIZE]u8,
 
-    // interrupt_evt: T,
-    // out: W,
+const Self = @This();
 
-    const Self = @This();
+pub fn new(in: std.os.fd_t, out: std.os.fd_t, mmio_info: MmioDeviceInfo) Self {
+    return Self{
+        .in = in,
+        .out = out,
+        .mmio_info = mmio_info,
 
-    pub fn new(in: std.os.fd_t, out: std.os.fd_t, mmio_info: MmioDeviceInfo) Self {
-        return Self{
-            .in = in,
-            .out = out,
-            .mmio_info = mmio_info,
+        .baud_divisor_low = DEFAULT_BAUD_DIVISOR_LOW,
+        .baud_divisor_high = DEFAULT_BAUD_DIVISOR_HIGH,
 
-            .baud_divisor_low = DEFAULT_BAUD_DIVISOR_LOW,
-            .baud_divisor_high = DEFAULT_BAUD_DIVISOR_HIGH,
+        // No interrupts enabled.
+        .IER = 0,
+        .IIR = IIR_NO_INT,
+        // 8 bits word length.
+        .LCR = 0b0000_0011,
+        // This is a virtual device and it should always be ready to received
+        // data.
+        .LSR = LSR_THR_EMPTY_MASK | LSR_IDLE_MASK,
+        // Most UARTs need Auxiliary Output 2 set to '1' to enable interrupts.
+        .MCR = MCR_OUT2_MASK,
+        .MSR = MSR_DSR_MASK | MSR_CTS_MASK | MSR_DCD_MASK,
+        .SCR = 0,
+    };
+}
 
-            // No interrupts enabled.
-            .IER = 0,
-            .IIR = IIR_NO_INT,
-            // 8 bits word length.
-            .LCR = 0b0000_0011, //DEFAULT_LINE_CONTROL,
-            // We're setting the default to include LSR_EMPTY_THR_BIT and LSR_IDLE_BIT
-            // and never update those bits because we're working with a virtual device,
-            // hence we should always be ready to receive more data.
-            .LSR = LSR_THR_EMPTY_MASK | LSR_IDLE_MASK, //DEFAULT_LINE_STATUS,
-            // Most UARTs need Auxiliary Output 2 set to '1' to enable interrupts.
-            .MCR = MCR_OUT2_MASK,
-            .MSR = MSR_DSR_MASK | MSR_CTS_MASK | MSR_DCD_MASK,
-            .SCR = 0,
-        };
+pub fn add_to_cmdline(self: *const Self, cmdline: *CmdLine) !void {
+    var buff: [50]u8 = undefined;
+    const cmd = try std.fmt.bufPrint(&buff, " earlycon=uart,mmio,0x{x:.8}", .{self.mmio_info.addr});
+    try cmdline.append(cmd);
+}
+
+fn dlab_set(self: *const Self) bool {
+    return (self.LCR & LCR_DLAB_MASK) != 0;
+}
+
+fn rda_interrupt_enabled(self: *const Self) bool {
+    return (self.IER & IER_RDA_MASK) != 0;
+}
+
+fn thr_interrupt_enabled(self: *const Self) bool {
+    return (self.IER & IER_THR_EMPTY_MASK) != 0;
+}
+
+fn rda_interrupt_set(self: *const Self) bool {
+    return (self.IIR & IIR_RDA_MASK) != 0;
+}
+
+fn thr_interrupt_set(self: *const Self) bool {
+    return (self.IIR & IIR_THR_EMPTY_MASK) != 0;
+}
+
+fn in_loop_mode(self: *const Self) bool {
+    return (self.MCR & MCR_LOOP_MASK) != 0;
+}
+
+fn add_interrupt(self: *Self, interrupt_bits: u8) void {
+    self.IIR &= ~IIR_NO_INT;
+    self.IIR |= interrupt_bits;
+}
+
+fn remove_interrupt(self: *Self, interrupt_bits: u8) void {
+    self.IIR &= ~interrupt_bits;
+    if (self.IIR == 0) {
+        self.IIR = IIR_NO_INT;
     }
+}
 
-    pub fn add_to_cmdline(self: *const Self, cmdline: *CmdLine) !void {
-        var buff: [50]u8 = undefined;
-        const cmd = try std.fmt.bufPrint(&buff, " earlycon=uart,mmio,0x{x:.8}", .{self.mmio_info.addr});
-        try cmdline.append(cmd);
-    }
-
-    fn dlab_set(self: *const Self) bool {
-        return (self.LCR & LCR_DLAB_MASK) != 0;
-    }
-
-    fn rda_interrupt_enabled(self: *const Self) bool {
-        return (self.IER & IER_RDA_MASK) != 0;
-    }
-
-    fn thr_interrupt_enabled(self: *const Self) bool {
-        return (self.IER & IER_THR_EMPTY_MASK) != 0;
-    }
-
-    fn rda_interrupt_set(self: *const Self) bool {
-        return (self.IIR & IIR_RDA_MASK) != 0;
-    }
-
-    fn thr_interrupt_set(self: *const Self) bool {
-        return (self.IIR & IIR_THR_EMPTY_MASK) != 0;
-    }
-
-    fn in_loop_mode(self: *const Self) bool {
-        return (self.MCR & MCR_LOOP_MASK) != 0;
-    }
-
-    fn add_interrupt(self: *Self, interrupt_bits: u8) void {
-        self.IIR &= ~IIR_NO_INT;
-        self.IIR |= interrupt_bits;
-    }
-
-    fn remove_interrupt(self: *Self, interrupt_bits: u8) void {
-        self.IIR &= ~interrupt_bits;
-        if (self.IIR == 0) {
-            self.IIR = IIR_NO_INT;
+fn thr_empty_interrupt(self: *Self) !void {
+    if (self.thr_interrupt_enabled()) {
+        // Trigger the interrupt only if the identification bit wasn't
+        // set or acknowledged.
+        if ((self.IIR & IIR_THR_EMPTY_MASK) == 0) {
+            self.add_interrupt(IIR_THR_EMPTY_MASK);
+            // self.trigger_interrupt()?
         }
     }
+}
 
-    fn thr_empty_interrupt(self: *Self) !void {
-        if (self.thr_interrupt_enabled()) {
-            // Trigger the interrupt only if the identification bit wasn't
-            // set or acknowledged.
-            if ((self.IIR & IIR_THR_EMPTY_MASK) == 0) {
-                self.add_interrupt(IIR_THR_EMPTY_MASK);
-                // self.trigger_interrupt()?
-            }
-        }
+pub fn write(self: *Self, addr: u64, data: []u8) !bool {
+    if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len < addr) {
+        return false;
     }
-
-    // fn received_data_interrupt(&mut self) -> Result<(), T::E> {
-    //     if self.is_rda_interrupt_enabled() {
-    //         // Trigger the interrupt only if the identification bit wasn't
-    //         // set or acknowledged.
-    //         if self.interrupt_identification & IIR_RDA_BIT == 0 {
-    //             self.add_interrupt(IIR_RDA_BIT);
-    //             self.trigger_interrupt()?
-    //         }
-    //     }
-    //     Ok(())
-    // }
-
-    /// Handles a write request from the driver at `offset` offset from the
-    /// base Port I/O address.
-    ///
-    /// # Arguments
-    /// * `offset` - The offset that will be added to the base PIO address
-    ///              for writing to a specific register.
-    /// * `value` - The byte that should be written.
-    ///
-    /// # Example
-    ///
-    /// You can see an example of how to use this function in the
-    /// [`Example` section from `Serial`](struct.Serial.html#example).
-    pub fn write(self: *Self, addr: u64, data: []u8) !bool {
-        // pub fn write(self: *Self, offset: u8, value: u8) !void {
-        if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len < addr) {
-            return false;
-        }
-        const offset = addr - self.mmio_info.addr;
-        const value = data[0];
-        switch (offset) {
-            0 => {
-                if (self.dlab_set()) {
-                    self.baud_divisor_low = value;
-                } else {
-                    if (self.in_loop_mode()) {
-                        // In loopback mode, what is written in the transmit register
-                        // will be immediately found in the receive register, so we
-                        // simulate this behavior by adding in `in_buffer` the
-                        // transmitted bytes and letting the driver know there is some
-                        // pending data to be read, by setting RDA bit and its
-                        // corresponding interrupt.
-                        // if (self.in_buffer.len() < FIFO_SIZE) {
-                        // self.in_buffer.push_back(value);
-                        self.LSR |= LSR_DATA_READY_MASK;
-                        // try self.received_data_interrupt();
-                        // }
-                    } else {
-                        _ = try std.os.write(self.out, data);
-
-                        // Because we cannot block the driver, the THRE interrupt is sent
-                        // irrespective of whether we are able to write the byte or not
-                        try self.thr_empty_interrupt();
-                    }
-                }
-            },
-            // We want to enable only the interrupts that are available for 16550A (and below).
-            1 => {
-                if (self.dlab_set()) {
-                    self.baud_divisor_high = value;
-                } else {
-                    self.IER = value & IER_UART_VALID_MASK;
-                }
-            },
-            3 => self.LCR = value,
-            4 => self.MCR = value,
-            7 => self.SCR = value,
-            else => {},
-        }
-        return true;
-    }
-
-    /// Handles a read request from the driver at `offset` offset from the
-    /// base Port I/O address.
-    ///
-    /// Returns the read value.
-    ///
-    /// # Arguments
-    /// * `offset` - The offset that will be added to the base PIO address
-    ///              for reading from a specific register.
-    ///
-    /// # Example
-    ///
-    /// You can see an example of how to use this function in the
-    /// [`Example` section from `Serial`](struct.Serial.html#example).
-    pub fn read(self: *Self, addr: u64, data: []u8) !bool {
-        if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len < addr) {
-            return false;
-        }
-        const offset = addr - self.mmio_info.addr;
-        data[0] = switch (offset) {
-            0 => blk: {
-                if (self.dlab_set()) {
-                    break :blk self.baud_divisor_low;
-                } else {
-                    // Here we emulate the reset method for when RDA interrupt
-                    // was raised (i.e. read the receive buffer and clear the
-                    // interrupt identification register and RDA bit when no
-                    // more data is available).
-                    self.remove_interrupt(IIR_RDA_MASK);
-                    const byte = 0; //self.in_buffer.pop_front().unwrap_or_default();
-                    // if (self.in_buffer.is_empty()) {
-                    self.LSR &= ~LSR_DATA_READY_MASK;
-                    // }
-                    break :blk byte;
-                }
-            },
-            1 => blk: {
-                if (self.dlab_set()) {
-                    break :blk self.baud_divisor_high;
-                } else {
-                    break :blk self.IER;
-                }
-            },
-            2 => blk: {
-                // We're enabling FIFO capability by setting the serial port to 16550A:
-                // https://elixir.bootlin.com/linux/latest/source/drivers/tty/serial/8250/8250_port.c#L1299.
-                const iir = self.IIR | IIR_FIFO_MASK;
-                // resetting IIR
-                self.IIR = IIR_NO_INT;
-                break :blk iir;
-            },
-            3 => self.LCR,
-            4 => self.MCR,
-            5 => self.LSR,
-            6 => blk: {
+    const offset = addr - self.mmio_info.addr;
+    const value = data[0];
+    switch (offset) {
+        0 => {
+            if (self.dlab_set()) {
+                self.baud_divisor_low = value;
+            } else {
                 if (self.in_loop_mode()) {
-                    // In loopback mode, the four modem control inputs (CTS, DSR, RI, DCD) are
-                    // internally connected to the four modem control outputs (RTS, DTR, OUT1, OUT2).
-                    // This way CTS is controlled by RTS, DSR by DTR, RI by OUT1 and DCD by OUT2.
-                    // (so they will basically contain the same value).
-                    var msr =
-                        self.MSR & ~(MSR_DSR_MASK | MSR_CTS_MASK | MSR_RI_MASK | MSR_DCD_MASK);
-                    if ((self.MCR & MCR_DTR_MASK) != 0) {
-                        msr |= MSR_DSR_MASK;
-                    }
-                    if ((self.MCR & MCR_RTS_MASK) != 0) {
-                        msr |= MSR_CTS_MASK;
-                    }
-                    if ((self.MCR & MCR_OUT1_MASK) != 0) {
-                        msr |= MSR_RI_MASK;
-                    }
-                    if ((self.MCR & MCR_OUT2_MASK) != 0) {
-                        msr |= MSR_DCD_MASK;
-                    }
-                    break :blk msr;
+                    // In loopback mode, what is written in the transmit register
+                    // will be immediately found in the receive register, so we
+                    // simulate this behavior by adding in `in_buffer` the
+                    // transmitted bytes and letting the driver know there is some
+                    // pending data to be read, by setting RDA bit and its
+                    // corresponding interrupt.
+                    // if (self.in_buffer.len() < FIFO_SIZE) {
+                    // self.in_buffer.push_back(value);
+                    self.LSR |= LSR_DATA_READY_MASK;
+                    // try self.received_data_interrupt();
+                    // }
                 } else {
-                    break :blk self.MSR;
+                    _ = try std.os.write(self.out, data);
+
+                    // Because we cannot block the driver, the THRE interrupt is sent
+                    // irrespective of whether we are able to write the byte or not
+                    try self.thr_empty_interrupt();
                 }
-            },
-            7 => self.SCR,
-            else => 0,
-        };
-        return true;
+            }
+        },
+        // We want to enable only the interrupts that are available for 16550A (and below).
+        1 => {
+            if (self.dlab_set()) {
+                self.baud_divisor_high = value;
+            } else {
+                self.IER = value & IER_UART_VALID_MASK;
+            }
+        },
+        3 => self.LCR = value,
+        4 => self.MCR = value,
+        7 => self.SCR = value,
+        else => {},
     }
-};
+    return true;
+}
+
+pub fn read(self: *Self, addr: u64, data: []u8) !bool {
+    if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len < addr) {
+        return false;
+    }
+    const offset = addr - self.mmio_info.addr;
+    data[0] = switch (offset) {
+        0 => blk: {
+            if (self.dlab_set()) {
+                break :blk self.baud_divisor_low;
+            } else {
+                // Here we emulate the reset method for when RDA interrupt
+                // was raised (i.e. read the receive buffer and clear the
+                // interrupt identification register and RDA bit when no
+                // more data is available).
+                self.remove_interrupt(IIR_RDA_MASK);
+                const byte = 0; //self.in_buffer.pop_front().unwrap_or_default();
+                // if (self.in_buffer.is_empty()) {
+                self.LSR &= ~LSR_DATA_READY_MASK;
+                // }
+                break :blk byte;
+            }
+        },
+        1 => blk: {
+            if (self.dlab_set()) {
+                break :blk self.baud_divisor_high;
+            } else {
+                break :blk self.IER;
+            }
+        },
+        2 => blk: {
+            // We're enabling FIFO capability by setting the serial port to 16550A:
+            // https://elixir.bootlin.com/linux/latest/source/drivers/tty/serial/8250/8250_port.c#L1299.
+            const iir = self.IIR | IIR_FIFO_MASK;
+            // resetting IIR
+            self.IIR = IIR_NO_INT;
+            break :blk iir;
+        },
+        3 => self.LCR,
+        4 => self.MCR,
+        5 => self.LSR,
+        6 => blk: {
+            if (self.in_loop_mode()) {
+                // In loopback mode, the four modem control inputs (CTS, DSR, RI, DCD) are
+                // internally connected to the four modem control outputs (RTS, DTR, OUT1, OUT2).
+                // This way CTS is controlled by RTS, DSR by DTR, RI by OUT1 and DCD by OUT2.
+                // (so they will basically contain the same value).
+                var msr =
+                    self.MSR & ~(MSR_DSR_MASK | MSR_CTS_MASK | MSR_RI_MASK | MSR_DCD_MASK);
+                if ((self.MCR & MCR_DTR_MASK) != 0) {
+                    msr |= MSR_DSR_MASK;
+                }
+                if ((self.MCR & MCR_RTS_MASK) != 0) {
+                    msr |= MSR_CTS_MASK;
+                }
+                if ((self.MCR & MCR_OUT1_MASK) != 0) {
+                    msr |= MSR_RI_MASK;
+                }
+                if ((self.MCR & MCR_OUT2_MASK) != 0) {
+                    msr |= MSR_DCD_MASK;
+                }
+                break :blk msr;
+            } else {
+                break :blk self.MSR;
+            }
+        },
+        7 => self.SCR,
+        else => 0,
+    };
+    return true;
+}
