@@ -1,8 +1,6 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
-const linux = std.os.linux;
 
-const KVM = @cImport(@cInclude("linux/kvm.h"));
+const nix = @import("nix.zig");
 
 const FdtBuilder = @import("fdt.zig").FdtBuilder;
 
@@ -16,28 +14,8 @@ pub const MemoryLayout = struct {
     pub const DRAM_MEM_START: u64 = 0x8000_0000; // 2 GB.
     /// The maximum RAM size.
     pub const DRAM_MEM_MAX_SIZE: u64 = 0x00FF_8000_0000; // 1024 - 2 = 1022G.
-
-    /// Kernel command line maximum size.
-    /// As per `arch/arm64/include/uapi/asm/setup.h`.
-    pub const CMDLINE_MAX_SIZE: usize = 2048;
-
-    /// Maximum size of the device tree blob as specified in https://www.kernel.org/doc/Documentation/arm64/booting.txt.
-    pub const FDT_MAX_SIZE: usize = 0x20_0000;
-
-    // As per virt/kvm/arm/vgic/vgic-kvm-device.c we need
-    // the number of interrupts our GIC will support to be:
-    // * bigger than 32
-    // * less than 1023 and
-    // * a multiple of 32.
-    /// The highest usable SPI on aarch64.
-    pub const IRQ_MAX: u32 = 128;
-
-    /// First usable interrupt on aarch64.
-    pub const IRQ_BASE: u32 = 32;
-
     /// Below this address will reside the GIC, above this address will reside the MMIO devices.
     pub const MAPPED_IO_START: u64 = 1 << 30; // 1 GB
-
 };
 
 pub const GuestMemory = struct {
@@ -61,12 +39,12 @@ pub const GuestMemory = struct {
     };
 
     pub fn init(size: usize) !Self {
-        const prot = linux.PROT.READ | linux.PROT.WRITE;
-        const flags = linux.MAP.PRIVATE | linux.MAP.ANONYMOUS; //std.os.system.MAP.NORESERVE;
+        const prot = nix.PROT.READ | nix.PROT.WRITE;
+        const flags = nix.MAP.PRIVATE | nix.MAP.ANONYMOUS | 0x4000; //std.os.system.MAP.NORESERVE;
         const mem = try std.os.mmap(null, size, prot, flags, -1, 0);
 
-        std.log.info("mem size: 0x{x}", .{size});
-        std.log.info("guest_addr: 0x{x}", .{MemoryLayout.DRAM_MEM_START});
+        std.log.debug("mem size: 0x{x}", .{size});
+        std.log.debug("guest_addr: 0x{x}", .{MemoryLayout.DRAM_MEM_START});
 
         return Self{ .guest_addr = MemoryLayout.DRAM_MEM_START, .kernel_end = 0, .mem = mem };
     }
@@ -122,7 +100,6 @@ pub const GuestMemory = struct {
 
         try file.seekTo(0);
 
-        // _ = try file.read(self.mem[mem_offset..kernel_end]);
         _ = try file.read(self.mem[0..kernel_size]);
 
         self.kernel_end = kernel_size;

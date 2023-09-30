@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const CacheDir = @import("cache.zig").CacheDir;
-const Gicv2 = @import("gicv2.zig").GICv2;
+const Gicv2 = @import("gicv2.zig");
 const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
 const m_memory = @import("memory.zig");
 const GuestMemory = m_memory.GuestMemory;
@@ -359,7 +359,7 @@ fn create_cmdline_fdt(builder: *FdtBuilder, cmdline: [:0]const u8) !void {
 fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
     _ = gic;
     try builder.begin_node("intc");
-    try builder.add_property([:0]const u8, "compatible", Gicv2.FDT_COMPATIBILITY);
+    try builder.add_property([:0]const u8, "compatible", "arm,gic-400");
     try builder.add_property(void, "interrupt-controller", void);
     // "interrupt-cells" field specifies the number of cells needed to encode an
     // interrupt source. The type shall be a <u32> and the value shall be 3 if no PPI affinity
