@@ -1,5 +1,4 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 pub const CacheType = enum {
     Instruction,
@@ -138,7 +137,7 @@ pub const CacheDir = struct {
 
     fn read_info(self: *const Self, comptime index: u32, comptime name: []const u8, read_buff: []u8) !usize {
         const path = std.fmt.comptimePrint("index{d}/{s}", .{ index, name });
-        std.log.info("cache: reading path: {s}", .{path});
+        std.log.debug("cache: reading path: {s}", .{path});
         const file = try self.dir.openFile(path, .{});
         return try file.read(read_buff);
     }

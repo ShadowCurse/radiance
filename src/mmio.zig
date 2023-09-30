@@ -1,4 +1,5 @@
 const MemoryLayout = @import("memory.zig").MemoryLayout;
+const Gicv2 = @import("gicv2.zig");
 const Uart = @import("devices/uart.zig").Uart;
 const Rtc = @import("devices/rtc.zig").Rtc;
 
@@ -38,7 +39,7 @@ pub const Mmio = struct {
 
     pub fn new() Self {
         return Self{
-            .last_irq = MemoryLayout.IRQ_BASE,
+            .last_irq = Gicv2.IRQ_BASE,
             .last_address = MMIO_MEM_START,
             .num_devices = 0,
             .devices = undefined,

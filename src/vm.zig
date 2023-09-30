@@ -1,15 +1,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const linux = std.os.linux;
-
-const KVM = @cImport(@cInclude("linux/kvm.h"));
-
-const Kvm = @import("kvm.zig").Kvm;
+const nix = @import("nix.zig");
+const Kvm = @import("kvm.zig");
 const GuestMemory = @import("memory.zig").GuestMemory;
-const Vcpu = @import("vcpu.zig").Vcpu;
+const Vcpu = @import("vcpu.zig");
 
-// ioctl in std uses c_int as a request type which is incorrect.
-extern "c" fn ioctl(fd: std.os.fd_t, request: c_ulong, ...) c_int;
+fd: std.os.fd_t,
+
+const Self = @This();
 
 pub const VmError = error{
     New,
@@ -18,43 +16,43 @@ pub const VmError = error{
     CreateDevice,
 };
 
-pub const Vm = struct {
-    fd: std.os.fd_t,
-
-    const Self = @This();
-
-    pub fn new(kvm: *const Kvm) !Self {
-        const fd = ioctl(kvm.*.file.handle, KVM.KVM_CREATE_VM, @as(usize, 0));
-        if (fd < 0) {
-            return VmError.New;
-        } else {
-            return Vm{
-                .fd = fd,
-            };
-        }
-    }
-
-    pub fn set_memory(self: *const Self, guest_memory: *GuestMemory) !void {
-        const memory_region: KVM.kvm_userspace_memory_region = .{
-            .slot = 0,
-            .flags = 0,
-            .guest_phys_addr = guest_memory.guest_addr,
-            .memory_size = @as(u64, guest_memory.mem.len),
-            .userspace_addr = @intFromPtr(guest_memory.mem.ptr),
+pub fn new(kvm: *const Kvm) !Self {
+    const fd = nix.ioctl(kvm.*.file.handle, nix.KVM_CREATE_VM, @as(usize, 0));
+    if (fd < 0) {
+        return VmError.New;
+    } else {
+        return Self{
+            .fd = fd,
         };
-
-        const r = ioctl(self.fd, KVM.KVM_SET_USER_MEMORY_REGION, @intFromPtr(&memory_region));
-        if (r < 0) {
-            return VmError.SetMemory;
-        }
     }
+}
 
-    pub fn get_preferred_target(self: *const Self) !Vcpu.kvm_vcpu_init {
-        var kvi: Vcpu.kvm_vcpu_init = undefined;
-        const r = ioctl(self.fd, KVM.KVM_ARM_PREFERRED_TARGET, @intFromPtr(&kvi));
-        if (r < 0) {
-            return VmError.GetPreferredTarget;
-        }
-        return kvi;
+pub fn set_memory(self: *const Self, guest_memory: *GuestMemory) !void {
+    const memory_region: nix.kvm_userspace_memory_region = .{
+        .slot = 0,
+        .flags = 0,
+        .guest_phys_addr = guest_memory.guest_addr,
+        .memory_size = @as(u64, guest_memory.mem.len),
+        .userspace_addr = @intFromPtr(guest_memory.mem.ptr),
+    };
+
+    std.log.debug("set_memory slot: {}", .{memory_region.slot});
+    std.log.debug("set_memory flags: {}", .{memory_region.flags});
+    std.log.debug("set_memory guest_phys_addr: 0x{x}", .{memory_region.guest_phys_addr});
+    std.log.debug("set_memory memory_size: 0x{x}", .{memory_region.memory_size});
+    std.log.debug("set_memory userspace_addr: 0x{x}", .{memory_region.userspace_addr});
+
+    const r = nix.ioctl(self.fd, nix.KVM_SET_USER_MEMORY_REGION, @intFromPtr(&memory_region));
+    if (r < 0) {
+        return VmError.SetMemory;
     }
-};
+}
+
+pub fn get_preferred_target(self: *const Self) !nix.kvm_vcpu_init {
+    var kvi: nix.kvm_vcpu_init = undefined;
+    const r = nix.ioctl(self.fd, nix.KVM_ARM_PREFERRED_TARGET, @intFromPtr(&kvi));
+    if (r < 0) {
+        return VmError.GetPreferredTarget;
+    }
+    return kvi;
+}

@@ -1,31 +1,25 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const linux = std.os.linux;
 
-const KVM = @cImport(@cInclude("linux/kvm.h"));
+const nix = @import("nix.zig");
 
-// ioctl in std uses c_int as a request type which is incorrect.
-extern "c" fn ioctl(fd: std.os.fd_t, request: c_ulong, ...) c_int;
+file: std.fs.File,
+
+const Self = @This();
 
 pub const KvmError = error{
     KvmVersion,
 };
 
-pub const Kvm = struct {
-    file: std.fs.File,
+pub fn new() !Self {
+    return .{ .file = try std.fs.openFileAbsolute("/dev/kvm", .{}) };
+}
 
-    const Self = @This();
-
-    pub fn new() !Self {
-        return .{ .file = try std.fs.openFileAbsolute("/dev/kvm", .{}) };
+pub fn version(self: *const Self) !i32 {
+    const v = std.c.ioctl(self.file.handle, nix.KVM_GET_API_VERSION, @as(usize, 0));
+    if (v < 0) {
+        return KvmError.KvmVersion;
+    } else {
+        return v;
     }
-
-    pub fn version(self: *const Self) !i32 {
-        const v = ioctl(self.file.handle, KVM.KVM_GET_API_VERSION, @as(usize, 0));
-        if (v < 0) {
-            return KvmError.KvmVersion;
-        } else {
-            return v;
-        }
-    }
-};
+}
