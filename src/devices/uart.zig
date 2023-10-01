@@ -1,5 +1,4 @@
 const std = @import("std");
-
 const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 

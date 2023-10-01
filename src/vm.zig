@@ -1,6 +1,7 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
+const log = @import("log.zig");
 const nix = @import("nix.zig");
+const Allocator = std.mem.Allocator;
 const Kvm = @import("kvm.zig");
 const GuestMemory = @import("memory.zig").GuestMemory;
 const Vcpu = @import("vcpu.zig");
@@ -36,11 +37,11 @@ pub fn set_memory(self: *const Self, guest_memory: *GuestMemory) !void {
         .userspace_addr = @intFromPtr(guest_memory.mem.ptr),
     };
 
-    std.log.debug("set_memory slot: {}", .{memory_region.slot});
-    std.log.debug("set_memory flags: {}", .{memory_region.flags});
-    std.log.debug("set_memory guest_phys_addr: 0x{x}", .{memory_region.guest_phys_addr});
-    std.log.debug("set_memory memory_size: 0x{x}", .{memory_region.memory_size});
-    std.log.debug("set_memory userspace_addr: 0x{x}", .{memory_region.userspace_addr});
+    log.debug(@src(), "set_memory slot: {}", .{memory_region.slot});
+    log.debug(@src(), "set_memory flags: {}", .{memory_region.flags});
+    log.debug(@src(), "set_memory guest_phys_addr: 0x{x}", .{memory_region.guest_phys_addr});
+    log.debug(@src(), "set_memory memory_size: 0x{x}", .{memory_region.memory_size});
+    log.debug(@src(), "set_memory userspace_addr: 0x{x}", .{memory_region.userspace_addr});
 
     const r = nix.ioctl(self.fd, nix.KVM_SET_USER_MEMORY_REGION, @intFromPtr(&memory_region));
     if (r < 0) {

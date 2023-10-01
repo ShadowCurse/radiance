@@ -1,5 +1,4 @@
 const std = @import("std");
-
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 
 // PL031 Real Time Clock (RTC)

@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("log.zig");
 const nix = @import("nix.zig");
 const Kvm = @import("kvm.zig");
 const Mmio = @import("mmio.zig").Mmio;
@@ -62,7 +63,7 @@ pub fn set_thread_handler() !i32 {
 
 pub fn kick_thread(thread: *const std.Thread, sig: i32) void {
     const r = nix.pthread_kill(thread.impl.handle, sig);
-    std.log.debug("kick_thread: {}", .{r});
+    log.debug(@src(), "kick_thread: {}", .{r});
 }
 
 pub fn new(kvm: *const Kvm, vm: *const Vm, index: u64) !Self {
@@ -93,7 +94,7 @@ pub fn init(self: *const Self, preferred_target: nix.kvm_vcpu_init) !void {
 }
 
 pub fn set_reg(self: *const Self, comptime t: type, reg_id: u64, value: t) !void {
-    std.log.debug("setting reg: 0x{x} to 0x{x}", .{ reg_id, value });
+    log.debug(@src(), "setting reg: 0x{x} to 0x{x}", .{ reg_id, value });
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
     const r = nix.ioctl(self.fd, nix.KVM_SET_ONE_REG, @intFromPtr(&kor));
     if (r < 0) {
@@ -108,7 +109,7 @@ pub fn get_reg(self: *const Self, reg_id: u64) !u64 {
     if (r < 0) {
         return VcpuError.GetReg;
     }
-    std.log.debug("vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
+    log.debug(@src(), "vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
     return value;
 }
 
@@ -116,13 +117,13 @@ pub fn run(self: *const Self, mmio: *Mmio) !void {
     const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
     // -4 == -EINTR - if vcpu was interrupted
     if (r < 0 and r != -4) {
-        std.log.err("vcpu run error: {}:{}", .{ r, std.c.getErrno(r) });
+        log.err(@src(), "vcpu run error: {}:{}", .{ r, std.c.getErrno(r) });
         return VcpuError.Run;
     }
 
     switch (self.kvm_run.exit_reason) {
-        nix.KVM_EXIT_IO => std.log.debug("Got KVM_EXIT_IO", .{}),
-        nix.KVM_EXIT_HLT => std.log.debug("Got KVM_EXIT_HLT", .{}),
+        nix.KVM_EXIT_IO => log.debug(@src(), "Got KVM_EXIT_IO", .{}),
+        nix.KVM_EXIT_HLT => log.debug(@src(), "Got KVM_EXIT_HLT", .{}),
         nix.KVM_EXIT_MMIO => {
             if (self.kvm_run.unnamed_0.mmio.is_write == 1) {
                 try mmio.write(self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len]);
@@ -130,7 +131,7 @@ pub fn run(self: *const Self, mmio: *Mmio) !void {
                 try mmio.read(self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len]);
             }
         },
-        else => |exit| std.log.debug("Got KVM_EXIT: {}", .{exit}),
+        else => |exit| log.debug(@src(), "Got KVM_EXIT: {}", .{exit}),
     }
 }
 

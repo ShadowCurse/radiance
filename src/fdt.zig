@@ -278,7 +278,6 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
         try builder.add_property([:0]const u8, "enable-method", "psci");
         // Set the field to first 24 bits of the MPIDR - Multiprocessor Affinity Register.
         // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0488c/BABHBJCI.html.
-        std.log.debug("fdt: cpu mpidr: 0x{x}", .{mpidr});
         try builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
         for (cache_entries) |entry| {
             const cache = entry orelse continue;

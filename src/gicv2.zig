@@ -1,8 +1,7 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
-
+const log = @import("log.zig");
 const nix = @import("nix.zig");
-
+const Allocator = std.mem.Allocator;
 const Vm = @import("vm.zig");
 const MemoryLayout = @import("memory.zig").MemoryLayout;
 
@@ -51,7 +50,7 @@ pub fn new(vm: *const Vm) !Self {
 
     // Setting up the distributor attribute.
     // We are placing the GIC below 1GB so we need to substract the size of the distributor.
-    std.log.debug("gic dist_addr: 0x{x}", .{Self.DISTRIBUTOR_ADDRESS});
+    log.debug(@src(), "gic dist_addr: 0x{x}", .{Self.DISTRIBUTOR_ADDRESS});
     try Self.set_attributes(
         fd,
         0,
@@ -61,7 +60,7 @@ pub fn new(vm: *const Vm) !Self {
     );
 
     // Setting up the CPU attribute.
-    std.log.debug("gic cpu_addr: 0x{x}", .{Self.CPU_ADDRESS});
+    log.debug(@src(), "gic cpu_addr: 0x{x}", .{Self.CPU_ADDRESS});
     try Self.set_attributes(
         fd,
         0,
@@ -103,10 +102,10 @@ fn set_attributes(fd: std.os.fd_t, flags: u32, group: u32, attr: u64, addr: u64)
         .attr = attr,
         .addr = addr,
     };
-    std.log.debug("setting gic attributes: {any}", .{kda});
+    log.debug(@src(), "setting gic attributes: {any}", .{kda});
     const r = nix.ioctl(fd, nix.KVM_SET_DEVICE_ATTR, @intFromPtr(&kda));
     if (r < 0) {
-        std.log.err("gicv2 set addr error code: {}", .{r});
+        // log.err("gicv2 set addr error code: {}", .{r});
         return Gicv2Error.SetAttributes;
     }
 }
