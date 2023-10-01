@@ -1,7 +1,7 @@
 const MemoryLayout = @import("memory.zig").MemoryLayout;
 const Gicv2 = @import("gicv2.zig");
-const Uart = @import("devices/uart.zig").Uart;
-const Rtc = @import("devices/rtc.zig").Rtc;
+const Uart = @import("devices/uart.zig");
+const Rtc = @import("devices/rtc.zig");
 
 pub const MMIO_MEM_START: u64 = MemoryLayout.MAPPED_IO_START;
 /// The size of the memory area reserved for MMIO devices.

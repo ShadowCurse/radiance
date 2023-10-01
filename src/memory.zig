@@ -1,5 +1,5 @@
 const std = @import("std");
-
+const log = @import("log.zig");
 const nix = @import("nix.zig");
 
 const FdtBuilder = @import("fdt.zig").FdtBuilder;
@@ -43,8 +43,8 @@ pub const GuestMemory = struct {
         const flags = nix.MAP.PRIVATE | nix.MAP.ANONYMOUS | 0x4000; //std.os.system.MAP.NORESERVE;
         const mem = try std.os.mmap(null, size, prot, flags, -1, 0);
 
-        std.log.debug("mem size: 0x{x}", .{size});
-        std.log.debug("guest_addr: 0x{x}", .{MemoryLayout.DRAM_MEM_START});
+        log.debug(@src(), "mem size: 0x{x}", .{size});
+        log.debug(@src(), "guest_addr: 0x{x}", .{MemoryLayout.DRAM_MEM_START});
 
         return Self{ .guest_addr = MemoryLayout.DRAM_MEM_START, .kernel_end = 0, .mem = mem };
     }
@@ -63,7 +63,7 @@ pub const GuestMemory = struct {
 
         const file_meta = try file.metadata();
         const kernel_size = file_meta.size();
-        std.log.debug("kernel_size: 0x{x}", .{kernel_size});
+        log.debug(@src(), "kernel_size: 0x{x}", .{kernel_size});
 
         try file.seekTo(0);
 
@@ -72,7 +72,7 @@ pub const GuestMemory = struct {
         const n = try file.read(@as([]u8, header_slice));
         std.debug.assert(n == header_slice.len);
 
-        std.log.debug("header: {any}", .{arm64_header});
+        log.debug(@src(), "header: {any}", .{arm64_header});
 
         if (arm64_header.magic != 0x644d_5241) {
             return MemoryError.InvalidMagicNumber;
@@ -82,10 +82,10 @@ pub const GuestMemory = struct {
         if (arm64_header.image_size == 0) {
             text_offset = 0x80000;
         }
-        std.log.debug("text_offset: 0x{x}", .{text_offset});
+        log.debug(@src(), "text_offset: 0x{x}", .{text_offset});
 
         const kernel_offset = MemoryLayout.DRAM_MEM_START;
-        std.log.debug("kernel_offset: 0x{x}", .{kernel_offset});
+        log.debug(@src(), "kernel_offset: 0x{x}", .{kernel_offset});
 
         // Validate that kernel_offset is 2 MB aligned, as required by the
         // arm64 boot protocol
@@ -95,8 +95,8 @@ pub const GuestMemory = struct {
 
         const mem_offset = kernel_offset + text_offset;
         const kernel_end = mem_offset + kernel_size;
-        std.log.debug("mem_offset: 0x{x}", .{mem_offset});
-        std.log.debug("kernel_end: 0x{x}", .{kernel_end});
+        log.debug(@src(), "mem_offset: 0x{x}", .{mem_offset});
+        log.debug(@src(), "kernel_end: 0x{x}", .{kernel_end});
 
         try file.seekTo(0);
 
