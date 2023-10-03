@@ -1,4 +1,5 @@
 const std = @import("std");
+const args_parser = @import("args_parser.zig");
 
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
@@ -16,17 +17,22 @@ const Vm = @import("vm.zig");
 
 pub const log_level: std.log.Level = .debug;
 
+const Args = struct {
+    kernel_path: []const u8,
+    memory_size: u32,
+};
+
 pub fn main() !void {
+    const args = try args_parser.parse(Args);
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // @import("log.zig").info(@src(), "{} and {s} and {x}", .{ 69, "lol", 0x69 });
-
     // create guest memory (128 MB)
-    var gm = try GuestMemory.init(128 << 20);
+    var gm = try GuestMemory.init(args.memory_size << 20);
     defer gm.deinit();
-    const kernel_load_address = try gm.load_linux_kernel("vmlinux-5.10.186");
+    const kernel_load_address = try gm.load_linux_kernel(args.kernel_path);
     std.log.info("kernel_load_address: 0x{x}", .{kernel_load_address});
 
     // create kvm context
