@@ -1,5 +1,8 @@
 const std = @import("std");
-const KVM = @cImport(@cInclude("linux/kvm.h"));
+const C = @cImport({
+    @cInclude("linux/kvm.h");
+    @cInclude("linux/virtio_ring.h");
+});
 
 // Can not just use std.os.linux because of ioctl redefinition
 // pub usingnamespace std.os.linux;
@@ -7,7 +10,7 @@ pub const PROT = std.os.linux.PROT;
 pub const MAP = std.os.linux.MAP;
 pub const Sigaction = std.os.linux.Sigaction;
 
-pub usingnamespace KVM;
+pub usingnamespace C;
 
 // ioctl in std uses c_int as a request type which is incorrect.
 pub extern "c" fn ioctl(fd: std.os.fd_t, request: c_ulong, ...) c_int;
