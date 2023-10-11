@@ -9,6 +9,9 @@ const C = @cImport({
 pub const PROT = std.os.linux.PROT;
 pub const MAP = std.os.linux.MAP;
 pub const Sigaction = std.os.linux.Sigaction;
+pub const close = std.c.close;
+pub const read = std.c.read;
+pub const write = std.c.write;
 
 pub usingnamespace C;
 
@@ -16,3 +19,4 @@ pub usingnamespace C;
 pub extern "c" fn ioctl(fd: std.os.fd_t, request: c_ulong, ...) c_int;
 pub extern "c" fn __libc_current_sigrtmin() c_int;
 pub extern "c" fn pthread_kill(thread: std.c.pthread_t, sig: i32) std.c.E;
+pub extern "c" fn eventfd(interval: u32, flags: i32) c_int;
