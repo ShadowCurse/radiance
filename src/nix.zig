@@ -2,6 +2,7 @@ const std = @import("std");
 const C = @cImport({
     @cInclude("linux/kvm.h");
     @cInclude("linux/virtio_ring.h");
+    @cInclude("sys/eventfd.h");
 });
 
 // Can not just use std.os.linux because of ioctl redefinition
@@ -19,4 +20,3 @@ pub usingnamespace C;
 pub extern "c" fn ioctl(fd: std.os.fd_t, request: c_ulong, ...) c_int;
 pub extern "c" fn __libc_current_sigrtmin() c_int;
 pub extern "c" fn pthread_kill(thread: std.c.pthread_t, sig: i32) std.c.E;
-pub extern "c" fn eventfd(interval: u32, flags: i32) c_int;
