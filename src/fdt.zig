@@ -218,6 +218,7 @@ pub fn create_fdt(
     cmdline: [:0]const u8,
     gic: *const Gicv2,
     serial_device_info: MmioDeviceInfo,
+    virtio_devices_info: []const MmioDeviceInfo,
 ) !FdtBuilder {
     const ADDRESS_CELLS: u32 = 0x2;
     const SIZE_CELLS: u32 = 0x2;
@@ -245,6 +246,10 @@ pub fn create_fdt(
     try create_clock_node(&fdt_builder);
     try create_psci_node(&fdt_builder);
     try create_serial_node(&fdt_builder, serial_device_info);
+
+    for (virtio_devices_info) |*info| {
+        try create_virtio_node(&fdt_builder, info);
+    }
 
     // End Header node.
     try fdt_builder.end_node();
@@ -450,5 +455,24 @@ fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) !void {
         "interrupts",
         &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, 32, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
+    try builder.end_node();
+}
+
+fn create_virtio_node(
+    builder: *FdtBuilder,
+    device_info: *const MmioDeviceInfo,
+) !void {
+    var buff: [30]u8 = undefined;
+    const name = try std.fmt.bufPrintZ(&buff, "virtio_mmio@{x:.8}", .{device_info.addr});
+    try builder.begin_node(name);
+
+    try builder.add_property([:0]const u8, "compatible", "virtio,mmio");
+    try builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
+    try builder.add_property(
+        []const u32,
+        "interrupts",
+        &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, device_info.irq, FdtBuilder.IRQ_TYPE_EDGE_RISING },
+    );
+    try builder.add_property(u32, "interrupt-parent", FdtBuilder.GIC_PHANDLE);
     try builder.end_node();
 }
