@@ -2,6 +2,7 @@ const MemoryLayout = @import("memory.zig").MemoryLayout;
 const Gicv2 = @import("gicv2.zig");
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
+const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
 
 pub const MMIO_MEM_START: u64 = MemoryLayout.MAPPED_IO_START;
 /// The size of the memory area reserved for MMIO devices.
@@ -15,11 +16,13 @@ pub const MMIO_LEN: u64 = 0x1000;
 pub const MmioDeviceTag = enum {
     Uart,
     Rtc,
+    VirtioBlock,
 };
 
 pub const MmioDevice = union(MmioDeviceTag) {
     Uart: *Uart,
     Rtc: *Rtc,
+    VirtioBlock: *VirtioBlock,
 };
 
 pub const MmioDeviceInfo = struct {
@@ -69,6 +72,7 @@ pub const Mmio = struct {
             switch (device) {
                 .Uart => |uart| handled = try uart.write(addr, data),
                 .Rtc => |rtc| handled = try rtc.write(addr, data),
+                .VirtioBlock => |vb| handled = try vb.write(addr, data),
             }
             if (handled) {
                 break;
@@ -82,6 +86,7 @@ pub const Mmio = struct {
             switch (device) {
                 .Uart => |uart| handled = try uart.read(addr, data),
                 .Rtc => |rtc| handled = try rtc.read(addr, data),
+                .VirtioBlock => |vb| handled = try vb.read(addr, data),
             }
             if (handled) {
                 break;
