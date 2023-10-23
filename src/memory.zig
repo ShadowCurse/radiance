@@ -53,6 +53,11 @@ pub const GuestMemory = struct {
         std.os.munmap(self.mem);
     }
 
+    pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *T {
+        const offset = addr - self.guest_addr;
+        return @ptrFromInt(@as(u64, @intFromPtr(self.mem.ptr)) + offset);
+    }
+
     pub fn last_addr(self: *const Self) u64 {
         return self.guest_addr + self.mem.len - 1;
     }
