@@ -2,6 +2,7 @@ const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
+const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 const GuestMemory = @import("../memory.zig").GuestMemory;
@@ -15,6 +16,10 @@ pub const TYPE_BLOCK: u32 = 2;
 
 pub const VirtioBlockConfig = [CONFIG_SPACE_SIZE]u8;
 
+pub const VirtioBlockError = error{
+    New,
+};
+
 pub const VirtioBlock = struct {
     read_only: bool,
     guest_memory: *GuestMemory,
@@ -24,15 +29,13 @@ pub const VirtioBlock = struct {
 
     const Self = @This();
 
-    pub fn new(file_path: []const u8, read_only: bool, guest_memory: *GuestMemory, mmio_info: MmioDeviceInfo) !Self {
+    pub fn new(vm: *const Vm, file_path: []const u8, read_only: bool, guest_memory: *GuestMemory, mmio_info: MmioDeviceInfo) !Self {
         const file = try std.fs.cwd().openFile(file_path, .{});
         const meta = try file.metadata();
         const nsectors = meta.size() >> SECTOR_SHIFT;
 
-        log.info(@src(), "nsectors: {}", .{nsectors});
-
         var virtio_context = try VirtioContext(VirtioBlockConfig).new(TYPE_BLOCK);
-        virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1) | (1 << nix.VIRTIO_RING_F_EVENT_IDX);
+        virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1); // | (1 << nix.VIRTIO_RING_F_EVENT_IDX);
         if (read_only) {
             virtio_context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
         }
@@ -40,6 +43,14 @@ pub const VirtioBlock = struct {
         const nsectors_slice = std.mem.asBytes(&nsectors);
         const config_slice = std.mem.asBytes(&virtio_context.config_blob);
         std.mem.copy(u8, config_slice, nsectors_slice);
+
+        var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
+        kvm_irqfd.fd = @intCast(virtio_context.irq_evt.fd);
+        kvm_irqfd.gsi = mmio_info.irq;
+        const fd = nix.ioctl(vm.fd, nix.KVM_IRQFD, &kvm_irqfd);
+        if (fd < 0) {
+            return VirtioBlockError.New;
+        }
 
         return Self{
             .read_only = read_only,
@@ -64,8 +75,12 @@ pub const VirtioBlock = struct {
         }
         const offset = addr - self.mmio_info.addr;
         switch (self.virtio_context.write(offset, data)) {
-            VirtioAction.ActivateDevice => self.activate(),
-            else => {},
+            VirtioAction.NoAction => {},
+            VirtioAction.ActivateDevice => {},
+            VirtioAction.QueueNotification => |q| try self.process_queue(q),
+            else => |action| {
+                log.err(@src(), "unhandled write virtio action: {}", .{action});
+            },
         }
         return true;
     }
@@ -76,12 +91,64 @@ pub const VirtioBlock = struct {
         }
         const offset = addr - self.mmio_info.addr;
         switch (self.virtio_context.read(offset, data)) {
-            else => {},
+            VirtioAction.NoAction => {},
+            else => |action| {
+                log.err(@src(), "unhandled read virtio action: {}", .{action});
+            },
         }
         return true;
     }
 
-    pub fn activate(self: *Self) void {
-        self.virtio_context.queue.patch_ptrs(self.guest_memory);
+    pub fn process_queue(self: *Self, queue_idx: u32) !void {
+        _ = queue_idx;
+        var desc_chain = self.virtio_context.queue.pop_desc_chain(self.guest_memory);
+
+        const first_desc_index = desc_chain.index.?;
+        const first_desc = desc_chain.next().?;
+        const header = self.guest_memory.get_ptr(nix.virtio_blk_outhdr, first_desc.addr);
+        const offset = header.sector << SECTOR_SHIFT;
+
+        const second_desc = desc_chain.next().?;
+        const data_addr = second_desc.addr;
+        const data_len = second_desc.len;
+        // if has next
+        if ((second_desc.flags & nix.VRING_DESC_F_NEXT) != 0) {
+            const third_desc = desc_chain.next().?;
+            var data_transfered: usize = 0;
+            switch (header.type) {
+                nix.VIRTIO_BLK_T_IN => {
+                    log.err(@src(), "VIRTIO_BLK_T_IN offset: {}", .{offset});
+                    try self.file.seekTo(offset);
+                    var buffer: []u8 = undefined;
+                    buffer.ptr = @ptrCast(self.guest_memory.get_ptr(u8, data_addr));
+                    buffer.len = data_len;
+                    data_transfered = try self.file.read(buffer);
+                },
+                nix.VIRTIO_BLK_T_OUT => {
+                    log.err(@src(), "VIRTIO_BLK_T_OUT offset: {}", .{offset});
+                    try self.file.seekTo(offset);
+                    var buffer: []const u8 = undefined;
+                    buffer.ptr = @ptrCast(self.guest_memory.get_ptr(u8, data_addr));
+                    buffer.len = data_len;
+                    data_transfered = try self.file.write(buffer);
+                },
+                nix.VIRTIO_BLK_T_FLUSH => {
+                    log.err(@src(), "VIRTIO_BLK_T_FLUSH", .{});
+                    try self.file.sync();
+                },
+                else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
+            }
+
+            const status_ptr = self.guest_memory.get_ptr(u32, third_desc.addr);
+            status_ptr.* = nix.VIRTIO_BLK_S_OK;
+
+            self.virtio_context.queue.add_used_desc(self.guest_memory, first_desc_index, @intCast(data_transfered + 1));
+
+            try self.virtio_context.irq_evt.write(1);
+        } else {
+            // this is FLUSH command
+            log.err(@src(), "VIRTIO_BLK_T_FLUSH2", .{});
+            try self.file.sync();
+        }
     }
 };
