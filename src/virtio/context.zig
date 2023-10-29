@@ -26,13 +26,15 @@ pub const MMIO_MAGIC_VALUE: u32 = 0x7472_6976;
 // current version specified by the mmio standard (legacy devices used 1 here)
 pub const MMIO_VERSION: u32 = 2;
 
-pub const VirtioAction = enum {
+pub const VirtioActionTag = enum {
     NoAction,
     ActivateDevice,
     ResetDevice,
-    ConfigRead,
     ConfigWrite,
+    QueueNotification,
 };
+
+pub const VirtioAction = union(VirtioActionTag) { NoAction: void, ActivateDevice: void, ResetDevice: void, ConfigWrite: void, QueueNotification: u32 };
 
 pub fn VirtioContext(comptime config_type: type) type {
     return struct {
@@ -85,7 +87,6 @@ pub fn VirtioContext(comptime config_type: type) type {
 
         fn update_device_status(self: *Self, status: u32) ?VirtioAction {
             const changed_bit = ~self.device_status & status;
-            log.info(@src(), "changin device status: {}", .{changed_bit});
             switch (changed_bit) {
                 ACKNOWLEDGE => if (self.device_status == INIT) {
                     self.device_status = status;
@@ -132,7 +133,8 @@ pub fn VirtioContext(comptime config_type: type) type {
                 0x34 => data_u32.* = Queue.MAX_SIZE,
                 0x44 => data_u32.* = @intFromBool(self.queue.ready),
                 0x60 => {
-                    data_u32.* = self.interrupt_status;
+                    // 0x1 means status is always ready
+                    data_u32.* = self.interrupt_status | 0x1;
                 },
                 0x70 => data_u32.* = self.device_status,
                 0xfc => data_u32.* = self.config_generation,
@@ -140,7 +142,6 @@ pub fn VirtioContext(comptime config_type: type) type {
                     const new_offset = offset - 0x100;
                     const config_blob_slice = std.mem.asBytes(&self.config_blob);
                     @memcpy(data, config_blob_slice[new_offset .. new_offset + data.len]);
-                    return VirtioAction.ConfigRead;
                 },
                 else => {
                     log.warn(@src(), "invalid virtio read: offset: 0x{x}, data: {any}", .{ offset, data });
@@ -170,8 +171,11 @@ pub fn VirtioContext(comptime config_type: type) type {
                 },
                 0x24 => self.driver_features_word = data_u32.*,
                 0x30 => self.selected_queue = data_u32.*,
-                0x38 => self.queue.size = data_u32.*,
+                0x38 => {
+                    self.queue.size = @truncate(data_u32.*);
+                },
                 0x44 => self.queue.ready = data_u32.* == 1,
+                0x50 => return VirtioAction{ .QueueNotification = data_u32.* },
                 0x64 => {
                     self.interrupt_status &= ~data_u32.*;
                 },

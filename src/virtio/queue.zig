@@ -92,11 +92,19 @@ pub const Queue = struct {
     }
 
     /// Pop the first available descriptor chain from the avail ring.
-    pub fn pop_desc_chain(self: *Self, guest_memory: *GuestMemory) DescriptorChain {
-        const avail_ring = guest_memory.get_ptr(nix.vring_avail, self.avail_ring);
-        const desc_index = avail_ring.ring()[self.next_avail];
+    pub fn pop_desc_chain(self: *Self, guest_memory: *GuestMemory) ?DescriptorChain {
+        // std.atomic.fence(std.atomic.Ordering.Acquire);
 
-        self.next_avail = self.next_avail % self.size;
+        // avail_ring is only written by the driver
+        const avail_ring = guest_memory.get_ptr(nix.vring_avail, self.avail_ring);
+
+        if (self.next_avail == avail_ring.idx) {
+            return null;
+        }
+
+        const next_avail = self.next_avail % self.size;
+        const desc_index = avail_ring.ring()[next_avail];
+
         self.next_avail = self.next_avail +% 1;
 
         var desc_table_slice: []nix.vring_desc = undefined;
@@ -116,12 +124,15 @@ pub const Queue = struct {
         desc_id: u16,
         data_len: u32,
     ) void {
+        // used_ring is only written by the device
         const used_ring = guest_memory.get_ptr(nix.vring_used, self.used_ring);
-        used_ring.ring()[self.next_used].id = desc_id;
-        used_ring.ring()[self.next_used].len = data_len;
+        const next_used = self.next_used % self.size;
+        used_ring.ring()[next_used].id = desc_id;
+        used_ring.ring()[next_used].len = data_len;
 
-        self.next_used = self.next_used % self.size;
         self.next_used = self.next_used +% 1;
+
+        // std.atomic.fence(std.atomic.Ordering.Release);
 
         used_ring.idx = self.next_used;
     }
