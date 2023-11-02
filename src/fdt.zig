@@ -218,6 +218,7 @@ pub fn create_fdt(
     cmdline: [:0]const u8,
     gic: *const Gicv2,
     serial_device_info: MmioDeviceInfo,
+    rtc_device_info: MmioDeviceInfo,
     virtio_devices_info: []const MmioDeviceInfo,
 ) !FdtBuilder {
     const ADDRESS_CELLS: u32 = 0x2;
@@ -245,7 +246,9 @@ pub fn create_fdt(
     try create_timer_node(&fdt_builder);
     try create_clock_node(&fdt_builder);
     try create_psci_node(&fdt_builder);
+
     try create_serial_node(&fdt_builder, serial_device_info);
+    try create_rtc_node(&fdt_builder, rtc_device_info);
 
     for (virtio_devices_info) |*info| {
         try create_virtio_node(&fdt_builder, info);
@@ -455,6 +458,22 @@ fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) !void {
         "interrupts",
         &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, 32, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
+    try builder.end_node();
+}
+
+fn create_rtc_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) !void {
+    // Driver requirements:
+    // https://elixir.bootlin.com/linux/latest/source/Documentation/devicetree/bindings/rtc/arm,pl031.yaml
+    // We do not offer the `interrupt` property because the device
+    // does not implement interrupt support.
+    var buff: [20]u8 = undefined;
+    const name = try std.fmt.bufPrintZ(&buff, "rtc@{x:.8}", .{device_info.addr});
+    try builder.begin_node(name);
+
+    try builder.add_property([:0]const u8, "compatible", "arm,pl031\u{0}arm,primecell");
+    try builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
+    try builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
+    try builder.add_property([:0]const u8, "clock-names", "apb_pclk");
     try builder.end_node();
 }
 
