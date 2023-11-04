@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("../log.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 
 // PL031 Real Time Clock (RTC)
@@ -73,13 +74,16 @@ pub fn write(self: *Self, addr: u64, data: []u8) !bool {
                 self.offset = 0;
             }
         },
-        RTCIMSC => self.imsc = val.*,
+        RTCIMSC => self.imsc = val.* & 1,
         RTCICR => {
-            if (val.* == 1) {
-                self.ris = 0;
-            }
+            // if (val.* == 1) {
+            //     self.ris = 0;
+            // }
+            self.ris &= ~val.*;
         },
-        else => {},
+        else => {
+            log.err(@src(), "invalid rtc write: addr: {x} data: {}", .{ addr, val.* });
+        },
     }
     return true;
 }
@@ -108,7 +112,10 @@ pub fn read(self: *Self, addr: u64, data: []u8) !bool {
         0xFF4 => @as(u32, 0xF0),
         0xFF8 => @as(u32, 0x05),
         0xFFC => @as(u32, 0xB1),
-        else => return true,
+        else => {
+            log.err(@src(), "invalid rtc read: addr: {x}", .{addr});
+            return true;
+        },
     };
 
     const bytes = std.mem.asBytes(&v);
