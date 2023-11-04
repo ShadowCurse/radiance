@@ -1,6 +1,11 @@
 const std = @import("std");
+const nix = @import("../nix.zig");
+const log = @import("../log.zig");
+
+const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
+const EventFd = @import("../virtio/eventfd.zig");
 
 // Impementation of 16550 UART device with baud of 9600
 
@@ -96,10 +101,26 @@ SCR: u8,
 // until no more bytes are present. Bit 0 in the LSR line status register can be used to check
 // if all received bytes have been read. This bit will change to zero if no more bytes are present.
 // rbr: [FIFO_SIZE]u8,
+fifo: std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = FIFO_SIZE }),
+
+irq_evt: EventFd,
 
 const Self = @This();
 
-pub fn new(in: std.os.fd_t, out: std.os.fd_t, mmio_info: MmioDeviceInfo) Self {
+pub const UartError = error{
+    New,
+};
+
+pub fn new(vm: *const Vm, in: std.os.fd_t, out: std.os.fd_t, mmio_info: MmioDeviceInfo) !Self {
+    const irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK);
+    var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
+    kvm_irqfd.fd = @intCast(irq_evt.fd);
+    kvm_irqfd.gsi = mmio_info.irq;
+    const fd = nix.ioctl(vm.fd, nix.KVM_IRQFD, &kvm_irqfd);
+    if (fd < 0) {
+        return UartError.New;
+    }
+
     return Self{
         .in = in,
         .out = out,
@@ -120,6 +141,8 @@ pub fn new(in: std.os.fd_t, out: std.os.fd_t, mmio_info: MmioDeviceInfo) Self {
         .MCR = MCR_OUT2_MASK,
         .MSR = MSR_DSR_MASK | MSR_CTS_MASK | MSR_DCD_MASK,
         .SCR = 0,
+        .irq_evt = irq_evt,
+        .fifo = std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = FIFO_SIZE }).init(),
     };
 }
 
@@ -171,7 +194,18 @@ fn thr_empty_interrupt(self: *Self) !void {
         // set or acknowledged.
         if ((self.IIR & IIR_THR_EMPTY_MASK) == 0) {
             self.add_interrupt(IIR_THR_EMPTY_MASK);
-            // self.trigger_interrupt()?
+            try self.irq_evt.write(1);
+        }
+    }
+}
+
+fn received_data_interrupt(self: *Self) !void {
+    if (self.rda_interrupt_enabled()) {
+        // Trigger the interrupt only if the identification bit wasn't
+        // set or acknowledged.
+        if (self.IIR & IIR_RDA_MASK == 0) {
+            self.add_interrupt(IIR_RDA_MASK);
+            try self.irq_evt.write(1);
         }
     }
 }
@@ -194,11 +228,10 @@ pub fn write(self: *Self, addr: u64, data: []u8) !bool {
                     // transmitted bytes and letting the driver know there is some
                     // pending data to be read, by setting RDA bit and its
                     // corresponding interrupt.
-                    // if (self.in_buffer.len() < FIFO_SIZE) {
-                    // self.in_buffer.push_back(value);
-                    self.LSR |= LSR_DATA_READY_MASK;
-                    // try self.received_data_interrupt();
-                    // }
+                    if (self.fifo.writeItem(value)) |_| {
+                        self.LSR |= LSR_DATA_READY_MASK;
+                        try self.received_data_interrupt();
+                    } else |_| {}
                 } else {
                     _ = try std.os.write(self.out, data);
 
@@ -239,10 +272,10 @@ pub fn read(self: *Self, addr: u64, data: []u8) !bool {
                 // interrupt identification register and RDA bit when no
                 // more data is available).
                 self.remove_interrupt(IIR_RDA_MASK);
-                const byte = 0; //self.in_buffer.pop_front().unwrap_or_default();
-                // if (self.in_buffer.is_empty()) {
-                self.LSR &= ~LSR_DATA_READY_MASK;
-                // }
+                const byte = self.fifo.readItem() orelse 0;
+                if (self.fifo.count == 0) {
+                    self.LSR &= ~LSR_DATA_READY_MASK;
+                }
                 break :blk byte;
             }
         },
