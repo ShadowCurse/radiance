@@ -152,6 +152,38 @@ pub fn add_to_cmdline(self: *const Self, cmdline: *CmdLine) !void {
     try cmdline.append(cmd);
 }
 
+fn signal_handler(s: c_int) callconv(.C) void {
+    _ = s;
+    nix.pthread_exit(null);
+    // const self = nix.pthread_self();
+    // _ = nix.pthread_cancel(self);
+}
+
+pub fn read_input_threaded(self: *Self) !void {
+    // Setup the signal handler to exit the thread
+    // after vcpus are finished.
+    const sigact = nix.Sigaction{
+        .handler = .{ .handler = signal_handler },
+        .flags = nix.SA_SIGINFO,
+        .mask = .{},
+        .restorer = null,
+    };
+    try std.os.sigaction(@intCast(nix.SIGINT), &sigact, null);
+
+    while (true) {
+        var buff: [8]u8 = undefined;
+        const n = try std.os.read(self.in, &buff);
+        if (n <= 0) {
+            break;
+        }
+        if (n <= self.fifo.writableLength() and !self.in_loop_mode()) {
+            try self.fifo.write(buff[0..n]);
+            self.LSR |= LSR_DATA_READY_MASK;
+            try self.received_data_interrupt();
+        }
+    }
+}
+
 fn dlab_set(self: *const Self) bool {
     return (self.LCR & LCR_DLAB_MASK) != 0;
 }
