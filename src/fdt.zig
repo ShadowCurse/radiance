@@ -456,7 +456,7 @@ fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) !void {
     try builder.add_property(
         []const u32,
         "interrupts",
-        &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, 32, FdtBuilder.IRQ_TYPE_EDGE_RISING },
+        &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, device_info.irq, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
     try builder.end_node();
 }
