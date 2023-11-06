@@ -62,7 +62,7 @@ pub fn set_thread_handler() !i32 {
 }
 
 pub fn kick_thread(thread: *const std.Thread, sig: i32) void {
-    const r = nix.pthread_kill(thread.impl.handle, sig);
+    const r = nix.pthread_kill(@intFromPtr(thread.impl.handle), sig);
     log.debug(@src(), "kick_thread: {}", .{r});
 }
 
@@ -113,7 +113,7 @@ pub fn get_reg(self: *const Self, reg_id: u64) !u64 {
     return value;
 }
 
-pub fn run(self: *const Self, mmio: *Mmio) !void {
+pub fn run(self: *const Self, mmio: *Mmio) !bool {
     const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
     // -4 == -EINTR - if vcpu was interrupted
     if (r < 0 and r != -4) {
@@ -122,8 +122,33 @@ pub fn run(self: *const Self, mmio: *Mmio) !void {
     }
 
     switch (self.kvm_run.exit_reason) {
-        nix.KVM_EXIT_IO => log.debug(@src(), "Got KVM_EXIT_IO", .{}),
-        nix.KVM_EXIT_HLT => log.debug(@src(), "Got KVM_EXIT_HLT", .{}),
+        nix.KVM_EXIT_IO => log.info(@src(), "Got KVM_EXIT_IO", .{}),
+        nix.KVM_EXIT_HLT => log.info(@src(), "Got KVM_EXIT_HLT", .{}),
+        nix.KVM_EXIT_SYSTEM_EVENT => {
+            switch (self.kvm_run.unnamed_0.system_event.type) {
+                nix.KVM_SYSTEM_EVENT_SHUTDOWN => {
+                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN", .{});
+                    return false;
+                },
+                nix.KVM_SYSTEM_EVENT_RESET => {
+                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_RESET", .{});
+                    return false;
+                },
+                nix.KVM_SYSTEM_EVENT_CRASH => {
+                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_CRASH", .{});
+                    return false;
+                },
+                nix.KVM_SYSTEM_EVENT_WAKEUP => {
+                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_WAKEUP", .{});
+                },
+                nix.KVM_SYSTEM_EVENT_SUSPEND => {
+                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SUSPEND", .{});
+                },
+                else => |x| {
+                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with unknown type: {}", .{x});
+                },
+            }
+        },
         nix.KVM_EXIT_MMIO => {
             if (self.kvm_run.unnamed_0.mmio.is_write == 1) {
                 try mmio.write(self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len]);
@@ -131,13 +156,15 @@ pub fn run(self: *const Self, mmio: *Mmio) !void {
                 try mmio.read(self.kvm_run.unnamed_0.mmio.phys_addr, self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len]);
             }
         },
-        else => |exit| log.debug(@src(), "Got KVM_EXIT: {}", .{exit}),
+        else => |exit| log.info(@src(), "Got KVM_EXIT: {}", .{exit}),
     }
+    return true;
 }
 
 pub fn run_threaded(self: *Self, mmio: *Mmio) !void {
     self_ref = self;
-    while (true) {
-        try self.run(mmio);
+    var r = true;
+    while (r) {
+        r = try self.run(mmio);
     }
 }
