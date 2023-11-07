@@ -1,3 +1,4 @@
+const log = @import("log.zig");
 const MemoryLayout = @import("memory.zig").MemoryLayout;
 const Gicv2 = @import("gicv2.zig");
 const Uart = @import("devices/uart.zig");
@@ -67,8 +68,8 @@ pub const Mmio = struct {
     }
 
     pub fn write(self: *const Self, addr: u64, data: []u8) !void {
+        var handled: bool = false;
         for (self.devices[0..self.num_devices]) |device| {
-            var handled: bool = false;
             switch (device) {
                 .Uart => |uart| handled = try uart.write(addr, data),
                 .Rtc => |rtc| handled = try rtc.write(addr, data),
@@ -78,11 +79,14 @@ pub const Mmio = struct {
                 break;
             }
         }
+        if (!handled) {
+            log.err(@src(), "unhandled mmio write addr: {x} data: {any}", .{ addr, data });
+        }
     }
 
     pub fn read(self: *const Self, addr: u64, data: []u8) !void {
+        var handled: bool = false;
         for (self.devices[0..self.num_devices]) |device| {
-            var handled: bool = false;
             switch (device) {
                 .Uart => |uart| handled = try uart.read(addr, data),
                 .Rtc => |rtc| handled = try rtc.read(addr, data),
@@ -91,6 +95,9 @@ pub const Mmio = struct {
             if (handled) {
                 break;
             }
+        }
+        if (!handled) {
+            log.err(@src(), "unhandled mmio read addr: {x} data: {any}", .{ addr, data });
         }
     }
 };
