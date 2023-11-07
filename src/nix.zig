@@ -2,7 +2,12 @@ const std = @import("std");
 const C = @cImport({
     @cInclude("linux/kvm.h");
     @cInclude("linux/virtio_ring.h");
+    @cInclude("linux/virtio_config.h");
+    @cInclude("linux/virtio_blk.h");
     @cInclude("sys/eventfd.h");
+    @cInclude("fcntl.h");
+    @cInclude("signal.h");
+    @cInclude("pthread.h");
 });
 
 // Can not just use std.os.linux because of ioctl redefinition
@@ -18,5 +23,3 @@ pub usingnamespace C;
 
 // ioctl in std uses c_int as a request type which is incorrect.
 pub extern "c" fn ioctl(fd: std.os.fd_t, request: c_ulong, ...) c_int;
-pub extern "c" fn __libc_current_sigrtmin() c_int;
-pub extern "c" fn pthread_kill(thread: std.c.pthread_t, sig: i32) std.c.E;
