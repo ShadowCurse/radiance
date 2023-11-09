@@ -1,8 +1,12 @@
 const std = @import("std");
+const log = @import("log.zig");
+const nix = @import("nix.zig");
 const args_parser = @import("args_parser.zig");
 
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
+const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
+
 const CacheDir = @import("cache.zig").CacheDir;
 const CmdLine = @import("cmdline.zig");
 const FDT = @import("fdt.zig");
@@ -12,6 +16,7 @@ const GuestMemory = @import("memory.zig").GuestMemory;
 const MMIO = @import("mmio.zig");
 const Mmio = MMIO.Mmio;
 const MmioDevice = MMIO.MmioDevice;
+// const MmioDeviceInfo = MMIO.MmioDeviceInfo;
 const Vcpu = @import("vcpu.zig");
 const Vm = @import("vm.zig");
 
@@ -19,6 +24,7 @@ pub const log_level: std.log.Level = .debug;
 
 const Args = struct {
     kernel_path: []const u8,
+    rootfs_path: []const u8,
     memory_size: u32,
 };
 
@@ -35,7 +41,6 @@ pub fn main() !void {
     const kernel_load_address = try gm.load_linux_kernel(args.kernel_path);
     std.log.info("kernel_load_address: 0x{x}", .{kernel_load_address});
 
-    // create kvm context
     const kvm = try Kvm.new();
 
     const version = try kvm.version();
@@ -59,23 +64,27 @@ pub fn main() !void {
     var mmio = Mmio.new();
     const uart_device_info = mmio.allocate();
     const rtc_device_info = mmio.allocate();
+    const virtio_block_device_info = mmio.allocate();
 
-    var uart = Uart.new(std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
+    var uart = try Uart.new(&vm, std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new(rtc_device_info);
+    var virtio_block = try VirtioBlock.new(&vm, args.rootfs_path, true, &gm, virtio_block_device_info);
 
     mmio.add_device(MmioDevice{ .Uart = &uart });
     mmio.add_device(MmioDevice{ .Rtc = &rtc });
+    mmio.add_device(MmioDevice{ .VirtioBlock = &virtio_block });
 
     var cmdline = try CmdLine.new(allocator, 50);
     defer cmdline.deinit();
 
     try cmdline.append("console=ttyS0 reboot=k panic=1 pci=off");
+    try virtio_block.add_to_cmdline(&cmdline);
     try uart.add_to_cmdline(&cmdline);
 
     const cmdline_0 = try cmdline.sentinel_str();
     std.log.info("cmdline: {s}", .{cmdline_0});
 
-    var fdt = try FDT.create_fdt(allocator, &gm, &.{vcpu_mpidr}, cmdline_0, &gicv2, uart_device_info);
+    var fdt = try FDT.create_fdt(allocator, &gm, &.{vcpu_mpidr}, cmdline_0, &gicv2, uart_device_info, rtc_device_info, &.{virtio_block_device_info});
     defer fdt.deinit();
 
     const fdt_addr = try gm.load_fdt(&fdt);
@@ -84,18 +93,15 @@ pub fn main() !void {
     try vcpu.set_reg(u64, Vcpu.REGS0, @as(u64, fdt_addr));
     try vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
 
-    std.log.info("fdt built", .{});
-
-    const sig = try Vcpu.set_thread_handler();
+    // const sig = try Vcpu.set_thread_handler();
     const t = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ &vcpu, &mmio });
+    // Vcpu.kick_thread(&t, sig);
 
-    std.log.info("sleeping...", .{});
-    // 1 second
-    std.time.sleep(1 * 1000_000_000);
-    Vcpu.kick_thread(&t, sig);
-    std.log.info("immediate_exit set", .{});
-
+    const input_thread = try std.Thread.spawn(.{}, Uart.read_input_threaded, .{&uart});
     t.join();
+
+    _ = nix.pthread_kill(@intFromPtr(input_thread.impl.handle), nix.SIGINT);
+    input_thread.join();
 }
 
 test "simple test" {
