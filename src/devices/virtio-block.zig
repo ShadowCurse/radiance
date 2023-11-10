@@ -5,7 +5,7 @@ const log = @import("../log.zig");
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
-const GuestMemory = @import("../memory.zig").GuestMemory;
+const Memory = @import("../memory.zig");
 const VIRTIO = @import("../virtio/context.zig");
 const VirtioContext = VIRTIO.VirtioContext;
 const VirtioAction = VIRTIO.VirtioAction;
@@ -22,7 +22,7 @@ pub const VirtioBlockError = error{
 
 pub const VirtioBlock = struct {
     read_only: bool,
-    guest_memory: *GuestMemory,
+    memory: *Memory,
     virtio_context: VirtioContext(VirtioBlockConfig),
     mmio_info: MmioDeviceInfo,
     file: std.fs.File,
@@ -30,8 +30,12 @@ pub const VirtioBlock = struct {
 
     const Self = @This();
 
-    pub fn new(vm: *const Vm, file_path: []const u8, read_only: bool, guest_memory: *GuestMemory, mmio_info: MmioDeviceInfo) !Self {
-        const file = try std.fs.cwd().openFile(file_path, .{});
+    pub fn new(vm: *const Vm, file_path: []const u8, read_only: bool, memory: *Memory, mmio_info: MmioDeviceInfo) !Self {
+        var file_options: std.fs.File.OpenFlags = .{};
+        if (read_only) {
+            file_options.mode = std.fs.File.OpenMode.read_write;
+        }
+        const file = try std.fs.cwd().openFile(file_path, file_options);
         const meta = try file.metadata();
         const nsectors = meta.size() >> SECTOR_SHIFT;
 
@@ -68,7 +72,7 @@ pub const VirtioBlock = struct {
 
         return Self{
             .read_only = read_only,
-            .guest_memory = guest_memory,
+            .memory = memory,
             .virtio_context = virtio_context,
             .mmio_info = mmio_info,
             .file = file,
@@ -116,11 +120,11 @@ pub const VirtioBlock = struct {
 
     pub fn process_queue(self: *Self, queue_idx: u32) !void {
         _ = queue_idx;
-        while (self.virtio_context.queue.pop_desc_chain(self.guest_memory)) |dc| {
+        while (self.virtio_context.queue.pop_desc_chain(self.memory)) |dc| {
             var desc_chain = dc;
             const first_desc_index = desc_chain.index.?;
             const first_desc = desc_chain.next().?;
-            const header = self.guest_memory.get_ptr(nix.virtio_blk_outhdr, first_desc.addr);
+            const header = self.memory.get_ptr(nix.virtio_blk_outhdr, first_desc.addr);
             const offset = header.sector << SECTOR_SHIFT;
 
             const second_desc = desc_chain.next().?;
@@ -134,14 +138,14 @@ pub const VirtioBlock = struct {
                     nix.VIRTIO_BLK_T_IN => {
                         try self.file.seekTo(offset);
                         var buffer: []u8 = undefined;
-                        buffer.ptr = @ptrCast(self.guest_memory.get_ptr(u8, data_addr));
+                        buffer.ptr = @ptrCast(self.memory.get_ptr(u8, data_addr));
                         buffer.len = data_len;
                         data_transfered = try self.file.read(buffer);
                     },
                     nix.VIRTIO_BLK_T_OUT => {
                         try self.file.seekTo(offset);
                         var buffer: []const u8 = undefined;
-                        buffer.ptr = @ptrCast(self.guest_memory.get_ptr(u8, data_addr));
+                        buffer.ptr = @ptrCast(self.memory.get_ptr(u8, data_addr));
                         buffer.len = data_len;
                         data_transfered = try self.file.write(buffer);
                     },
@@ -150,7 +154,7 @@ pub const VirtioBlock = struct {
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
                         var buffer: []u8 = undefined;
-                        buffer.ptr = @ptrCast(self.guest_memory.get_ptr(u8, data_addr));
+                        buffer.ptr = @ptrCast(self.memory.get_ptr(u8, data_addr));
                         buffer.len = data_len;
                         @memcpy(buffer, &self.block_id);
                         data_transfered = nix.VIRTIO_BLK_ID_BYTES;
@@ -158,14 +162,14 @@ pub const VirtioBlock = struct {
                     else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
                 }
 
-                const status_ptr = self.guest_memory.get_ptr(u32, third_desc.addr);
+                const status_ptr = self.memory.get_ptr(u32, third_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
 
-                self.virtio_context.queue.add_used_desc(self.guest_memory, first_desc_index, @intCast(data_transfered + 1));
+                self.virtio_context.queue.add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
             } else {
                 try self.file.sync();
 
-                const status_ptr = self.guest_memory.get_ptr(u32, second_desc.addr);
+                const status_ptr = self.memory.get_ptr(u32, second_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
             }
 
