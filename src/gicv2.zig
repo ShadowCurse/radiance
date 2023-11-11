@@ -3,21 +3,20 @@ const log = @import("log.zig");
 const nix = @import("nix.zig");
 const Allocator = std.mem.Allocator;
 const Vm = @import("vm.zig");
-const MemoryLayout = @import("memory.zig").MemoryLayout;
+const Memory = @import("memory.zig");
 
-const Self = @This();
-
-fd: std.os.fd_t,
-
-pub const VERSION = 5;
 // Device trees specific constants
 pub const ARCH_GIC_V2_MAINT_IRQ: u32 = 8;
 
-pub const DISTRIBUTOR_ADDRESS: u64 = MemoryLayout.MAPPED_IO_START - Self.KVM_VGIC_V2_DIST_SIZE;
-pub const KVM_VGIC_V2_DIST_SIZE: u64 = 0x1000;
+pub const DISTRIBUTOR_ADDRESS: u64 = Memory.MMIO_START - nix.KVM_VGIC_V2_DIST_SIZE;
+pub const CPU_ADDRESS: u64 = DISTRIBUTOR_ADDRESS - nix.KVM_VGIC_V2_CPU_SIZE;
 
-pub const CPU_ADDRESS: u64 = DISTRIBUTOR_ADDRESS - Self.KVM_VGIC_V2_CPU_SIZE;
-pub const KVM_VGIC_V2_CPU_SIZE: u64 = 0x2000;
+pub const DEVICE_PROPERTIES = [_]u64{
+    DISTRIBUTOR_ADDRESS,
+    nix.KVM_VGIC_V2_DIST_SIZE,
+    CPU_ADDRESS,
+    nix.KVM_VGIC_V2_CPU_SIZE,
+};
 
 // As per virt/kvm/arm/vgic/vgic-kvm-device.c we need
 // the number of interrupts our GIC will support to be:
@@ -35,9 +34,13 @@ pub const Gicv2Error = error{
     SetAttributes,
 };
 
+fd: std.os.fd_t,
+
+const Self = @This();
+
 pub fn new(vm: *const Vm) !Self {
     var device: nix.kvm_create_device = .{
-        .type = Self.VERSION,
+        .type = nix.KVM_DEV_TYPE_ARM_VGIC_V2,
         .fd = 0,
         .flags = 0,
     };

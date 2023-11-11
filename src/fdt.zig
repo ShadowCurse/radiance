@@ -4,9 +4,7 @@ const Allocator = std.mem.Allocator;
 const CacheDir = @import("cache.zig").CacheDir;
 const Gicv2 = @import("gicv2.zig");
 const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
-const m_memory = @import("memory.zig");
-const GuestMemory = m_memory.GuestMemory;
-const MemoryLayout = m_memory.MemoryLayout;
+const Memory = @import("memory.zig");
 
 pub const FdtHeader = packed struct {
     magic: u32,
@@ -213,7 +211,7 @@ pub const FdtBuilder = struct {
 
 pub fn create_fdt(
     allocator: Allocator,
-    guest_mem: *const GuestMemory,
+    memory: *const Memory,
     mpidrs: []const u64,
     cmdline: [:0]const u8,
     gic: *const Gicv2,
@@ -240,7 +238,7 @@ pub fn create_fdt(
     try fdt_builder.add_property(u32, "interrupt-parent", GIC_PHANDLE);
 
     try create_cpu_fdt(&fdt_builder, mpidrs);
-    try create_memory_fdt(&fdt_builder, guest_mem);
+    try create_memory_fdt(&fdt_builder, memory);
     try create_cmdline_fdt(&fdt_builder, cmdline);
     try create_gic_fdt(&fdt_builder, gic);
     try create_timer_node(&fdt_builder);
@@ -345,11 +343,11 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
     try builder.end_node();
 }
 
-fn create_memory_fdt(builder: *FdtBuilder, guest_memory: *const GuestMemory) !void {
-    const mem_size = guest_memory.guest_addr + guest_memory.mem.len - MemoryLayout.DRAM_MEM_START;
+fn create_memory_fdt(builder: *FdtBuilder, memory: *const Memory) !void {
+    const mem_size = memory.guest_addr + memory.mem.len - Memory.DRAM_START;
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
     // for an explanation of this.
-    const mem_reg_prop = [_]u64{ MemoryLayout.DRAM_MEM_START, mem_size };
+    const mem_reg_prop = [_]u64{ Memory.DRAM_START, mem_size };
 
     try builder.begin_node("memory");
     try builder.add_property([:0]const u8, "device_type", "memory");
@@ -372,15 +370,7 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
     // interrupt source. The type shall be a <u32> and the value shall be 3 if no PPI affinity
     // description is required.
     try builder.add_property(u32, "#interrupt-cells", 3);
-
-    const device_properties = [_]u64{
-        Gicv2.DISTRIBUTOR_ADDRESS,
-        Gicv2.KVM_VGIC_V2_DIST_SIZE,
-        Gicv2.CPU_ADDRESS,
-        Gicv2.KVM_VGIC_V2_CPU_SIZE,
-    };
-    try builder.add_property([]const u64, "reg", &device_properties);
-
+    try builder.add_property([]const u64, "reg", &Gicv2.DEVICE_PROPERTIES);
     try builder.add_property(u32, "phandle", FdtBuilder.GIC_PHANDLE);
     try builder.add_property(u32, "#address-cells", 2);
     try builder.add_property(u32, "#size-cells", 2);
