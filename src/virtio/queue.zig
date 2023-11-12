@@ -1,7 +1,7 @@
 const std = @import("std");
 const log = @import("../log.zig");
 const nix = @import("../nix.zig");
-const GuestMemory = @import("../memory.zig").GuestMemory;
+const Memory = @import("../memory.zig");
 
 /// A virtio descriptor chain.
 pub const DescriptorChain = struct {
@@ -29,6 +29,8 @@ pub const DescriptorChain = struct {
 
 /// A virtio queue's parameters.
 pub const Queue = struct {
+    pub const MAX_SIZE: u32 = 256;
+
     /// Guest physical address of the descriptor table.
     /// Points to `nix.vring_desc`.
     desc_table: u64,
@@ -50,8 +52,6 @@ pub const Queue = struct {
     uses_notif_suppression: bool,
 
     const Self = @This();
-
-    pub const MAX_SIZE: u32 = 256;
 
     /// Constructs an empty virtio queue with the given `max_size`.
     pub fn new() Self {
@@ -92,11 +92,11 @@ pub const Queue = struct {
     }
 
     /// Pop the first available descriptor chain from the avail ring.
-    pub fn pop_desc_chain(self: *Self, guest_memory: *GuestMemory) ?DescriptorChain {
+    pub fn pop_desc_chain(self: *Self, memory: *const Memory) ?DescriptorChain {
         // std.atomic.fence(std.atomic.Ordering.Acquire);
 
         // avail_ring is only written by the driver
-        const avail_ring = guest_memory.get_ptr(nix.vring_avail, self.avail_ring);
+        const avail_ring = memory.get_ptr(nix.vring_avail, self.avail_ring);
 
         if (self.next_avail == avail_ring.idx) {
             return null;
@@ -108,7 +108,7 @@ pub const Queue = struct {
         self.next_avail = self.next_avail +% 1;
 
         var desc_table_slice: []nix.vring_desc = undefined;
-        desc_table_slice.ptr = @ptrCast(guest_memory.get_ptr(nix.vring_desc, self.desc_table));
+        desc_table_slice.ptr = @ptrCast(memory.get_ptr(nix.vring_desc, self.desc_table));
         desc_table_slice.len = self.size;
 
         return DescriptorChain{
@@ -120,12 +120,12 @@ pub const Queue = struct {
     /// Puts an available descriptor head into the used ring for use by the guest.
     pub fn add_used_desc(
         self: *Self,
-        guest_memory: *GuestMemory,
+        memory: *Memory,
         desc_id: u16,
         data_len: u32,
     ) void {
         // used_ring is only written by the device
-        const used_ring = guest_memory.get_ptr(nix.vring_used, self.used_ring);
+        const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
         const next_used = self.next_used % self.size;
         used_ring.ring()[next_used].id = desc_id;
         used_ring.ring()[next_used].len = data_len;

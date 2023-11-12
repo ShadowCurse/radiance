@@ -3,8 +3,7 @@ const log = @import("log.zig");
 const nix = @import("nix.zig");
 const Allocator = std.mem.Allocator;
 const Kvm = @import("kvm.zig");
-const GuestMemory = @import("memory.zig").GuestMemory;
-const Vcpu = @import("vcpu.zig");
+const Memory = @import("memory.zig");
 
 fd: std.os.fd_t,
 
@@ -28,13 +27,13 @@ pub fn new(kvm: *const Kvm) !Self {
     }
 }
 
-pub fn set_memory(self: *const Self, guest_memory: *GuestMemory) !void {
+pub fn set_memory(self: *const Self, memory: *const Memory) !void {
     const memory_region: nix.kvm_userspace_memory_region = .{
         .slot = 0,
         .flags = 0,
-        .guest_phys_addr = guest_memory.guest_addr,
-        .memory_size = @as(u64, guest_memory.mem.len),
-        .userspace_addr = @intFromPtr(guest_memory.mem.ptr),
+        .guest_phys_addr = memory.guest_addr,
+        .memory_size = @as(u64, memory.mem.len),
+        .userspace_addr = @intFromPtr(memory.mem.ptr),
     };
 
     log.debug(@src(), "set_memory slot: {}", .{memory_region.slot});
