@@ -83,6 +83,10 @@ const MSR_DCD_MASK: u8 = 1 << 7;
 const DEFAULT_BAUD_DIVISOR_HIGH: u8 = 0x00;
 const DEFAULT_BAUD_DIVISOR_LOW: u8 = 0x0C;
 
+pub const UartError = error{
+    New,
+};
+
 in: std.os.fd_t,
 out: std.os.fd_t,
 mmio_info: MmioDeviceInfo,
@@ -106,10 +110,6 @@ fifo: std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = FIFO_SIZE
 irq_evt: EventFd,
 
 const Self = @This();
-
-pub const UartError = error{
-    New,
-};
 
 pub fn new(vm: *const Vm, in: std.os.fd_t, out: std.os.fd_t, mmio_info: MmioDeviceInfo) !Self {
     const irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK);
@@ -155,8 +155,6 @@ pub fn add_to_cmdline(self: *const Self, cmdline: *CmdLine) !void {
 fn signal_handler(s: c_int) callconv(.C) void {
     _ = s;
     nix.pthread_exit(null);
-    // const self = nix.pthread_self();
-    // _ = nix.pthread_cancel(self);
 }
 
 pub fn read_input_threaded(self: *Self) !void {

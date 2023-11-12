@@ -76,9 +76,6 @@ pub fn write(self: *Self, addr: u64, data: []u8) !bool {
         },
         RTCIMSC => self.imsc = val.* & 1,
         RTCICR => {
-            // if (val.* == 1) {
-            //     self.ris = 0;
-            // }
             self.ris &= ~val.*;
         },
         else => {

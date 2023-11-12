@@ -2,15 +2,8 @@ const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const Kvm = @import("kvm.zig");
-const Mmio = @import("mmio.zig").Mmio;
+const Mmio = @import("mmio.zig");
 const Vm = @import("vm.zig");
-
-const Self = @This();
-
-fd: std.os.fd_t,
-kvm_run: *nix.kvm_run,
-// Needed for signal handler to kick vcpu from the KVM_RUN loop
-threadlocal var self_ref: ?*Self = null;
 
 pub const PC = Self.core_reg_id("pc");
 pub const REGS0 = Self.core_reg_id("regs");
@@ -26,6 +19,13 @@ const PSR_A_BIT: u64 = 0x0000_0100;
 const PSR_D_BIT: u64 = 0x0000_0200;
 /// arch/arm64/kvm/inject_fault.c.
 pub const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1h | PSR_A_BIT | PSR_F_BIT | PSR_I_BIT | PSR_D_BIT;
+
+fd: std.os.fd_t,
+kvm_run: *nix.kvm_run,
+// Needed for signal handler to kick vcpu from the KVM_RUN loop
+threadlocal var self_ref: ?*Self = null;
+
+const Self = @This();
 
 pub const VcpuError = error{
     New,

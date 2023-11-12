@@ -1,15 +1,15 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+/// Kernel command line maximum size.
+/// As per `arch/arm64/include/uapi/asm/setup.h`.
+pub const CMDLINE_MAX_SIZE: usize = 2048;
+
 allocator: Allocator,
 mem: []u8,
 len: usize,
 
 const Self = @This();
-
-/// Kernel command line maximum size.
-/// As per `arch/arm64/include/uapi/asm/setup.h`.
-pub const CMDLINE_MAX_SIZE: usize = 2048;
 
 pub fn new(allocator: Allocator, size: usize) !Self {
     const mem = try allocator.alloc(u8, size);

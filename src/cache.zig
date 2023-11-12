@@ -111,9 +111,9 @@ pub const CacheEntry = struct {
 };
 
 pub const CacheDir = struct {
-    dir: std.fs.Dir,
-
     const MAX_CACHE_LEVEL: u8 = 7;
+
+    dir: std.fs.Dir,
 
     const Self = @This();
 

@@ -7,20 +7,18 @@ const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
 
-const CacheDir = @import("cache.zig").CacheDir;
 const CmdLine = @import("cmdline.zig");
 const FDT = @import("fdt.zig");
 const Gicv2 = @import("gicv2.zig");
 const Kvm = @import("kvm.zig");
-const GuestMemory = @import("memory.zig").GuestMemory;
-const MMIO = @import("mmio.zig");
-const Mmio = MMIO.Mmio;
-const MmioDevice = MMIO.MmioDevice;
-// const MmioDeviceInfo = MMIO.MmioDeviceInfo;
+const Memory = @import("memory.zig");
+const Mmio = @import("mmio.zig");
 const Vcpu = @import("vcpu.zig");
 const Vm = @import("vm.zig");
 
-pub const log_level: std.log.Level = .debug;
+pub const std_options = struct {
+    pub const log_level = .info;
+};
 
 const Args = struct {
     kernel_path: []const u8,
@@ -35,20 +33,16 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // create guest memory (128 MB)
-    var gm = try GuestMemory.init(args.memory_size << 20);
-    defer gm.deinit();
-    const kernel_load_address = try gm.load_linux_kernel(args.kernel_path);
+    var memory = try Memory.init(args.memory_size << 20);
+    defer memory.deinit();
+    const kernel_load_address = try memory.load_linux_kernel(args.kernel_path);
     std.log.info("kernel_load_address: 0x{x}", .{kernel_load_address});
 
     const kvm = try Kvm.new();
 
-    const version = try kvm.version();
-    std.log.info("kvm version: {}", .{version});
-
     // create vm
     const vm = try Vm.new(&kvm);
-    try vm.set_memory(&gm);
+    try vm.set_memory(&memory);
 
     // create vcpu
     var vcpu = try Vcpu.new(&kvm, &vm, 0);
@@ -68,11 +62,11 @@ pub fn main() !void {
 
     var uart = try Uart.new(&vm, std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new(rtc_device_info);
-    var virtio_block = try VirtioBlock.new(&vm, args.rootfs_path, true, &gm, virtio_block_device_info);
+    var virtio_block = try VirtioBlock.new(&vm, args.rootfs_path, true, &memory, virtio_block_device_info);
 
-    mmio.add_device(MmioDevice{ .Uart = &uart });
-    mmio.add_device(MmioDevice{ .Rtc = &rtc });
-    mmio.add_device(MmioDevice{ .VirtioBlock = &virtio_block });
+    mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
+    mmio.add_device(Mmio.MmioDevice{ .Rtc = &rtc });
+    mmio.add_device(Mmio.MmioDevice{ .VirtioBlock = &virtio_block });
 
     var cmdline = try CmdLine.new(allocator, 50);
     defer cmdline.deinit();
@@ -84,12 +78,18 @@ pub fn main() !void {
     const cmdline_0 = try cmdline.sentinel_str();
     std.log.info("cmdline: {s}", .{cmdline_0});
 
-    var fdt = try FDT.create_fdt(allocator, &gm, &.{vcpu_mpidr}, cmdline_0, &gicv2, uart_device_info, rtc_device_info, &.{virtio_block_device_info});
-    defer fdt.deinit();
+    const fdt_addr = fdt: {
+        var fdt = try FDT.create_fdt(allocator, &memory, &.{vcpu_mpidr}, cmdline_0, &gicv2, uart_device_info, rtc_device_info, &.{virtio_block_device_info});
+        defer fdt.deinit();
 
-    const fdt_addr = try gm.load_fdt(&fdt);
-    std.log.info("last_addr: 0x{x}", .{gm.last_addr()});
-    std.log.info("fdt_addr: 0x{x}", .{fdt_addr});
+        const fdt_addr = try memory.load_fdt(&fdt);
+
+        std.log.info("last_addr: 0x{x}", .{memory.last_addr()});
+        std.log.info("fdt_addr: 0x{x}", .{fdt_addr});
+
+        break :fdt fdt_addr;
+    };
+
     try vcpu.set_reg(u64, Vcpu.REGS0, @as(u64, fdt_addr));
     try vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
 
@@ -97,11 +97,36 @@ pub fn main() !void {
     const t = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ &vcpu, &mmio });
     // Vcpu.kick_thread(&t, sig);
 
+    const stdin = std.io.getStdIn();
+    const state = configure_terminal(&stdin);
     const input_thread = try std.Thread.spawn(.{}, Uart.read_input_threaded, .{&uart});
     t.join();
+    restore_terminal(&stdin, &state);
 
     _ = nix.pthread_kill(@intFromPtr(input_thread.impl.handle), nix.SIGINT);
     input_thread.join();
+}
+
+fn configure_terminal(stdin: *const std.fs.File) std.os.termios {
+    var ttystate: std.os.termios = undefined;
+    var ttysave: std.os.termios = undefined;
+
+    _ = std.os.linux.tcgetattr(stdin.handle, &ttystate);
+    ttysave = ttystate;
+
+    //turn off canonical mode and echo
+    ttystate.lflag &= ~(std.os.linux.ICANON | std.os.linux.ECHO);
+    //minimum of number input read.
+    ttystate.cc[4] = 1;
+
+    //set the terminal attributes.
+    _ = std.os.linux.tcsetattr(stdin.handle, std.os.linux.TCSA.NOW, &ttystate);
+    return ttysave;
+}
+
+fn restore_terminal(stdin: *const std.fs.File, state: *const std.os.termios) void {
+    //set the terminal attributes.
+    _ = std.os.linux.tcsetattr(stdin.handle, std.os.linux.TCSA.NOW, state);
 }
 
 test "simple test" {
