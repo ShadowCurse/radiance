@@ -17,7 +17,7 @@ const Vcpu = @import("vcpu.zig");
 const Vm = @import("vm.zig");
 
 pub const std_options = struct {
-    pub const log_level = .info;
+    pub const log_level = .debug;
 };
 
 const Args = struct {
@@ -42,6 +42,11 @@ pub fn main() !void {
 
     // create vm
     const vm = try Vm.new(&kvm);
+
+    std.log.info("KVM_CAP_ENABLE_CAP: {}", .{vm.extension_support(nix.KVM_CAP_ENABLE_CAP)});
+    std.log.info("KVM_CAP_SYNC_MMU: {}", .{vm.extension_support(nix.KVM_CAP_SYNC_MMU)});
+    std.log.info("KVM_CAP_READONLY_MEM: {}", .{vm.extension_support(nix.KVM_CAP_READONLY_MEM)});
+
     try vm.set_memory(&memory);
 
     // create vcpu
@@ -56,9 +61,17 @@ pub fn main() !void {
     const gicv2 = try Gicv2.new(&vm);
 
     var mmio = Mmio.new();
-    const uart_device_info = mmio.allocate();
-    const rtc_device_info = mmio.allocate();
-    const virtio_block_device_info = mmio.allocate();
+
+    const uart_device_info = try mmio.allocate(allocator);
+    defer uart_device_info.deinit(allocator);
+
+    const rtc_device_info = try mmio.allocate(allocator);
+    defer rtc_device_info.deinit(allocator);
+
+    const virtio_block_device_info = try mmio.allocate(allocator);
+    defer virtio_block_device_info.deinit(allocator);
+
+    try vm.set_mmio_memory(&virtio_block_device_info);
 
     var uart = try Uart.new(&vm, std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new(rtc_device_info);

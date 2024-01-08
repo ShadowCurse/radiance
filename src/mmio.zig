@@ -1,4 +1,6 @@
+const std = @import("std");
 const log = @import("log.zig");
+const Allocator = std.mem.Allocator;
 const Memory = @import("memory.zig");
 const Gicv2 = @import("gicv2.zig");
 const Uart = @import("devices/uart.zig");
@@ -28,6 +30,11 @@ pub const MmioDeviceInfo = struct {
     addr: u64,
     len: u64,
     irq: u32,
+    memory: []align(0x1000) u8,
+
+    pub fn deinit(self: MmioDeviceInfo, allocator: Allocator) void {
+        allocator.free(self.memory);
+    }
 };
 
 last_irq: u32,
@@ -46,15 +53,17 @@ pub fn new() Self {
     };
 }
 
-pub fn allocate(self: *Self) MmioDeviceInfo {
+pub fn allocate(self: *Self, allocator: Allocator) !MmioDeviceInfo {
     const addr = self.last_address;
     self.last_address += MMIO_LEN;
     const irq = self.last_irq;
     self.last_irq += 1;
+    const memory = try allocator.alignedAlloc(u8, 0x1000, 0x1000);
     return MmioDeviceInfo{
         .addr = addr,
         .len = MMIO_LEN,
         .irq = irq,
+        .memory = memory,
     };
 }
 

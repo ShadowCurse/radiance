@@ -60,6 +60,8 @@ pub fn VirtioContext(comptime config_type: type) type {
         irq_status: std.atomic.Atomic(u32),
         irq_evt: EventFd,
 
+        memory: ?[]align(0x1000) u8,
+
         const Self = @This();
 
         pub fn new(device_type: u32) !Self {
@@ -82,6 +84,8 @@ pub fn VirtioContext(comptime config_type: type) type {
 
                 .irq_status = std.atomic.Atomic(u32).init(0),
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
+
+                .memory = null,
             };
         }
 
@@ -180,6 +184,184 @@ pub fn VirtioContext(comptime config_type: type) type {
                     self.interrupt_status &= ~data_u32.*;
                 },
                 0x70 => self.device_status = data_u32.*,
+                0x80 => self.queue.set_desc_table(false, data_u32.*),
+                0x84 => self.queue.set_desc_table(true, data_u32.*),
+                0x90 => self.queue.set_avail_ring(false, data_u32.*),
+                0x94 => self.queue.set_avail_ring(true, data_u32.*),
+                0xa0 => self.queue.set_used_ring(false, data_u32.*),
+                0xa4 => self.queue.set_used_ring(true, data_u32.*),
+                0x100...0xfff => {
+                    const new_offset = offset - 0x100;
+                    const config_blob_slice = std.mem.asBytes(&self.config_blob);
+                    @memcpy(config_blob_slice[new_offset .. new_offset + data.len], data);
+                    return VirtioAction.ConfigWrite;
+                },
+                else => {
+                    log.warn(@src(), "invalid virtio write: offset: 0x{x}, data: {any}", .{ offset, data });
+                },
+            }
+            return VirtioAction.NoAction;
+        }
+
+        pub fn init_memory(self: *Self, memory: []align(0x1000) u8) void {
+            log.debug(@src(), "init_memory: 0x{x}", .{@intFromPtr(memory.ptr)});
+            self.memory = memory;
+
+            var memory_u32: []u32 = undefined;
+            memory_u32.ptr = @ptrCast(@alignCast(memory.ptr));
+            memory_u32.len = memory.len / 4;
+
+            memory_u32[0] = MMIO_MAGIC_VALUE;
+            memory_u32[1] = MMIO_VERSION;
+            memory_u32[2] = self.device_type;
+            memory_u32[3] = VENDOR_ID;
+            // device_features_word
+            memory_u32[4] = 0;
+            memory_u32[13] = Queue.MAX_SIZE;
+            memory_u32[17] = @intFromBool(self.queue.ready);
+            // interrupt_status
+            memory_u32[24] = 1;
+            // device status
+            memory_u32[28] = 0;
+            // config_generation
+            memory_u32[63] = 0;
+
+            // config start
+            memory_u32[64] = 0;
+
+            const config_blob_slice = std.mem.asBytes(&self.config_blob);
+
+            var config_mem_slice: []u8 = undefined;
+            config_mem_slice.ptr = @ptrFromInt(@intFromPtr(memory.ptr) + 0x100);
+            config_mem_slice.len = config_blob_slice.len;
+            @memcpy(config_mem_slice, config_blob_slice);
+
+            for (0..64) |i| {
+                log.debug(@src(), "mmio: 0x{x} = 0x{x}", .{ i * 4, memory_u32[i] });
+            }
+        }
+
+        pub fn write_mem(self: *Self, offset: u64, data: []u8) VirtioAction {
+            var memory_u32: []volatile u32 = undefined;
+            // var memory_u32: []u32 = undefined;
+            memory_u32.ptr = @ptrCast(@alignCast(self.memory.?.ptr));
+            memory_u32.len = self.memory.?.len / 4;
+
+            const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
+            switch (offset) {
+                0x14 => {
+                    // @prefetch(memory_u32.ptr + 4, std.builtin.PrefetchOptions{
+                    //     .rw = .write,
+                    //     .locality = 0,
+                    //     .cache = .data,
+                    // });
+                    // @prefetch(memory_u32.ptr + 5, std.builtin.PrefetchOptions{
+                    //     .rw = .write,
+                    //     .locality = 0,
+                    //     .cache = .data,
+                    // });
+                    // std.atomic.fence(std.atomic.Ordering.Acquire);
+
+                    // self.device_features_word = data_u32.*;
+                    // @atomicStore(u32, @as(*volatile u32, @ptrCast(memory_u32.ptr + 5)), data_u32.*, std.atomic.Ordering.SeqCst);
+                    // @atomicStore(u32, @as(*volatile u32, @ptrCast(memory_u32.ptr + 5)), data_u32.*, std.atomic.Ordering.Release);
+                    // @fence(std.atomic.Ordering.Release);
+                    // memory_u32[5] = data_u32.*;
+
+                    self.device_features_word = data_u32.*;
+                    const features =
+                        switch (self.device_features_word) {
+                        // Get the lower 32-bits of the features bitfield.
+                        0 => (self.avail_features & 0xFFFFFFFF),
+                        // Get the upper 32-bits of the features bitfield.
+                        1 => self.avail_features >> 32,
+                        else => unreachable,
+                    };
+                    const features_u32: u32 = @truncate(features);
+                    log.debug(@src(), "writing features: {x}", .{features_u32});
+                    memory_u32[4] = features_u32;
+                    // @atomicStore(u32, @as(*volatile u32, @ptrCast(memory_u32.ptr + 4)), features_u32, std.atomic.Ordering.SeqCst);
+                    // @atomicStore(u32, @as(*volatile u32, @ptrCast(memory_u32.ptr + 4)), features_u32, std.atomic.Ordering.Release);
+                    @fence(std.atomic.Ordering.Release);
+                    log.debug(@src(), "reading features: {x}", .{memory_u32[4]});
+
+                    // log.debug(@src(), "settign device_features_word", .{});
+                    // log.debug(@src(), "self.avail_features: 0x{x}", .{self.avail_features});
+                    // log.debug(@src(), "self.device_features_word: 0x{x}", .{self.device_features_word});
+                    // for (0..64) |i| {
+                    //     log.debug(@src(), "mmio: 0x{x} = 0x{x}", .{ i * 4, memory_u32[i] });
+                    // }
+
+                    // log.debug(@src(), "mmio: 0x10 = 0x{x}", .{memory_u32[4]});
+                    // std.atomic.fence(std.atomic.Ordering.Release);
+                },
+                0x20 => {
+                    // @prefetch(memory_u32.ptr + 4, std.builtin.PrefetchOptions{
+                    //     .rw = .write,
+                    //     .locality = 3,
+                    //     .cache = .data,
+                    // });
+
+                    log.debug(@src(), "writing driver_features", .{});
+                    const value_u32 = data_u32.*;
+
+                    // TODO why shifting by 32 does not work
+                    var shifted = value_u32 << 16;
+                    shifted = shifted << 16;
+
+                    switch (self.driver_features_word) {
+                        // Set the lower 32-bits of the features bitfield.
+                        0 => self.avail_features = (self.avail_features & 0xffff_ffff_0000_0000) & value_u32,
+                        // Set the upper 32-bits of the features bitfield.
+                        1 => self.avail_features = (self.avail_features & 0x0000_0000_ffff_ffff) & shifted,
+                        else => unreachable,
+                    }
+
+                    // const features =
+                    //     switch (self.device_features_word) {
+                    //     // Get the lower 32-bits of the features bitfield.
+                    //     0 => (self.avail_features & 0xFFFFFFFF),
+                    //     // Get the upper 32-bits of the features bitfield.
+                    //     1 => self.avail_features >> 32,
+                    //     else => unreachable,
+                    // };
+                    // const features_u32: u32 = @truncate(features);
+                    // memory_u32[4] = features_u32;
+                    // log.debug(@src(), "mmio: 0x10 = 0x{x}", .{memory_u32[4]});
+                },
+                0x24 => {
+                    log.debug(@src(), "writing driver_features_word", .{});
+                    self.driver_features_word = data_u32.*;
+                },
+                0x30 => self.selected_queue = data_u32.*,
+                0x38 => {
+                    self.queue.size = @truncate(data_u32.*);
+                },
+                0x44 => {
+                    // @prefetch(memory_u32.ptr + 17, std.builtin.PrefetchOptions{
+                    //     .rw = .write,
+                    //     .locality = 3,
+                    //     .cache = .data,
+                    // });
+
+                    self.queue.ready = data_u32.* == 1;
+                    // memory_u32[17] = @intFromBool(self.queue.ready);
+                },
+                0x50 => return VirtioAction{ .QueueNotification = data_u32.* },
+                0x64 => {
+                    self.interrupt_status &= ~data_u32.*;
+                },
+                0x70 => {
+                    // @prefetch(memory_u32.ptr + 28, std.builtin.PrefetchOptions{
+                    //     .rw = .write,
+                    //     .locality = 3,
+                    //     .cache = .data,
+                    // });
+
+                    log.debug(@src(), "writing device status: 0x{x}", .{data_u32.*});
+                    self.device_status = data_u32.*;
+                    memory_u32[28] = data_u32.*;
+                },
                 0x80 => self.queue.set_desc_table(false, data_u32.*),
                 0x84 => self.queue.set_desc_table(true, data_u32.*),
                 0x90 => self.queue.set_avail_ring(false, data_u32.*),

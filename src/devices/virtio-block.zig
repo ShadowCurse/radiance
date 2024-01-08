@@ -53,6 +53,8 @@ pub const VirtioBlock = struct {
         _ = try std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, meta.inner.statx.ino });
 
         var virtio_context = try VirtioContext(VirtioBlockConfig).new(TYPE_BLOCK);
+        virtio_context.init_memory(mmio_info.memory);
+
         virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1); // | (1 << nix.VIRTIO_RING_F_EVENT_IDX);
         if (read_only) {
             virtio_context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
@@ -93,7 +95,7 @@ pub const VirtioBlock = struct {
             return false;
         }
         const offset = addr - self.mmio_info.addr;
-        switch (self.virtio_context.write(offset, data)) {
+        switch (self.virtio_context.write_mem(offset, data)) {
             VirtioAction.NoAction => {},
             VirtioAction.ActivateDevice => {},
             VirtioAction.QueueNotification => |q| try self.process_queue(q),
@@ -105,17 +107,19 @@ pub const VirtioBlock = struct {
     }
 
     pub fn read(self: *Self, addr: u64, data: []u8) !bool {
+        _ = data;
         if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len - 1 < addr) {
             return false;
         }
-        const offset = addr - self.mmio_info.addr;
-        switch (self.virtio_context.read(offset, data)) {
-            VirtioAction.NoAction => {},
-            else => |action| {
-                log.err(@src(), "unhandled read virtio action: {}", .{action});
-            },
-        }
-        return true;
+        return VirtioBlockError.New;
+        // const offset = addr - self.mmio_info.addr;
+        // switch (self.virtio_context.read(offset, data)) {
+        //     VirtioAction.NoAction => {},
+        //     else => |action| {
+        //         log.err(@src(), "unhandled read virtio action: {}", .{action});
+        //     },
+        // }
+        // return true;
     }
 
     pub fn process_queue(self: *Self, queue_idx: u32) !void {
