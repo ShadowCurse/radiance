@@ -2,6 +2,7 @@ const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const args_parser = @import("args_parser.zig");
+const config_parser = @import("config_parser.zig");
 
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
@@ -24,6 +25,7 @@ const Args = struct {
     kernel_path: []const u8,
     rootfs_path: []const u8,
     memory_size: u32,
+    config_path: []const u8,
 };
 
 pub fn main() !void {
@@ -32,6 +34,16 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
+    var config = try config_parser.parse(args.config_path, allocator);
+    defer config.deinit(allocator);
+    std.log.info("machine config: {any}", .{config.machine});
+    std.log.info("kernel config: {s}", .{config.kernel.path});
+    std.log.info("rootfs config: {any}", .{config.rootfs});
+    for (config.drives.drives.items) |*d| {
+        std.log.info("drive config read only: {}", .{d.read_only});
+        std.log.info("drive config path: {s}", .{d.path});
+    }
 
     var memory = try Memory.init(args.memory_size << 20);
     defer memory.deinit();
