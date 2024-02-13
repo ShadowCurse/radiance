@@ -22,9 +22,6 @@ pub const std_options = struct {
 };
 
 const Args = struct {
-    kernel_path: []const u8,
-    rootfs_path: []const u8,
-    memory_size: u32,
     config_path: []const u8,
 };
 
@@ -37,18 +34,10 @@ pub fn main() !void {
 
     var config = try config_parser.parse(args.config_path, allocator);
     defer config.deinit(allocator);
-    std.log.info("machine config: {any}", .{config.machine});
-    std.log.info("kernel config: {s}", .{config.kernel.path});
-    std.log.info("rootfs config: {any}", .{config.rootfs});
-    for (config.drives.drives.items) |*d| {
-        std.log.info("drive config read only: {}", .{d.read_only});
-        std.log.info("drive config path: {s}", .{d.path});
-    }
 
-    var memory = try Memory.init(args.memory_size << 20);
+    var memory = try Memory.init(config.machine.memory_mb << 20);
     defer memory.deinit();
-    const kernel_load_address = try memory.load_linux_kernel(args.kernel_path);
-    std.log.info("kernel_load_address: 0x{x}", .{kernel_load_address});
+    const kernel_load_address = try memory.load_linux_kernel(config.kernel.path);
 
     const kvm = try Kvm.new();
 
@@ -63,7 +52,6 @@ pub fn main() !void {
     try vcpu.set_reg(u64, Vcpu.PC, kernel_load_address);
 
     const vcpu_mpidr = try vcpu.get_reg(Vcpu.MIDR_EL1);
-    std.log.info("mpidr: 0x{x}", .{vcpu_mpidr});
 
     const gicv2 = try Gicv2.new(&vm);
 
@@ -74,7 +62,7 @@ pub fn main() !void {
 
     var uart = try Uart.new(&vm, std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new(rtc_device_info);
-    var virtio_block = try VirtioBlock.new(&vm, args.rootfs_path, true, &memory, virtio_block_device_info);
+    var virtio_block = try VirtioBlock.new(&vm, config.drives.drives.items[0].path, config.drives.drives.items[0].read_only, &memory, virtio_block_device_info);
 
     mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
     mmio.add_device(Mmio.MmioDevice{ .Rtc = &rtc });
@@ -88,7 +76,6 @@ pub fn main() !void {
     try uart.add_to_cmdline(&cmdline);
 
     const cmdline_0 = try cmdline.sentinel_str();
-    std.log.info("cmdline: {s}", .{cmdline_0});
 
     const fdt_addr = fdt: {
         var fdt = try FDT.create_fdt(allocator, &memory, &.{vcpu_mpidr}, cmdline_0, &gicv2, uart_device_info, rtc_device_info, &.{virtio_block_device_info});

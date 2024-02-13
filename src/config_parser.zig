@@ -199,7 +199,8 @@ fn parse_type(comptime T: type, reader: *Reader, buffer: *std.ArrayList(u8), all
             if (std.mem.eql(u8, field.name, field_name)) {
                 switch (field.type) {
                     []const u8 => {
-                        @field(t, field.name) = try allocator.dupe(u8, field_value);
+                        const string = std.mem.trim(u8, field_value, "\"");
+                        @field(t, field.name) = try allocator.dupe(u8, string);
                     },
                     u32 => {
                         @field(t, field.name) = try std.fmt.parseInt(u32, field_value, 10);
