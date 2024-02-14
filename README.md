@@ -10,14 +10,27 @@ Build:
 Usage:
 ```bash
 Usage:
-        --kernel_path: type []const u8
-        --rootfs_path: type []const u8
-        --memory_size: type u32
+        --config_path: type []const u8
 ```
 
 Example:
 ```bash
-radiance --kernel_path vmlinux-5.10.186 --rootfs_path ubuntu-22.04.ext4 --memory_size 128
+radiance --config_path config.toml
+```
+
+Example config file:
+```toml
+[machine]
+vcpus = 2
+memory_mb = 128
+
+[kernel]
+path = "vmlinux-5.10"
+
+[[drives]]
+read_only = true
+path = "ubuntu-22.04.ext4"
+
 ```
 
 Linux kernel:
