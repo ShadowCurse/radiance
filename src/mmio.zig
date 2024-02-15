@@ -1,3 +1,4 @@
+const std = @import("std");
 const log = @import("log.zig");
 const Memory = @import("memory.zig");
 const Gicv2 = @import("gicv2.zig");
@@ -34,16 +35,12 @@ last_irq: u32,
 last_address: u64,
 num_devices: usize,
 devices: [10]MmioDevice,
+mutex: std.Thread.Mutex,
 
 const Self = @This();
 
 pub fn new() Self {
-    return Self{
-        .last_irq = Gicv2.IRQ_BASE,
-        .last_address = MMIO_MEM_START,
-        .num_devices = 0,
-        .devices = undefined,
-    };
+    return Self{ .last_irq = Gicv2.IRQ_BASE, .last_address = MMIO_MEM_START, .num_devices = 0, .devices = undefined, .mutex = .{} };
 }
 
 pub fn allocate(self: *Self) MmioDeviceInfo {
@@ -63,7 +60,9 @@ pub fn add_device(self: *Self, device: MmioDevice) void {
     self.num_devices += 1;
 }
 
-pub fn write(self: *const Self, addr: u64, data: []u8) !void {
+pub fn write(self: *Self, addr: u64, data: []u8) !void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     var handled: bool = false;
     for (self.devices[0..self.num_devices]) |device| {
         switch (device) {
@@ -80,7 +79,9 @@ pub fn write(self: *const Self, addr: u64, data: []u8) !void {
     }
 }
 
-pub fn read(self: *const Self, addr: u64, data: []u8) !void {
+pub fn read(self: *Self, addr: u64, data: []u8) !void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
     var handled: bool = false;
     for (self.devices[0..self.num_devices]) |device| {
         switch (device) {
