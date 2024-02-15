@@ -45,13 +45,16 @@ pub fn main() !void {
     const vm = try Vm.new(&kvm);
     try vm.set_memory(&memory);
 
-    // create vcpu
-    var vcpu = try Vcpu.new(&kvm, &vm, 0);
     const kvi = try vm.get_preferred_target();
-    try vcpu.init(kvi);
-    try vcpu.set_reg(u64, Vcpu.PC, kernel_load_address);
 
-    const vcpu_mpidr = try vcpu.get_reg(Vcpu.MIDR_EL1);
+    // create vcpu
+    var vcpus = try allocator.alloc(Vcpu, config.machine.vcpus);
+    defer allocator.free(vcpus);
+
+    for (vcpus, 0..) |*vcpu, i| {
+        vcpu.* = try Vcpu.new(&kvm, &vm, i);
+        try vcpu.init(kvi);
+    }
 
     const gicv2 = try Gicv2.new(&vm);
 
@@ -78,28 +81,44 @@ pub fn main() !void {
     const cmdline_0 = try cmdline.sentinel_str();
 
     const fdt_addr = fdt: {
-        var fdt = try FDT.create_fdt(allocator, &memory, &.{vcpu_mpidr}, cmdline_0, &gicv2, uart_device_info, rtc_device_info, &.{virtio_block_device_info});
+        var mpidrs = try allocator.alloc(u64, config.machine.vcpus);
+        defer allocator.free(mpidrs);
+        for (mpidrs, vcpus) |*mpidr, *vcpu| {
+            mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
+        }
+
+        var fdt = try FDT.create_fdt(allocator, &memory, mpidrs, cmdline_0, &gicv2, uart_device_info, rtc_device_info, &.{virtio_block_device_info});
         defer fdt.deinit();
 
         const fdt_addr = try memory.load_fdt(&fdt);
-
-        std.log.info("last_addr: 0x{x}", .{memory.last_addr()});
-        std.log.info("fdt_addr: 0x{x}", .{fdt_addr});
-
         break :fdt fdt_addr;
     };
 
-    try vcpu.set_reg(u64, Vcpu.REGS0, @as(u64, fdt_addr));
-    try vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
+    try vcpus[0].set_reg(u64, Vcpu.PC, kernel_load_address);
+    try vcpus[0].set_reg(u64, Vcpu.REGS0, @as(u64, fdt_addr));
+
+    for (vcpus) |*vcpu| {
+        try vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
+    }
 
     // const sig = try Vcpu.set_thread_handler();
-    const t = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ &vcpu, &mmio });
+    var vcpu_threads = try allocator.alloc(std.Thread, config.machine.vcpus);
+    defer allocator.free(vcpu_threads);
+
+    std.log.info("starting vcpu threads", .{});
+    var barrier: std.Thread.ResetEvent = .{};
+    for (vcpu_threads, vcpus) |*t, *vcpu| {
+        t.* = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ vcpu, &barrier, &mmio });
+    }
+    barrier.set();
     // Vcpu.kick_thread(&t, sig);
 
     const stdin = std.io.getStdIn();
     const state = configure_terminal(&stdin);
     const input_thread = try std.Thread.spawn(.{}, Uart.read_input_threaded, .{&uart});
-    t.join();
+    for (vcpu_threads) |*t| {
+        t.join();
+    }
     restore_terminal(&stdin, &state);
 
     _ = nix.pthread_kill(@intFromPtr(input_thread.impl.handle), nix.SIGINT);

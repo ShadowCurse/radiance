@@ -8,7 +8,7 @@ const Vm = @import("vm.zig");
 pub const PC = Self.core_reg_id("pc");
 pub const REGS0 = Self.core_reg_id("regs");
 pub const PSTATE = Self.core_reg_id("pstate");
-pub const MIDR_EL1 = Self.sys_reg_id(3, 0, 0, 0, 5);
+pub const MPIDR_EL1 = Self.sys_reg_id(3, 0, 0, 0, 5);
 
 /// PSR (Processor State Register) bits.
 /// arch/arm64/include/uapi/asm/ptrace.h.
@@ -22,6 +22,7 @@ pub const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1h | PSR_A_BIT | PSR_F_BIT | PS
 
 fd: std.os.fd_t,
 kvm_run: *nix.kvm_run,
+index: u64,
 // Needed for signal handler to kick vcpu from the KVM_RUN loop
 threadlocal var self_ref: ?*Self = null;
 
@@ -81,12 +82,17 @@ pub fn new(kvm: *const Kvm, vm: *const Vm, index: u64) !Self {
     return Self{
         .fd = fd,
         .kvm_run = @ptrCast(kvm_run.ptr),
+        .index = index,
     };
 }
 
 pub fn init(self: *const Self, preferred_target: nix.kvm_vcpu_init) !void {
     var kvi = preferred_target;
     kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_PSCI_0_2;
+    // All vcpus are powered off except first one
+    if (0 < self.index) {
+        kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
+    }
     const r = nix.ioctl(self.fd, nix.KVM_ARM_VCPU_INIT, @intFromPtr(&kvi));
     if (r < 0) {
         return VcpuError.Init;
@@ -161,10 +167,12 @@ pub fn run(self: *const Self, mmio: *Mmio) !bool {
     return true;
 }
 
-pub fn run_threaded(self: *Self, mmio: *Mmio) !void {
+pub fn run_threaded(self: *Self, barrier: *std.Thread.ResetEvent, mmio: *Mmio) !void {
     self_ref = self;
+    barrier.wait();
     var r = true;
     while (r) {
         r = try self.run(mmio);
     }
+    barrier.reset();
 }
