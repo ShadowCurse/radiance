@@ -46,21 +46,6 @@ pub const KernelConfig = struct {
     }
 };
 
-pub const RootfsConfig = struct {
-    read_only: bool,
-
-    const Self = @This();
-
-    pub fn default() Self {
-        return Self{ .read_only = false };
-    }
-
-    fn update(self: *Self, reader: *Reader, buffer: *std.ArrayList(u8), allocator: Allocator) !void {
-        const new_self = try parse_type(Self, reader, buffer, allocator);
-        self.* = new_self;
-    }
-};
-
 pub const DriveConfig = struct {
     read_only: bool,
     path: []const u8,
@@ -103,7 +88,6 @@ pub const DrivesConfigs = struct {
 pub const Config = struct {
     machine: MachineConfig,
     kernel: KernelConfig,
-    rootfs: RootfsConfig,
     drives: DrivesConfigs,
 
     const Self = @This();
@@ -112,7 +96,6 @@ pub const Config = struct {
         return Self{
             .machine = MachineConfig.default(),
             .kernel = KernelConfig.default(),
-            .rootfs = RootfsConfig.default(),
             .drives = DrivesConfigs.default(),
         };
     }
