@@ -61,21 +61,37 @@ pub fn main() !void {
     var mmio = Mmio.new();
     const uart_device_info = mmio.allocate();
     const rtc_device_info = mmio.allocate();
-    const virtio_block_device_info = mmio.allocate();
+
+    var virtio_block_device_infos = try allocator.alloc(Mmio.MmioDeviceInfo, config.drives.drives.items.len);
+    defer allocator.free(virtio_block_device_infos);
+    for (config.drives.drives.items, 0..) |_, i| {
+        virtio_block_device_infos[i] = mmio.allocate();
+    }
 
     var uart = try Uart.new(&vm, std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new(rtc_device_info);
-    var virtio_block = try VirtioBlock.new(&vm, config.drives.drives.items[0].path, config.drives.drives.items[0].read_only, &memory, virtio_block_device_info);
+
+    var virtio_blocks = try allocator.alloc(VirtioBlock, config.drives.drives.items.len);
+    defer allocator.free(virtio_blocks);
+    for (config.drives.drives.items, virtio_block_device_infos, 0..) |*drive, mmio_info, i| {
+        virtio_blocks[i] = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
+    }
 
     mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
     mmio.add_device(Mmio.MmioDevice{ .Rtc = &rtc });
-    mmio.add_device(Mmio.MmioDevice{ .VirtioBlock = &virtio_block });
+    for (virtio_blocks) |*virtio_block| {
+        mmio.add_device(Mmio.MmioDevice{ .VirtioBlock = virtio_block });
+    }
 
     var cmdline = try CmdLine.new(allocator, 50);
     defer cmdline.deinit();
 
     try cmdline.append("console=ttyS0 reboot=k panic=1 pci=off");
-    try virtio_block.add_to_cmdline(&cmdline);
+    if (virtio_blocks[0].read_only) {
+        try cmdline.append(" root=/dev/vda ro");
+    } else {
+        try cmdline.append(" root=/dev/vda rw");
+    }
     try uart.add_to_cmdline(&cmdline);
 
     const cmdline_0 = try cmdline.sentinel_str();
@@ -87,7 +103,7 @@ pub fn main() !void {
             mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
         }
 
-        var fdt = try FDT.create_fdt(allocator, &memory, mpidrs, cmdline_0, &gicv2, uart_device_info, rtc_device_info, &.{virtio_block_device_info});
+        var fdt = try FDT.create_fdt(allocator, &memory, mpidrs, cmdline_0, &gicv2, uart_device_info, rtc_device_info, virtio_block_device_infos);
         defer fdt.deinit();
 
         const fdt_addr = try memory.load_fdt(&fdt);
