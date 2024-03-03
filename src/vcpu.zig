@@ -23,6 +23,7 @@ pub const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1h | PSR_A_BIT | PSR_F_BIT | PS
 fd: std.os.fd_t,
 kvm_run: *nix.kvm_run,
 index: u64,
+exit_signal: i32,
 // Needed for signal handler to kick vcpu from the KVM_RUN loop
 threadlocal var self_ref: ?*Self = null;
 
@@ -33,7 +34,6 @@ pub const VcpuError = error{
     Init,
     SetReg,
     GetReg,
-    Run,
 };
 
 pub fn core_reg_id(comptime name: []const u8) u64 {
@@ -50,24 +50,27 @@ fn signal_handler(s: c_int) callconv(.C) void {
     Self.self_ref.?.kvm_run.immediate_exit = 1;
 }
 
-pub fn set_thread_handler() !i32 {
-    const sig = nix.__libc_current_sigrtmin();
+/// Return number of available real-time signal with highest priority
+pub fn get_vcpu_interrupt_signal() i32 {
+    return nix.__libc_current_sigrtmin();
+}
+
+fn set_thread_handler(self: *Self) !void {
     const sigact = nix.Sigaction{
         .handler = .{ .handler = signal_handler },
         .flags = 4,
         .mask = .{},
         .restorer = null,
     };
-    try std.os.sigaction(@intCast(sig), &sigact, null);
-    return sig;
+    try std.os.sigaction(@intCast(self.exit_signal), &sigact, null);
 }
 
-pub fn kick_thread(thread: *const std.Thread, sig: i32) void {
-    const r = nix.pthread_kill(@intFromPtr(thread.impl.handle), sig);
-    log.debug(@src(), "kick_thread: {}", .{r});
+pub fn kick_thread(thread: *const std.Thread, exit_signal: i32) void {
+    const r = nix.pthread_kill(@intFromPtr(thread.impl.handle), exit_signal);
+    log.debug(@src(), "kick_thread result: {}", .{r});
 }
 
-pub fn new(kvm: *const Kvm, vm: *const Vm, index: u64) !Self {
+pub fn new(kvm: *const Kvm, vm: *const Vm, index: u64, exit_signal: i32) !Self {
     const fd = nix.ioctl(vm.fd, nix.KVM_CREATE_VCPU, index);
     if (fd < 0) {
         return VcpuError.New;
@@ -83,6 +86,7 @@ pub fn new(kvm: *const Kvm, vm: *const Vm, index: u64) !Self {
         .fd = fd,
         .kvm_run = @ptrCast(kvm_run.ptr),
         .index = index,
+        .exit_signal = exit_signal,
     };
 }
 
@@ -121,10 +125,9 @@ pub fn get_reg(self: *const Self, reg_id: u64) !u64 {
 
 pub fn run(self: *const Self, mmio: *Mmio) !bool {
     const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
-    // -4 == -EINTR - if vcpu was interrupted
-    if (r < 0 and r != -4) {
-        log.err(@src(), "vcpu run error: {}:{}", .{ r, std.c.getErrno(r) });
-        return VcpuError.Run;
+    if (r < 0) {
+        log.err(@src(), "KVM_RUN returned error: {}:{}", .{ r, std.c.getErrno(r) });
+        return false;
     }
 
     switch (self.kvm_run.exit_reason) {
@@ -169,10 +172,8 @@ pub fn run(self: *const Self, mmio: *Mmio) !bool {
 
 pub fn run_threaded(self: *Self, barrier: *std.Thread.ResetEvent, mmio: *Mmio) !void {
     self_ref = self;
+    try self.set_thread_handler();
+
     barrier.wait();
-    var r = true;
-    while (r) {
-        r = try self.run(mmio);
-    }
-    barrier.reset();
+    while (try self.run(mmio)) {}
 }

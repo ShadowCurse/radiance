@@ -51,8 +51,10 @@ pub fn main() !void {
     var vcpus = try allocator.alloc(Vcpu, config.machine.vcpus);
     defer allocator.free(vcpus);
 
+    const vcpu_exit_signal = Vcpu.get_vcpu_interrupt_signal();
+
     for (vcpus, 0..) |*vcpu, i| {
-        vcpu.* = try Vcpu.new(&kvm, &vm, i);
+        vcpu.* = try Vcpu.new(&kvm, &vm, i, vcpu_exit_signal);
         try vcpu.init(kvi);
     }
 
@@ -132,13 +134,23 @@ pub fn main() !void {
     const stdin = std.io.getStdIn();
     const state = configure_terminal(&stdin);
     const input_thread = try std.Thread.spawn(.{}, Uart.read_input_threaded, .{&uart});
-    for (vcpu_threads) |*t| {
+
+    vcpu_threads[0].join();
+
+    log.info(@src(), "Shutting down additional vcpus", .{});
+    for (vcpu_threads[1..]) |*t| {
+        Vcpu.kick_thread(t, vcpu_exit_signal);
         t.join();
     }
+
+    log.info(@src(), "Restoring terminal state", .{});
     restore_terminal(&stdin, &state);
 
+    log.info(@src(), "Shutting down input thread", .{});
     _ = nix.pthread_kill(@intFromPtr(input_thread.impl.handle), nix.SIGINT);
     input_thread.join();
+
+    log.info(@src(), "Successful shutdown", .{});
 }
 
 fn configure_terminal(stdin: *const std.fs.File) std.os.termios {
