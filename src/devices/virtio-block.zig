@@ -23,7 +23,7 @@ pub const VirtioBlockError = error{
 pub const VirtioBlock = struct {
     read_only: bool,
     memory: *Memory,
-    virtio_context: VirtioContext(VirtioBlockConfig),
+    virtio_context: VirtioContext(1, VirtioBlockConfig),
     mmio_info: MmioDeviceInfo,
     file: std.fs.File,
     block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
@@ -52,7 +52,7 @@ pub const VirtioBlock = struct {
 
         _ = try std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, meta.inner.statx.ino });
 
-        var virtio_context = try VirtioContext(VirtioBlockConfig).new(TYPE_BLOCK);
+        var virtio_context = try VirtioContext(1, VirtioBlockConfig).new(TYPE_BLOCK);
         virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1); // | (1 << nix.VIRTIO_RING_F_EVENT_IDX);
         if (read_only) {
             virtio_context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
@@ -120,7 +120,7 @@ pub const VirtioBlock = struct {
 
     pub fn process_queue(self: *Self, queue_idx: u32) !void {
         _ = queue_idx;
-        while (self.virtio_context.queue.pop_desc_chain(self.memory)) |dc| {
+        while (self.virtio_context.queues[self.virtio_context.selected_queue].pop_desc_chain(self.memory)) |dc| {
             var desc_chain = dc;
             const first_desc_index = desc_chain.index.?;
             const first_desc = desc_chain.next().?;
@@ -165,7 +165,7 @@ pub const VirtioBlock = struct {
                 const status_ptr = self.memory.get_ptr(u32, third_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
 
-                self.virtio_context.queue.add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
+                self.virtio_context.queues[self.virtio_context.selected_queue].add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
             } else {
                 try self.file.sync();
 

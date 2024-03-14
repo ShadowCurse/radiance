@@ -36,7 +36,11 @@ pub const VirtioActionTag = enum {
 
 pub const VirtioAction = union(VirtioActionTag) { NoAction: void, ActivateDevice: void, ResetDevice: void, ConfigWrite: void, QueueNotification: u32 };
 
-pub fn VirtioContext(comptime config_type: type) type {
+pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) type {
+    if (NUM_QUEUES == 0) {
+        unreachable;
+    }
+
     return struct {
         // Selects a set of 32 device feature bits
         // accessible by reading from DeviceFeatures
@@ -50,12 +54,12 @@ pub fn VirtioContext(comptime config_type: type) type {
         device_status: u32,
         interrupt_status: u32,
 
-        config_blob: config_type,
+        config_blob: CONFIG_TYPE,
         config_generation: u32,
 
         selected_queue: u32,
-        queue: Queue,
-        queue_event: EventFd,
+        queues: [NUM_QUEUES]Queue,
+        queue_events: [NUM_QUEUES]EventFd,
 
         irq_status: std.atomic.Atomic(u32),
         irq_evt: EventFd,
@@ -77,15 +81,15 @@ pub fn VirtioContext(comptime config_type: type) type {
                 .config_generation = 0,
 
                 .selected_queue = 0,
-                .queue = Queue.new(),
-                .queue_event = try EventFd.new(0, nix.EFD_NONBLOCK),
+                .queues = [_]Queue{Queue.new()} ** NUM_QUEUES,
+                .queue_events = [_]EventFd{try EventFd.new(0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
 
                 .irq_status = std.atomic.Atomic(u32).init(0),
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
             };
         }
 
-        fn update_device_status(self: *Self, status: u32) ?VirtioAction {
+        fn update_device_status(self: *Self, status: u32) VirtioAction {
             const changed_bit = ~self.device_status & status;
             switch (changed_bit) {
                 ACKNOWLEDGE => if (self.device_status == INIT) {
@@ -109,6 +113,7 @@ pub fn VirtioContext(comptime config_type: type) type {
                     log.warn(@src(), "invalid virtio driver status transition: 0x{x} => 0x{x}", .{ self.device_status, status });
                 },
             }
+            return VirtioAction.NoAction;
         }
 
         pub fn read(self: *Self, offset: u64, data: []u8) VirtioAction {
@@ -131,7 +136,7 @@ pub fn VirtioContext(comptime config_type: type) type {
                     data_u32.* = features_u32;
                 },
                 0x34 => data_u32.* = Queue.MAX_SIZE,
-                0x44 => data_u32.* = @intFromBool(self.queue.ready),
+                0x44 => data_u32.* = @intFromBool(self.queues[self.selected_queue].ready),
                 0x60 => {
                     // 0x1 means status is always ready
                     data_u32.* = self.interrupt_status | 0x1;
@@ -172,20 +177,20 @@ pub fn VirtioContext(comptime config_type: type) type {
                 0x24 => self.driver_features_word = data_u32.*,
                 0x30 => self.selected_queue = data_u32.*,
                 0x38 => {
-                    self.queue.size = @truncate(data_u32.*);
+                    self.queues[self.selected_queue].size = @truncate(data_u32.*);
                 },
-                0x44 => self.queue.ready = data_u32.* == 1,
+                0x44 => self.queues[self.selected_queue].ready = data_u32.* == 1,
                 0x50 => return VirtioAction{ .QueueNotification = data_u32.* },
                 0x64 => {
                     self.interrupt_status &= ~data_u32.*;
                 },
-                0x70 => self.device_status = data_u32.*,
-                0x80 => self.queue.set_desc_table(false, data_u32.*),
-                0x84 => self.queue.set_desc_table(true, data_u32.*),
-                0x90 => self.queue.set_avail_ring(false, data_u32.*),
-                0x94 => self.queue.set_avail_ring(true, data_u32.*),
-                0xa0 => self.queue.set_used_ring(false, data_u32.*),
-                0xa4 => self.queue.set_used_ring(true, data_u32.*),
+                0x70 => return self.update_device_status(data_u32.*),
+                0x80 => self.queues[self.selected_queue].set_desc_table(false, data_u32.*),
+                0x84 => self.queues[self.selected_queue].set_desc_table(true, data_u32.*),
+                0x90 => self.queues[self.selected_queue].set_avail_ring(false, data_u32.*),
+                0x94 => self.queues[self.selected_queue].set_avail_ring(true, data_u32.*),
+                0xa0 => self.queues[self.selected_queue].set_used_ring(false, data_u32.*),
+                0xa4 => self.queues[self.selected_queue].set_used_ring(true, data_u32.*),
                 0x100...0xfff => {
                     const new_offset = offset - 0x100;
                     const config_blob_slice = std.mem.asBytes(&self.config_blob);
