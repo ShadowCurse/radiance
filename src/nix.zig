@@ -1,9 +1,13 @@
 const std = @import("std");
 const C = @cImport({
     @cInclude("linux/kvm.h");
+    @cInclude("linux/if.h");
+    @cInclude("linux/if_tun.h");
+    @cInclude("linux/vhost.h");
     @cInclude("linux/virtio_ring.h");
     @cInclude("linux/virtio_config.h");
     @cInclude("linux/virtio_blk.h");
+    @cInclude("linux/virtio_net.h");
     @cInclude("sys/eventfd.h");
     @cInclude("fcntl.h");
     @cInclude("signal.h");

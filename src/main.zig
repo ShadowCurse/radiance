@@ -7,6 +7,7 @@ const config_parser = @import("config_parser.zig");
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
+const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 
 const CmdLine = @import("cmdline.zig");
 const FDT = @import("fdt.zig");
@@ -64,10 +65,10 @@ pub fn main() !void {
     const uart_device_info = mmio.allocate();
     const rtc_device_info = mmio.allocate();
 
-    var virtio_block_device_infos = try allocator.alloc(Mmio.MmioDeviceInfo, config.drives.drives.items.len);
-    defer allocator.free(virtio_block_device_infos);
-    for (config.drives.drives.items, 0..) |_, i| {
-        virtio_block_device_infos[i] = mmio.allocate();
+    var virtio_device_infos = try allocator.alloc(Mmio.MmioDeviceInfo, config.drives.drives.items.len + config.networks.networks.items.len);
+    defer allocator.free(virtio_device_infos);
+    for (0..config.drives.drives.items.len + 1) |i| {
+        virtio_device_infos[i] = mmio.allocate();
     }
 
     var uart = try Uart.new(&vm, std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
@@ -75,8 +76,14 @@ pub fn main() !void {
 
     var virtio_blocks = try allocator.alloc(VirtioBlock, config.drives.drives.items.len);
     defer allocator.free(virtio_blocks);
-    for (config.drives.drives.items, virtio_block_device_infos, 0..) |*drive, mmio_info, i| {
+    for (config.drives.drives.items, virtio_device_infos[0..config.drives.drives.items.len], 0..) |*drive, mmio_info, i| {
         virtio_blocks[i] = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
+    }
+
+    var vhost_nets = try allocator.alloc(VhostNet, config.networks.networks.items.len);
+    defer allocator.free(vhost_nets);
+    for (config.networks.networks.items, virtio_device_infos[config.drives.drives.items.len..], 0..) |*net, mmio_info, i| {
+        vhost_nets[i] = try VhostNet.new(&vm, net.dev_name, net.mac, &memory, mmio_info);
     }
 
     mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
@@ -84,6 +91,10 @@ pub fn main() !void {
     for (virtio_blocks) |*virtio_block| {
         mmio.add_device(Mmio.MmioDevice{ .VirtioBlock = virtio_block });
     }
+    for (vhost_nets) |*vhost_net| {
+        mmio.add_device(Mmio.MmioDevice{ .VhostNet = vhost_net });
+    }
+    // mmio.add_device(Mmio.MmioDevice{ .VhostNet = &vhost_net });
 
     var cmdline = try CmdLine.new(allocator, 50);
     defer cmdline.deinit();
@@ -105,7 +116,7 @@ pub fn main() !void {
             mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
         }
 
-        var fdt = try FDT.create_fdt(allocator, &memory, mpidrs, cmdline_0, &gicv2, uart_device_info, rtc_device_info, virtio_block_device_infos);
+        var fdt = try FDT.create_fdt(allocator, &memory, mpidrs, cmdline_0, &gicv2, uart_device_info, rtc_device_info, virtio_device_infos);
         defer fdt.deinit();
 
         const fdt_addr = try memory.load_fdt(&fdt);
