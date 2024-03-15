@@ -5,6 +5,7 @@ const Gicv2 = @import("gicv2.zig");
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
+const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 
 pub const MMIO_MEM_START: u64 = Memory.MMIO_START;
 /// The size of the memory area reserved for MMIO devices.
@@ -17,12 +18,14 @@ pub const MmioDeviceTag = enum {
     Uart,
     Rtc,
     VirtioBlock,
+    VhostNet,
 };
 
 pub const MmioDevice = union(MmioDeviceTag) {
     Uart: *Uart,
     Rtc: *Rtc,
     VirtioBlock: *VirtioBlock,
+    VhostNet: *VhostNet,
 };
 
 pub const MmioDeviceInfo = struct {
@@ -69,6 +72,7 @@ pub fn write(self: *Self, addr: u64, data: []u8) !void {
             .Uart => |uart| handled = try uart.write(addr, data),
             .Rtc => |rtc| handled = try rtc.write(addr, data),
             .VirtioBlock => |vb| handled = try vb.write(addr, data),
+            .VhostNet => |vn| handled = try vn.write(addr, data),
         }
         if (handled) {
             break;
@@ -88,6 +92,7 @@ pub fn read(self: *Self, addr: u64, data: []u8) !void {
             .Uart => |uart| handled = try uart.read(addr, data),
             .Rtc => |rtc| handled = try rtc.read(addr, data),
             .VirtioBlock => |vb| handled = try vb.read(addr, data),
+            .VhostNet => |vn| handled = try vn.read(addr, data),
         }
         if (handled) {
             break;
