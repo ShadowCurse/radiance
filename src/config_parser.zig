@@ -85,10 +85,50 @@ pub const DrivesConfigs = struct {
     }
 };
 
+pub const NetConfig = struct {
+    dev_name: [:0]const u8,
+    mac: ?[6]u8,
+
+    const Self = @This();
+
+    pub fn deinit(self: *Self, allocator: Allocator) void {
+        allocator.free(self.dev_name);
+    }
+
+    pub fn default() Self {
+        return Self{ .dev_name = "", .mac = null };
+    }
+};
+
+pub const NetConfigs = struct {
+    networks: std.ArrayListUnmanaged(NetConfig),
+
+    const Self = @This();
+
+    pub fn default() Self {
+        return Self{
+            .networks = std.ArrayListUnmanaged(NetConfig){},
+        };
+    }
+
+    pub fn deinit(self: *Self, allocator: Allocator) void {
+        for (self.networks.items) |*net| {
+            net.deinit(allocator);
+        }
+        self.networks.deinit(allocator);
+    }
+
+    fn update(self: *Self, reader: *Reader, buffer: *std.ArrayList(u8), allocator: Allocator) !void {
+        const new_config = try parse_type(NetConfig, reader, buffer, allocator);
+        try self.networks.append(allocator, new_config);
+    }
+};
+
 pub const Config = struct {
     machine: MachineConfig,
     kernel: KernelConfig,
     drives: DrivesConfigs,
+    networks: NetConfigs,
 
     const Self = @This();
 
@@ -97,12 +137,14 @@ pub const Config = struct {
             .machine = MachineConfig.default(),
             .kernel = KernelConfig.default(),
             .drives = DrivesConfigs.default(),
+            .networks = NetConfigs.default(),
         };
     }
 
     pub fn deinit(self: *Self, allocator: Allocator) void {
         self.kernel.deinit(allocator);
         self.drives.deinit(allocator);
+        self.networks.deinit(allocator);
     }
 };
 
@@ -117,6 +159,7 @@ pub fn parse(config_path: []const u8, allocator: Allocator) !Config {
 
     const type_fields = comptime @typeInfo(Config).Struct.fields;
     var config = Config.default();
+    errdefer config.deinit(allocator);
 
     while (true) {
         var writer = buffer.writer();
@@ -181,6 +224,26 @@ fn parse_type(comptime T: type, reader: *Reader, buffer: *std.ArrayList(u8), all
         inline for (type_fields) |field| {
             if (std.mem.eql(u8, field.name, field_name)) {
                 switch (field.type) {
+                    ?[6]u8 => {
+                        var array: [6]u8 = undefined;
+                        var i: usize = 0;
+                        const val_array = std.mem.trim(u8, field_value, "[]");
+                        var val_iter = std.mem.splitScalar(u8, val_array, ',');
+                        while (val_iter.next()) |value| {
+                            const v = std.mem.trim(u8, value, " ");
+                            const n = try std.fmt.parseInt(u8, v, 16);
+                            array[i] = n;
+                            i += 1;
+                        }
+                        if (i != 6) {
+                            return ConfigParseError.NoFieldValue;
+                        }
+                        @field(t, field.name) = array;
+                    },
+                    [:0]const u8 => {
+                        const string = std.mem.trim(u8, field_value, "\"");
+                        @field(t, field.name) = try allocator.dupeZ(u8, string);
+                    },
                     []const u8 => {
                         const string = std.mem.trim(u8, field_value, "\"");
                         @field(t, field.name) = try allocator.dupe(u8, string);
