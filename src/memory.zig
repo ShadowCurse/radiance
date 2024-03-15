@@ -10,7 +10,6 @@ pub const DRAM_START: u64 = 0x8000_0000; // 2 GB.
 pub const MMIO_START: u64 = 0x4000_0000; // 1 GB
 
 pub const MemoryError = error{
-    InvalidMagicNumber,
     NotAllignedKernelOffset,
 };
 
@@ -65,30 +64,19 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
 
     const file_meta = try file.metadata();
     const kernel_size = file_meta.size();
-    log.debug(@src(), "kernel_size: 0x{x}", .{kernel_size});
 
-    try file.seekTo(0);
+    const file_mem = try std.os.mmap(null, kernel_size, nix.PROT.READ, nix.MAP.PRIVATE, file.handle, 0);
+    defer std.os.munmap(file_mem);
 
-    var arm64_header: arm64_image_header = undefined;
-    var header_slice = std.mem.asBytes(&arm64_header);
-    const n = try file.read(@as([]u8, header_slice));
-    std.debug.assert(n == header_slice.len);
-
-    log.debug(@src(), "header: {any}", .{arm64_header});
-
-    if (arm64_header.magic != 0x644d_5241) {
-        return MemoryError.InvalidMagicNumber;
-    }
+    const arm64_header: *arm64_image_header = @ptrCast(file_mem.ptr);
+    std.debug.assert(arm64_header.magic == 0x644d_5241);
 
     var text_offset = arm64_header.text_offset;
     if (arm64_header.image_size == 0) {
         text_offset = 0x80000;
     }
-    log.debug(@src(), "text_offset: 0x{x}", .{text_offset});
 
-    try file.seekTo(0);
-    _ = try file.read(self.mem[0..kernel_size]);
-
+    @memcpy(self.mem[0..kernel_size], file_mem);
     return DRAM_START + text_offset;
 }
 
