@@ -1,5 +1,5 @@
 const std = @import("std");
-const nix = @import("../nix.zig");
+const nix = @import("nix.zig");
 
 fd: std.os.fd_t,
 

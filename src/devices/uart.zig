@@ -5,7 +5,7 @@ const log = @import("../log.zig");
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
-const EventFd = @import("../virtio/eventfd.zig");
+const EventFd = @import("../eventfd.zig");
 
 // Impementation of 16550 UART device with baud of 9600
 

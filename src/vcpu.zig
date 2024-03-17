@@ -4,7 +4,7 @@ const nix = @import("nix.zig");
 const Kvm = @import("kvm.zig");
 const Mmio = @import("mmio.zig");
 const Vm = @import("vm.zig");
-const EventFd = @import("virtio/eventfd.zig");
+const EventFd = @import("eventfd.zig");
 
 pub const PC = Self.core_reg_id("pc");
 pub const REGS0 = Self.core_reg_id("regs");
