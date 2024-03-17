@@ -2,8 +2,8 @@ const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
+const EventFd = @import("../eventfd.zig");
 const Queue = @import("queue.zig").Queue;
-const EventFd = @import("eventfd.zig");
 
 pub const INIT: u32 = 0;
 pub const ACKNOWLEDGE: u32 = 1;
