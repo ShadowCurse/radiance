@@ -70,6 +70,19 @@ pub const VirtioBlock = struct {
             return VirtioBlockError.New;
         }
 
+        for (&virtio_context.queue_events, 0..) |*queue_event, i| {
+            var kvm_ioeventfd = std.mem.zeroInit(nix.kvm_ioeventfd, .{});
+            kvm_ioeventfd.datamatch = i;
+            kvm_ioeventfd.len = @sizeOf(u32);
+            kvm_ioeventfd.addr = mmio_info.addr + 0x50;
+            kvm_ioeventfd.fd = queue_event.fd;
+            kvm_ioeventfd.flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch;
+            const r = nix.ioctl(vm.fd, nix.KVM_IOEVENTFD, &kvm_ioeventfd);
+            if (r < 0) {
+                return VirtioBlockError.New;
+            }
+        }
+
         return Self{
             .read_only = read_only,
             .memory = memory,
@@ -96,7 +109,6 @@ pub const VirtioBlock = struct {
         switch (self.virtio_context.write(offset, data)) {
             VirtioAction.NoAction => {},
             VirtioAction.ActivateDevice => {},
-            VirtioAction.QueueNotification => |q| try self.process_queue(q),
             else => |action| {
                 log.err(@src(), "unhandled write virtio action: {}", .{action});
             },
@@ -118,8 +130,9 @@ pub const VirtioBlock = struct {
         return true;
     }
 
-    pub fn process_queue(self: *Self, queue_idx: u32) !void {
-        _ = queue_idx;
+    pub fn process_queue(self: *Self) !void {
+        _ = try self.virtio_context.queue_events[self.virtio_context.selected_queue].read();
+
         while (self.virtio_context.queues[self.virtio_context.selected_queue].pop_desc_chain(self.memory)) |dc| {
             var desc_chain = dc;
             const first_desc_index = desc_chain.index.?;

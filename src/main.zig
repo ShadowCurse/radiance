@@ -147,6 +147,9 @@ pub fn main() !void {
 
     var el = try EventLoop.new();
     try el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
+    for (virtio_blocks) |*block| {
+        try el.add_event(block.virtio_context.queue_events[0].fd, @ptrCast(&VirtioBlock.process_queue), block);
+    }
     try el.run();
 
     vcpu_threads[0].join();
