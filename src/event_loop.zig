@@ -10,6 +10,7 @@ const EventCallback = struct {
     parameter: CallbackParam,
 };
 
+stop: bool,
 epollfd: std.os.fd_t,
 events: [8]nix.epoll_event,
 event_callbacks_num: u64,
@@ -30,6 +31,7 @@ pub fn new() !Self {
     }
 
     return Self{
+        .stop = false,
         .epollfd = epollfd,
         .events = undefined,
         .event_callbacks_num = 0,
@@ -52,7 +54,7 @@ pub fn add_event(self: *Self, fd: std.os.fd_t, callback: CallbackFn, parameter: 
 }
 
 pub fn run(self: *Self) !void {
-    while (true) {
+    while (!self.stop) {
         const nfds = nix.epoll_wait(self.epollfd, &self.events, self.events.len, -1);
         if (nfds < 0) {
             return EventLoopError.Run;
@@ -65,4 +67,8 @@ pub fn run(self: *Self) !void {
             try callback.callback(callback.parameter);
         }
     }
+}
+
+pub fn stop(self: *Self) !void {
+    self.stop = true;
 }

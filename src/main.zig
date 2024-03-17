@@ -130,7 +130,6 @@ pub fn main() !void {
         try vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
     }
 
-    // const sig = try Vcpu.set_thread_handler();
     var vcpu_threads = try allocator.alloc(std.Thread, config.machine.vcpus);
     defer allocator.free(vcpu_threads);
 
@@ -140,7 +139,6 @@ pub fn main() !void {
         t.* = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ vcpu, &barrier, &mmio });
     }
     barrier.set();
-    // Vcpu.kick_thread(&t, sig);
 
     const stdin = std.io.getStdIn();
     const state = configure_terminal(&stdin);
@@ -150,10 +148,13 @@ pub fn main() !void {
     for (virtio_blocks) |*block| {
         try el.add_event(block.virtio_context.queue_events[0].fd, @ptrCast(&VirtioBlock.process_queue), block);
     }
+    for (vcpus) |*vcpu| {
+        try el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
+    }
     try el.run();
 
+    log.info(@src(), "Shutting down main vcpu", .{});
     vcpu_threads[0].join();
-
     log.info(@src(), "Shutting down additional vcpus", .{});
     for (vcpu_threads[1..]) |*t| {
         Vcpu.kick_thread(t, vcpu_exit_signal);

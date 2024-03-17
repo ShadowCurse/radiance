@@ -4,6 +4,7 @@ const nix = @import("nix.zig");
 const Kvm = @import("kvm.zig");
 const Mmio = @import("mmio.zig");
 const Vm = @import("vm.zig");
+const EventFd = @import("virtio/eventfd.zig");
 
 pub const PC = Self.core_reg_id("pc");
 pub const REGS0 = Self.core_reg_id("regs");
@@ -23,6 +24,7 @@ pub const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1h | PSR_A_BIT | PSR_F_BIT | PS
 fd: std.os.fd_t,
 kvm_run: *nix.kvm_run,
 index: u64,
+exit_event: EventFd,
 exit_signal: i32,
 // Needed for signal handler to kick vcpu from the KVM_RUN loop
 threadlocal var self_ref: ?*Self = null;
@@ -82,10 +84,14 @@ pub fn new(kvm: *const Kvm, vm: *const Vm, index: u64, exit_signal: i32) !Self {
 
     const size: usize = @intCast(vcpu_mmap_size);
     const kvm_run = try std.os.mmap(null, size, nix.PROT.READ | nix.PROT.WRITE, nix.MAP.SHARED, fd, @as(u64, 0));
+
+    const exit_event = try EventFd.new(0, nix.EFD_NONBLOCK);
+
     return Self{
         .fd = fd,
         .kvm_run = @ptrCast(kvm_run.ptr),
         .index = index,
+        .exit_event = exit_event,
         .exit_signal = exit_signal,
     };
 }
@@ -123,10 +129,11 @@ pub fn get_reg(self: *const Self, reg_id: u64) !u64 {
     return value;
 }
 
-pub fn run(self: *const Self, mmio: *Mmio) !bool {
+pub fn run(self: *Self, mmio: *Mmio) !bool {
     const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
     if (r < 0) {
         log.err(@src(), "KVM_RUN returned error: {}:{}", .{ r, std.c.getErrno(r) });
+        try self.exit_event.write(1);
         return false;
     }
 
@@ -137,14 +144,17 @@ pub fn run(self: *const Self, mmio: *Mmio) !bool {
             switch (self.kvm_run.unnamed_0.system_event.type) {
                 nix.KVM_SYSTEM_EVENT_SHUTDOWN => {
                     log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN", .{});
+                    try self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_RESET => {
                     log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_RESET", .{});
+                    try self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_CRASH => {
                     log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_CRASH", .{});
+                    try self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_WAKEUP => {
