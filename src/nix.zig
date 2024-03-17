@@ -8,6 +8,7 @@ const C = @cImport({
     @cInclude("linux/virtio_config.h");
     @cInclude("linux/virtio_blk.h");
     @cInclude("linux/virtio_net.h");
+    @cInclude("sys/epoll.h");
     @cInclude("sys/eventfd.h");
     @cInclude("fcntl.h");
     @cInclude("signal.h");

@@ -9,6 +9,7 @@ const Rtc = @import("devices/rtc.zig");
 const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
 const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 
+const EventLoop = @import("event_loop.zig");
 const CmdLine = @import("cmdline.zig");
 const FDT = @import("fdt.zig");
 const Gicv2 = @import("gicv2.zig");
@@ -94,7 +95,6 @@ pub fn main() !void {
     for (vhost_nets) |*vhost_net| {
         mmio.add_device(Mmio.MmioDevice{ .VhostNet = vhost_net });
     }
-    // mmio.add_device(Mmio.MmioDevice{ .VhostNet = &vhost_net });
 
     var cmdline = try CmdLine.new(allocator, 50);
     defer cmdline.deinit();
@@ -144,7 +144,10 @@ pub fn main() !void {
 
     const stdin = std.io.getStdIn();
     const state = configure_terminal(&stdin);
-    const input_thread = try std.Thread.spawn(.{}, Uart.read_input_threaded, .{&uart});
+
+    var el = try EventLoop.new();
+    try el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
+    try el.run();
 
     vcpu_threads[0].join();
 
@@ -156,10 +159,6 @@ pub fn main() !void {
 
     log.info(@src(), "Restoring terminal state", .{});
     restore_terminal(&stdin, &state);
-
-    log.info(@src(), "Shutting down input thread", .{});
-    _ = nix.pthread_kill(@intFromPtr(input_thread.impl.handle), nix.SIGINT);
-    input_thread.join();
 
     log.info(@src(), "Successful shutdown", .{});
 }
