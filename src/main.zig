@@ -34,7 +34,10 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var config = try config_parser.parse(args.config_path, allocator);
+    var config = try config_parser.parse(
+        allocator,
+        args.config_path,
+    );
     defer config.deinit(allocator);
 
     var memory = try Memory.init(config.machine.memory_mb << 20);
