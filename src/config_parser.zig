@@ -148,7 +148,7 @@ pub const Config = struct {
     }
 };
 
-pub fn parse(config_path: []const u8, allocator: Allocator) !Config {
+pub fn parse(allocator: Allocator, config_path: []const u8) !Config {
     var file_options: std.fs.File.OpenFlags = .{};
     file_options.mode = std.fs.File.OpenMode.read_write;
     const file = try std.fs.cwd().openFile(config_path, file_options);

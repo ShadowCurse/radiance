@@ -1,6 +1,5 @@
 const std = @import("std");
 const nix = @import("nix.zig");
-const Allocator = std.mem.Allocator;
 
 file: std.fs.File,
 

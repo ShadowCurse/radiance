@@ -1,7 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
-const Allocator = std.mem.Allocator;
 const Vm = @import("vm.zig");
 const Memory = @import("memory.zig");
 
