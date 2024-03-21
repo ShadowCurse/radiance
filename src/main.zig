@@ -63,8 +63,10 @@ pub fn main() !void {
         try vcpu.init(kvi);
     }
 
+    // create interrupt controller
     const gicv2 = try Gicv2.new(&vm);
 
+    // create mmio devices
     var mmio = Mmio.new();
     const uart_device_info = mmio.allocate();
     const rtc_device_info = mmio.allocate();
@@ -99,6 +101,7 @@ pub fn main() !void {
         mmio.add_device(Mmio.MmioDevice{ .VhostNet = vhost_net });
     }
 
+    // create kernel cmdline
     var cmdline = try CmdLine.new(allocator, 50);
     defer cmdline.deinit();
 
@@ -112,6 +115,7 @@ pub fn main() !void {
 
     const cmdline_0 = try cmdline.sentinel_str();
 
+    // create fdt
     const fdt_addr = fdt: {
         var mpidrs = try allocator.alloc(u64, config.machine.vcpus);
         defer allocator.free(mpidrs);
@@ -126,6 +130,7 @@ pub fn main() !void {
         break :fdt fdt_addr;
     };
 
+    // configure vcpus
     try vcpus[0].set_reg(u64, Vcpu.PC, kernel_load_address);
     try vcpus[0].set_reg(u64, Vcpu.REGS0, @as(u64, fdt_addr));
 
@@ -133,6 +138,11 @@ pub fn main() !void {
         try vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
     }
 
+    // configure terminal for uart in/out
+    const stdin = std.io.getStdIn();
+    const state = configure_terminal(&stdin);
+
+    // start vcpu threads
     var vcpu_threads = try allocator.alloc(std.Thread, config.machine.vcpus);
     defer allocator.free(vcpu_threads);
 
@@ -141,11 +151,8 @@ pub fn main() !void {
     for (vcpu_threads, vcpus) |*t, *vcpu| {
         t.* = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ vcpu, &barrier, &mmio });
     }
-    barrier.set();
 
-    const stdin = std.io.getStdIn();
-    const state = configure_terminal(&stdin);
-
+    // create event loop
     var el = try EventLoop.new();
     try el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
     for (virtio_blocks) |*block| {
@@ -154,17 +161,19 @@ pub fn main() !void {
     for (vcpus) |*vcpu| {
         try el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
     }
+
+    // start vcpus
+    barrier.set();
+    // start event loop
     try el.run();
 
-    log.info(@src(), "Shutting down main vcpu", .{});
+    // stop all vcpus
     vcpu_threads[0].join();
-    log.info(@src(), "Shutting down additional vcpus", .{});
     for (vcpu_threads[1..]) |*t| {
         Vcpu.kick_thread(t, vcpu_exit_signal);
         t.join();
     }
 
-    log.info(@src(), "Restoring terminal state", .{});
     restore_terminal(&stdin, &state);
 
     log.info(@src(), "Successful shutdown", .{});
