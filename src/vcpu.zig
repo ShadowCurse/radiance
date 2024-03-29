@@ -180,8 +180,10 @@ pub fn run(self: *Self, mmio: *Mmio) !bool {
     return true;
 }
 
-pub fn run_threaded(self: *Self, barrier: *std.Thread.ResetEvent, mmio: *Mmio) !void {
+pub fn run_threaded(self: *Self, barrier: *std.Thread.ResetEvent, mmio: *Mmio, start_time: *const std.time.Instant) !void {
     self_ref = self;
+    const now = try std.time.Instant.now();
+    log.info(@src(), "startup time: {}ms", .{now.since(start_time.*) / 1000_000});
     try self.set_thread_handler();
 
     barrier.wait();

@@ -28,6 +28,7 @@ const Args = struct {
 };
 
 pub fn main() !void {
+    const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -149,7 +150,7 @@ pub fn main() !void {
     std.log.info("starting vcpu threads", .{});
     var barrier: std.Thread.ResetEvent = .{};
     for (vcpu_threads, vcpus) |*t, *vcpu| {
-        t.* = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ vcpu, &barrier, &mmio });
+        t.* = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ vcpu, &barrier, &mmio, &start_time });
     }
 
     // create event loop
