@@ -65,8 +65,7 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
     const file_meta = try file.metadata();
     const kernel_size = file_meta.size();
 
-    const file_mem = try std.os.mmap(null, kernel_size, nix.PROT.READ, nix.MAP.PRIVATE, file.handle, 0);
-    defer std.os.munmap(file_mem);
+    const file_mem = try std.os.mmap(self.mem.ptr, kernel_size, nix.PROT.READ | nix.PROT.WRITE, nix.MAP.PRIVATE | nix.MAP.FIXED | 0x4000, file.handle, 0);
 
     const arm64_header: *arm64_image_header = @ptrCast(file_mem.ptr);
     std.debug.assert(arm64_header.magic == 0x644d_5241);
@@ -76,7 +75,6 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
         text_offset = 0x80000;
     }
 
-    @memcpy(self.mem[0..kernel_size], file_mem);
     return DRAM_START + text_offset;
 }
 
