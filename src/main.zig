@@ -72,9 +72,10 @@ pub fn main() !void {
     const uart_device_info = mmio.allocate();
     const rtc_device_info = mmio.allocate();
 
-    var virtio_device_infos = try allocator.alloc(Mmio.MmioDeviceInfo, config.drives.drives.items.len + config.networks.networks.items.len);
+    const virtio_device_infos_num = config.drives.drives.items.len + config.networks.networks.items.len;
+    var virtio_device_infos = try allocator.alloc(Mmio.MmioDeviceInfo, virtio_device_infos_num);
     defer allocator.free(virtio_device_infos);
-    for (0..config.drives.drives.items.len + 1) |i| {
+    for (0..virtio_device_infos_num) |i| {
         virtio_device_infos[i] = mmio.allocate();
     }
 
@@ -83,14 +84,16 @@ pub fn main() !void {
 
     var virtio_blocks = try allocator.alloc(VirtioBlock, config.drives.drives.items.len);
     defer allocator.free(virtio_blocks);
-    for (config.drives.drives.items, virtio_device_infos[0..config.drives.drives.items.len], 0..) |*drive, mmio_info, i| {
-        virtio_blocks[i] = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
+    const vb_infos = virtio_device_infos[0..config.drives.drives.items.len];
+    for (virtio_blocks, config.drives.drives.items, vb_infos) |*block, *drive, mmio_info| {
+        block.* = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
     }
 
     var vhost_nets = try allocator.alloc(VhostNet, config.networks.networks.items.len);
     defer allocator.free(vhost_nets);
-    for (config.networks.networks.items, virtio_device_infos[config.drives.drives.items.len..], 0..) |*net, mmio_info, i| {
-        vhost_nets[i] = try VhostNet.new(&vm, net.dev_name, net.mac, &memory, mmio_info);
+    const vhn_infos = virtio_device_infos[config.drives.drives.items.len..];
+    for (vhost_nets, config.networks.networks.items, vhn_infos) |*vhn, *net, mmio_info| {
+        vhn.* = try VhostNet.new(&vm, net.dev_name, net.mac, &memory, mmio_info);
     }
 
     mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
