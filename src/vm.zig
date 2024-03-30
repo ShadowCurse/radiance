@@ -16,14 +16,16 @@ pub const VmError = error{
 };
 
 pub fn new(kvm: *const Kvm) !Self {
-    const fd = nix.ioctl(kvm.*.file.handle, nix.KVM_CREATE_VM, @as(usize, 0));
-    if (fd < 0) {
-        return VmError.New;
-    } else {
-        return Self{
-            .fd = fd,
-        };
-    }
+    const fd = try nix.checked_ioctl(
+        @src(),
+        VmError.New,
+        kvm.*.file.handle,
+        nix.KVM_CREATE_VM,
+        @as(usize, 0),
+    );
+    return Self{
+        .fd = fd,
+    };
 }
 
 pub fn set_memory(self: *const Self, memory: *const Memory) !void {
@@ -41,17 +43,23 @@ pub fn set_memory(self: *const Self, memory: *const Memory) !void {
     log.debug(@src(), "set_memory memory_size: 0x{x}", .{memory_region.memory_size});
     log.debug(@src(), "set_memory userspace_addr: 0x{x}", .{memory_region.userspace_addr});
 
-    const r = nix.ioctl(self.fd, nix.KVM_SET_USER_MEMORY_REGION, @intFromPtr(&memory_region));
-    if (r < 0) {
-        return VmError.SetMemory;
-    }
+    _ = try nix.checked_ioctl(
+        @src(),
+        VmError.SetMemory,
+        self.fd,
+        nix.KVM_SET_USER_MEMORY_REGION,
+        @intFromPtr(&memory_region),
+    );
 }
 
 pub fn get_preferred_target(self: *const Self) !nix.kvm_vcpu_init {
     var kvi: nix.kvm_vcpu_init = undefined;
-    const r = nix.ioctl(self.fd, nix.KVM_ARM_PREFERRED_TARGET, @intFromPtr(&kvi));
-    if (r < 0) {
-        return VmError.GetPreferredTarget;
-    }
+    _ = try nix.checked_ioctl(
+        @src(),
+        VmError.GetPreferredTarget,
+        self.fd,
+        nix.KVM_ARM_PREFERRED_TARGET,
+        @intFromPtr(&kvi),
+    );
     return kvi;
 }

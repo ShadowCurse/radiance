@@ -71,10 +71,13 @@ pub const VirtioBlock = struct {
         var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
         kvm_irqfd.fd = @intCast(virtio_context.irq_evt.fd);
         kvm_irqfd.gsi = mmio_info.irq;
-        const fd = nix.ioctl(vm.fd, nix.KVM_IRQFD, &kvm_irqfd);
-        if (fd < 0) {
-            return VirtioBlockError.New;
-        }
+        _ = try nix.checked_ioctl(
+            @src(),
+            VirtioBlockError.New,
+            vm.fd,
+            nix.KVM_IRQFD,
+            &kvm_irqfd,
+        );
 
         for (&virtio_context.queue_events, 0..) |*queue_event, i| {
             var kvm_ioeventfd = std.mem.zeroInit(nix.kvm_ioeventfd, .{});
@@ -83,10 +86,13 @@ pub const VirtioBlock = struct {
             kvm_ioeventfd.addr = mmio_info.addr + 0x50;
             kvm_ioeventfd.fd = queue_event.fd;
             kvm_ioeventfd.flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch;
-            const r = nix.ioctl(vm.fd, nix.KVM_IOEVENTFD, &kvm_ioeventfd);
-            if (r < 0) {
-                return VirtioBlockError.New;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioBlockError.New,
+                vm.fd,
+                nix.KVM_IOEVENTFD,
+                &kvm_ioeventfd,
+            );
         }
 
         return Self{
