@@ -127,7 +127,16 @@ pub fn main() !void {
             mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
         }
 
-        var fdt = try FDT.create_fdt(allocator, &memory, mpidrs, cmdline_0, &gicv2, uart_device_info, rtc_device_info, virtio_device_infos);
+        var fdt = try FDT.create_fdt(
+            allocator,
+            &memory,
+            mpidrs,
+            cmdline_0,
+            &gicv2,
+            uart_device_info,
+            rtc_device_info,
+            virtio_device_infos,
+        );
         defer fdt.deinit();
 
         const fdt_addr = try memory.load_fdt(&fdt);
@@ -153,14 +162,22 @@ pub fn main() !void {
     std.log.info("starting vcpu threads", .{});
     var barrier: std.Thread.ResetEvent = .{};
     for (vcpu_threads, vcpus) |*t, *vcpu| {
-        t.* = try std.Thread.spawn(.{}, Vcpu.run_threaded, .{ vcpu, &barrier, &mmio, &start_time });
+        t.* = try std.Thread.spawn(
+            .{},
+            Vcpu.run_threaded,
+            .{ vcpu, &barrier, &mmio, &start_time },
+        );
     }
 
     // create event loop
     var el = try EventLoop.new();
     try el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
     for (virtio_blocks) |*block| {
-        try el.add_event(block.virtio_context.queue_events[0].fd, @ptrCast(&VirtioBlock.process_queue), block);
+        try el.add_event(
+            block.virtio_context.queue_events[0].fd,
+            @ptrCast(&VirtioBlock.process_queue),
+            block,
+        );
     }
     for (vcpus) |*vcpu| {
         try el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
@@ -200,7 +217,10 @@ fn configure_terminal(stdin: *const std.fs.File) std.os.termios {
     return ttysave;
 }
 
-fn restore_terminal(stdin: *const std.fs.File, state: *const std.os.termios) void {
+fn restore_terminal(
+    stdin: *const std.fs.File,
+    state: *const std.os.termios,
+) void {
     //set the terminal attributes.
     _ = std.os.linux.tcsetattr(stdin.handle, std.os.linux.TCSA.NOW, state);
 }

@@ -43,7 +43,13 @@ mutex: std.Thread.Mutex,
 const Self = @This();
 
 pub fn new() Self {
-    return Self{ .last_irq = Gicv2.IRQ_BASE, .last_address = MMIO_MEM_START, .num_devices = 0, .devices = undefined, .mutex = .{} };
+    return Self{
+        .last_irq = Gicv2.IRQ_BASE,
+        .last_address = MMIO_MEM_START,
+        .num_devices = 0,
+        .devices = undefined,
+        .mutex = .{},
+    };
 }
 
 pub fn allocate(self: *Self) MmioDeviceInfo {
@@ -79,7 +85,11 @@ pub fn write(self: *Self, addr: u64, data: []u8) !void {
         }
     }
     if (!handled) {
-        log.err(@src(), "unhandled mmio write addr: {x} data: {any}", .{ addr, data });
+        log.err(
+            @src(),
+            "unhandled mmio write addr: {x} data: {any}",
+            .{ addr, data },
+        );
     }
 }
 
@@ -99,6 +109,10 @@ pub fn read(self: *Self, addr: u64, data: []u8) !void {
         }
     }
     if (!handled) {
-        log.err(@src(), "unhandled mmio read addr: {x} data: {any}", .{ addr, data });
+        log.err(
+            @src(),
+            "unhandled mmio read addr: {x} data: {any}",
+            .{ addr, data },
+        );
     }
 }

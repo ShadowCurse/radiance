@@ -21,7 +21,12 @@ pub const MachineConfig = struct {
         };
     }
 
-    fn update(self: *Self, reader: *Reader, buffer: *std.ArrayList(u8), allocator: Allocator) !void {
+    fn update(
+        self: *Self,
+        reader: *Reader,
+        buffer: *std.ArrayList(u8),
+        allocator: Allocator,
+    ) !void {
         const new_self = try parse_type(Self, reader, buffer, allocator);
         self.* = new_self;
     }
@@ -40,7 +45,12 @@ pub const KernelConfig = struct {
         return Self{ .path = "" };
     }
 
-    fn update(self: *Self, reader: *Reader, buffer: *std.ArrayList(u8), allocator: Allocator) !void {
+    fn update(
+        self: *Self,
+        reader: *Reader,
+        buffer: *std.ArrayList(u8),
+        allocator: Allocator,
+    ) !void {
         const new_self = try parse_type(Self, reader, buffer, allocator);
         self.* = new_self;
     }
@@ -79,7 +89,12 @@ pub const DrivesConfigs = struct {
         self.drives.deinit(allocator);
     }
 
-    fn update(self: *Self, reader: *Reader, buffer: *std.ArrayList(u8), allocator: Allocator) !void {
+    fn update(
+        self: *Self,
+        reader: *Reader,
+        buffer: *std.ArrayList(u8),
+        allocator: Allocator,
+    ) !void {
         const new_config = try parse_type(DriveConfig, reader, buffer, allocator);
         try self.drives.append(allocator, new_config);
     }
@@ -118,7 +133,12 @@ pub const NetConfigs = struct {
         self.networks.deinit(allocator);
     }
 
-    fn update(self: *Self, reader: *Reader, buffer: *std.ArrayList(u8), allocator: Allocator) !void {
+    fn update(
+        self: *Self,
+        reader: *Reader,
+        buffer: *std.ArrayList(u8),
+        allocator: Allocator,
+    ) !void {
         const new_config = try parse_type(NetConfig, reader, buffer, allocator);
         try self.networks.append(allocator, new_config);
     }
