@@ -39,7 +39,12 @@ pub fn new() !Self {
     };
 }
 
-pub fn add_event(self: *Self, fd: std.os.fd_t, callback: CallbackFn, parameter: CallbackParam) !void {
+pub fn add_event(
+    self: *Self,
+    fd: std.os.fd_t,
+    callback: CallbackFn,
+    parameter: CallbackParam,
+) !void {
     var event = std.mem.zeroInit(nix.epoll_event, .{});
     event.events = nix.EPOLLIN;
 

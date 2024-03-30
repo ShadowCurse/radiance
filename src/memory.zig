@@ -65,7 +65,14 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
     const file_meta = try file.metadata();
     const kernel_size = file_meta.size();
 
-    const file_mem = try std.os.mmap(self.mem.ptr, kernel_size, nix.PROT.READ | nix.PROT.WRITE, nix.MAP.PRIVATE | nix.MAP.FIXED | 0x4000, file.handle, 0);
+    const file_mem = try std.os.mmap(
+        self.mem.ptr,
+        kernel_size,
+        nix.PROT.READ | nix.PROT.WRITE,
+        nix.MAP.PRIVATE | nix.MAP.FIXED | 0x4000,
+        file.handle,
+        0,
+    );
 
     const arm64_header: *arm64_image_header = @ptrCast(file_mem.ptr);
     std.debug.assert(arm64_header.magic == 0x644d_5241);
@@ -83,6 +90,9 @@ pub fn load_fdt(self: *Self, fdt: *const FdtBuilder) !u64 {
     const fdt_addr = FdtBuilder.fdt_addr(self.last_addr());
     const memory_fdt_start = fdt_addr - self.guest_addr;
     const memory_fdt_end = memory_fdt_start + fdt.data.items.len;
-    @memcpy(self.mem[memory_fdt_start..memory_fdt_end], fdt.data.items[0..fdt.data.items.len]);
+    @memcpy(
+        self.mem[memory_fdt_start..memory_fdt_end],
+        fdt.data.items[0..fdt.data.items.len],
+    );
     return fdt_addr;
 }

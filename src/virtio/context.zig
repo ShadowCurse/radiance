@@ -34,7 +34,13 @@ pub const VirtioActionTag = enum {
     QueueNotification,
 };
 
-pub const VirtioAction = union(VirtioActionTag) { NoAction: void, ActivateDevice: void, ResetDevice: void, ConfigWrite: void, QueueNotification: u32 };
+pub const VirtioAction = union(VirtioActionTag) {
+    NoAction: void,
+    ActivateDevice: void,
+    ResetDevice: void,
+    ConfigWrite: void,
+    QueueNotification: u32,
+};
 
 pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) type {
     if (NUM_QUEUES == 0) {
@@ -110,7 +116,11 @@ pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) typ
                     return VirtioAction.ResetDevice;
                 },
                 else => {
-                    log.warn(@src(), "invalid virtio driver status transition: 0x{x} => 0x{x}", .{ self.device_status, status });
+                    log.warn(
+                        @src(),
+                        "invalid virtio driver status transition: 0x{x} => 0x{x}",
+                        .{ self.device_status, status },
+                    );
                 },
             }
             return VirtioAction.NoAction;
@@ -149,7 +159,11 @@ pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) typ
                     @memcpy(data, config_blob_slice[new_offset .. new_offset + data.len]);
                 },
                 else => {
-                    log.warn(@src(), "invalid virtio read: offset: 0x{x}, data: {any}", .{ offset, data });
+                    log.warn(
+                        @src(),
+                        "invalid virtio read: offset: 0x{x}, data: {any}",
+                        .{ offset, data },
+                    );
                 },
             }
             return VirtioAction.NoAction;
@@ -198,7 +212,11 @@ pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) typ
                     return VirtioAction.ConfigWrite;
                 },
                 else => {
-                    log.warn(@src(), "invalid virtio write: offset: 0x{x}, data: {any}", .{ offset, data });
+                    log.warn(
+                        @src(),
+                        "invalid virtio write: offset: 0x{x}, data: {any}",
+                        .{ offset, data },
+                    );
                 },
             }
             return VirtioAction.NoAction;

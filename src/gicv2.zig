@@ -97,7 +97,13 @@ pub fn new(vm: *const Vm) !Self {
     return Self{ .fd = fd };
 }
 
-fn set_attributes(fd: std.os.fd_t, flags: u32, group: u32, attr: u64, addr: u64) !void {
+fn set_attributes(
+    fd: std.os.fd_t,
+    flags: u32,
+    group: u32,
+    attr: u64,
+    addr: u64,
+) !void {
     const kda = nix.kvm_device_attr{
         .flags = flags,
         .group = group,

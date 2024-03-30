@@ -30,7 +30,13 @@ pub const VirtioBlock = struct {
 
     const Self = @This();
 
-    pub fn new(vm: *const Vm, file_path: []const u8, read_only: bool, memory: *Memory, mmio_info: MmioDeviceInfo) !Self {
+    pub fn new(
+        vm: *const Vm,
+        file_path: []const u8,
+        read_only: bool,
+        memory: *Memory,
+        mmio_info: MmioDeviceInfo,
+    ) !Self {
         var file_options: std.fs.File.OpenFlags = .{};
         if (read_only) {
             file_options.mode = std.fs.File.OpenMode.read_write;
@@ -178,7 +184,8 @@ pub const VirtioBlock = struct {
                 const status_ptr = self.memory.get_ptr(u32, third_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
 
-                self.virtio_context.queues[self.virtio_context.selected_queue].add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
+                self.virtio_context.queues[self.virtio_context.selected_queue]
+                    .add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
             } else {
                 try self.file.sync();
 

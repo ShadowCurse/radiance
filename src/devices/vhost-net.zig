@@ -41,8 +41,17 @@ pub const VhostNet = struct {
 
     const Self = @This();
 
-    pub fn new(vm: *const Vm, tap_name: [:0]const u8, mac: ?[6]u8, memory: *Memory, mmio_info: MmioDeviceInfo) !Self {
-        const tun = try std.fs.openFileAbsolute("/dev/net/tun", .{ .mode = .read_write, .lock_nonblocking = true });
+    pub fn new(
+        vm: *const Vm,
+        tap_name: [:0]const u8,
+        mac: ?[6]u8,
+        memory: *Memory,
+        mmio_info: MmioDeviceInfo,
+    ) !Self {
+        const tun = try std.fs.openFileAbsolute(
+            "/dev/net/tun",
+            .{ .mode = .read_write, .lock_nonblocking = true },
+        );
         var ifreq = std.mem.zeroInit(nix.ifreq, .{});
         @memcpy(ifreq.ifr_ifrn.ifrn_name[0..tap_name.len], tap_name);
         // IFF_TAP / IFF_TUN - select TAP or TUN
@@ -71,7 +80,16 @@ pub const VhostNet = struct {
         var virtio_context = try VirtioContext(2, VirtioNetConfig).new(TYPE_NET);
 
         virtio_context.avail_features =
-            1 << nix.VIRTIO_NET_F_GUEST_CSUM | 1 << nix.VIRTIO_NET_F_CSUM | 1 << nix.VIRTIO_F_VERSION_1 | 1 << nix.VIRTIO_RING_F_EVENT_IDX | 1 << nix.VIRTIO_NET_F_GUEST_TSO4 | 1 << nix.VIRTIO_NET_F_HOST_TSO4 | 1 << nix.VIRTIO_NET_F_GUEST_TSO6 | 1 << nix.VIRTIO_NET_F_HOST_TSO6 | 1 << nix.VIRTIO_NET_F_HOST_USO | 1 << nix.VIRTIO_NET_F_MRG_RXBUF;
+            1 << nix.VIRTIO_NET_F_GUEST_CSUM |
+            1 << nix.VIRTIO_NET_F_CSUM |
+            1 << nix.VIRTIO_F_VERSION_1 |
+            1 << nix.VIRTIO_RING_F_EVENT_IDX |
+            1 << nix.VIRTIO_NET_F_GUEST_TSO4 |
+            1 << nix.VIRTIO_NET_F_HOST_TSO4 |
+            1 << nix.VIRTIO_NET_F_GUEST_TSO6 |
+            1 << nix.VIRTIO_NET_F_HOST_TSO6 |
+            1 << nix.VIRTIO_NET_F_HOST_USO |
+            1 << nix.VIRTIO_NET_F_MRG_RXBUF;
         if (mac) |m| {
             virtio_context.config_blob = m;
             virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
@@ -140,7 +158,10 @@ pub const VhostNet = struct {
             }
         }
 
-        const vhost = try std.fs.openFileAbsolute("/dev/vhost-net", .{ .mode = .read_write, .lock_nonblocking = true });
+        const vhost = try std.fs.openFileAbsolute(
+            "/dev/vhost-net",
+            .{ .mode = .read_write, .lock_nonblocking = true },
+        );
         {
             const r = nix.ioctl(vhost.handle, nix.VHOST_SET_OWNER);
             if (r < 0) {
@@ -150,7 +171,10 @@ pub const VhostNet = struct {
         }
 
         {
-            const features: u64 = 1 << nix.VIRTIO_F_VERSION_1 | 1 << nix.VIRTIO_RING_F_EVENT_IDX | 1 << nix.VIRTIO_RING_F_INDIRECT_DESC | 1 << nix.VIRTIO_NET_F_MRG_RXBUF;
+            const features: u64 = 1 << nix.VIRTIO_F_VERSION_1 |
+                1 << nix.VIRTIO_RING_F_EVENT_IDX |
+                1 << nix.VIRTIO_RING_F_INDIRECT_DESC |
+                1 << nix.VIRTIO_NET_F_MRG_RXBUF;
             const r = nix.ioctl(vhost.handle, nix.VHOST_SET_FEATURES, &features);
             if (r < 0) {
                 log.err(@src(), "VHOST_SET_FEATURES error: {}:{}", .{ r, std.c.getErrno(r) });

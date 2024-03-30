@@ -308,7 +308,9 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
                 continue;
             }
             // skip ather levels for now
-            const cache_phandle: u32 = LAST_CACHE_PHANDLE - (@as(u32, @intCast(mpidrs.len)) * @as(u32, cache.level - 2) + @as(u32, @intCast(i)) / cache.cpus_per_unit);
+            const cache_phandle: u32 = LAST_CACHE_PHANDLE -
+                @as(u32, @intCast(mpidrs.len)) * @as(u32, cache.level - 2) +
+                @as(u32, @intCast(i)) / cache.cpus_per_unit;
             if (prev_level != cache.level) {
                 try builder.add_property(u32, "next-level-cache", cache_phandle);
                 if (prev_level > 1 and in_cache_node) {
@@ -317,7 +319,11 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
             }
             if (i % cache.cpus_per_unit == 0) {
                 in_cache_node = true;
-                const node_name = try std.fmt.bufPrintZ(&print_buff, "l{}-{}-cache", .{ cache.level, i / cache.cpus_per_unit });
+                const node_name = try std.fmt.bufPrintZ(
+                    &print_buff,
+                    "l{}-{}-cache",
+                    .{ cache.level, i / cache.cpus_per_unit },
+                );
                 try builder.begin_node(node_name);
                 try builder.add_property(u32, "phandle", cache_phandle);
                 try builder.add_property([:0]const u8, "compatible", "cache");
