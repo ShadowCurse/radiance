@@ -62,19 +62,23 @@ pub const VhostNet = struct {
         // IFF_MULTI_QUEUE - Use multi queue tap, see below.
         ifreq.ifr_ifru.ifru_flags = nix.IFF_TAP | nix.IFF_NO_PI | nix.IFF_VNET_HDR;
         {
-            const r = nix.ioctl(tun.handle, nix.TUNSETIFF, &ifreq);
-            if (r < 0) {
-                log.err(@src(), "TUNSETIFF error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.NewTUNSETIFF;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioNetError.NewTUNSETIFF,
+                tun.handle,
+                nix.TUNSETIFF,
+                &ifreq,
+            );
         }
         {
             const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
-            const r = nix.ioctl(tun.handle, nix.TUNSETVNETHDRSZ, &size);
-            if (r < 0) {
-                log.err(@src(), "TUNSETVNETHDRSZ error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.NewTUNSETVNETHDRSZ;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioNetError.NewTUNSETVNETHDRSZ,
+                tun.handle,
+                nix.TUNSETVNETHDRSZ,
+                &size,
+            );
         }
 
         var virtio_context = try VirtioContext(2, VirtioNetConfig).new(TYPE_NET);
@@ -99,11 +103,13 @@ pub const VhostNet = struct {
             var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
             kvm_irqfd.fd = @intCast(virtio_context.irq_evt.fd);
             kvm_irqfd.gsi = mmio_info.irq;
-            const r = nix.ioctl(vm.fd, nix.KVM_IRQFD, &kvm_irqfd);
-            if (r < 0) {
-                log.err(@src(), "KVM_IRQFD error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.NewKVM_IRQFD;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioNetError.NewKVM_IRQFD,
+                vm.fd,
+                nix.KVM_IRQFD,
+                &kvm_irqfd,
+            );
         }
 
         for (&virtio_context.queue_events, 0..) |*queue_event, i| {
@@ -113,11 +119,13 @@ pub const VhostNet = struct {
             kvm_ioeventfd.addr = mmio_info.addr + 0x50;
             kvm_ioeventfd.fd = queue_event.fd;
             kvm_ioeventfd.flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch;
-            const r = nix.ioctl(vm.fd, nix.KVM_IOEVENTFD, &kvm_ioeventfd);
-            if (r < 0) {
-                log.err(@src(), "KVM_IOEVENTFD error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.NewKVM_IOEVENTFD;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioNetError.NewKVM_IOEVENTFD,
+                vm.fd,
+                nix.KVM_IOEVENTFD,
+                &kvm_ioeventfd,
+            );
         }
 
         return Self{
@@ -150,36 +158,38 @@ pub const VhostNet = struct {
         if (self.virtio_context.acked_features & 1 << nix.VIRTIO_NET_F_GUEST_TSO6 != 0) {
             tun_flags |= 1 << nix.TUN_F_TSO6;
         }
-        {
-            const r = nix.ioctl(self.tun.handle, nix.TUNSETOFFLOAD, tun_flags);
-            if (r < 0) {
-                log.err(@src(), "TUNSETOFFLOAD error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.ActivateTUNSETOFFLOAD;
-            }
-        }
+        _ = try nix.checked_ioctl(
+            @src(),
+            VirtioNetError.ActivateTUNSETOFFLOAD,
+            self.tun.handle,
+            nix.TUNSETOFFLOAD,
+            tun_flags,
+        );
 
         const vhost = try std.fs.openFileAbsolute(
             "/dev/vhost-net",
             .{ .mode = .read_write, .lock_nonblocking = true },
         );
-        {
-            const r = nix.ioctl(vhost.handle, nix.VHOST_SET_OWNER);
-            if (r < 0) {
-                log.err(@src(), "VHOST_SET_OWNER error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.ActivateVHOST_SET_OWNER;
-            }
-        }
+        _ = try nix.checked_ioctl(
+            @src(),
+            VirtioNetError.ActivateVHOST_SET_OWNER,
+            vhost.handle,
+            nix.VHOST_SET_OWNER,
+            .{},
+        );
 
         {
             const features: u64 = 1 << nix.VIRTIO_F_VERSION_1 |
                 1 << nix.VIRTIO_RING_F_EVENT_IDX |
                 1 << nix.VIRTIO_RING_F_INDIRECT_DESC |
                 1 << nix.VIRTIO_NET_F_MRG_RXBUF;
-            const r = nix.ioctl(vhost.handle, nix.VHOST_SET_FEATURES, &features);
-            if (r < 0) {
-                log.err(@src(), "VHOST_SET_FEATURES error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.ActivateVHOST_SET_FEATURES;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioNetError.ActivateVHOST_SET_FEATURES,
+                vhost.handle,
+                nix.VHOST_SET_FEATURES,
+                &features,
+            );
         }
 
         {
@@ -193,11 +203,13 @@ pub const VhostNet = struct {
                 .userspace_addr = @intFromPtr(self.memory.mem.ptr),
                 .flags_padding = 0,
             };
-            const r = nix.ioctl(vhost.handle, nix.VHOST_SET_MEM_TABLE, &memory);
-            if (r < 0) {
-                log.err(@src(), "VHOST_SET_MEM_TABLE error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.ActivateVHOST_SET_MEM_TABLE;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioNetError.ActivateVHOST_SET_MEM_TABLE,
+                vhost.handle,
+                nix.VHOST_SET_MEM_TABLE,
+                &memory,
+            );
         }
 
         for (0..2) |i| {
@@ -205,11 +217,13 @@ pub const VhostNet = struct {
                 .index = @intCast(i),
                 .fd = self.virtio_context.irq_evt.fd,
             };
-            const r = nix.ioctl(vhost.handle, nix.VHOST_SET_VRING_CALL, &vring);
-            if (r < 0) {
-                log.err(@src(), "VHOST_SET_VRING_CALL error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.ActivateVHOST_SET_VRING_CALL;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioNetError.ActivateVHOST_SET_VRING_CALL,
+                vhost.handle,
+                nix.VHOST_SET_VRING_CALL,
+                &vring,
+            );
         }
 
         for (&self.virtio_context.queue_events, 0..) |*queue_event, i| {
@@ -217,11 +231,13 @@ pub const VhostNet = struct {
                 .index = @intCast(i),
                 .fd = queue_event.fd,
             };
-            const r = nix.ioctl(vhost.handle, nix.VHOST_SET_VRING_KICK, &vring);
-            if (r < 0) {
-                log.err(@src(), "VHOST_SET_VRING_KICK error: {}:{}", .{ r, std.c.getErrno(r) });
-                return VirtioNetError.ActivateVHOST_SET_VRING_KICK;
-            }
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioNetError.ActivateVHOST_SET_VRING_KICK,
+                vhost.handle,
+                nix.VHOST_SET_VRING_KICK,
+                &vring,
+            );
         }
 
         for (&self.virtio_context.queues, 0..) |*queue, i| {
@@ -230,11 +246,13 @@ pub const VhostNet = struct {
                     .index = @intCast(i),
                     .num = queue.size,
                 };
-                const r = nix.ioctl(vhost.handle, nix.VHOST_SET_VRING_NUM, &vring);
-                if (r < 0) {
-                    log.err(@src(), "VHOST_SET_VRING_NUM error: {}:{}", .{ r, std.c.getErrno(r) });
-                    return VirtioNetError.ActivateVHOST_SET_VRING_NUM;
-                }
+                _ = try nix.checked_ioctl(
+                    @src(),
+                    VirtioNetError.ActivateVHOST_SET_VRING_NUM,
+                    vhost.handle,
+                    nix.VHOST_SET_VRING_NUM,
+                    &vring,
+                );
             }
 
             {
@@ -246,11 +264,13 @@ pub const VhostNet = struct {
                     .avail_user_addr = @intFromPtr(self.memory.get_ptr(u8, queue.avail_ring)),
                     .log_guest_addr = 0,
                 };
-                const r = nix.ioctl(vhost.handle, nix.VHOST_SET_VRING_ADDR, &vring);
-                if (r < 0) {
-                    log.err(@src(), "VHOST_SET_VRING_ADDR error: {}:{}", .{ r, std.c.getErrno(r) });
-                    return VirtioNetError.ActivateVHOST_SET_VRING_ADDR;
-                }
+                _ = try nix.checked_ioctl(
+                    @src(),
+                    VirtioNetError.ActivateVHOST_SET_VRING_ADDR,
+                    vhost.handle,
+                    nix.VHOST_SET_VRING_ADDR,
+                    &vring,
+                );
             }
 
             {
@@ -258,11 +278,13 @@ pub const VhostNet = struct {
                     .index = @intCast(i),
                     .fd = self.tun.handle,
                 };
-                const r = nix.ioctl(vhost.handle, nix.VHOST_NET_SET_BACKEND, &vring);
-                if (r < 0) {
-                    log.err(@src(), "VHOST_NET_SET_BACKEND error: {}:{}", .{ r, std.c.getErrno(r) });
-                    return VirtioNetError.ActivateVHOST_NET_SET_BACKEND;
-                }
+                _ = try nix.checked_ioctl(
+                    @src(),
+                    VirtioNetError.ActivateVHOST_NET_SET_BACKEND,
+                    vhost.handle,
+                    nix.VHOST_NET_SET_BACKEND,
+                    &vring,
+                );
             }
         }
         self.vhost = vhost;

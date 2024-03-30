@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("log.zig");
 const C = @cImport({
     @cInclude("linux/kvm.h");
     @cInclude("linux/if.h");
@@ -28,3 +29,19 @@ pub usingnamespace C;
 
 // ioctl in std uses c_int as a request type which is incorrect.
 pub extern "c" fn ioctl(fd: std.os.fd_t, request: c_ulong, ...) c_int;
+
+pub fn checked_ioctl(
+    src: std.builtin.SourceLocation,
+    err: anyerror,
+    fd: std.os.fd_t,
+    request: c_ulong,
+    arg: anytype,
+) !c_int {
+    const r = ioctl(fd, request, arg);
+    if (r < 0) {
+        log.err(src, "ioctl call error: {}:{}", .{ r, std.c.getErrno(r) });
+        return err;
+    } else {
+        return r;
+    }
+}

@@ -40,6 +40,7 @@ pub const VcpuError = error{
     Init,
     SetReg,
     GetReg,
+    Run,
 };
 
 pub fn core_reg_id(comptime name: []const u8) u64 {
@@ -95,18 +96,20 @@ pub fn new(
     index: u64,
     exit_signal: i32,
 ) !Self {
-    const fd = nix.ioctl(vm.fd, nix.KVM_CREATE_VCPU, index);
-    if (fd < 0) {
-        return VcpuError.New;
-    }
-    const vcpu_mmap_size = nix.ioctl(
+    const fd = try nix.checked_ioctl(
+        @src(),
+        VcpuError.New,
+        vm.fd,
+        nix.KVM_CREATE_VCPU,
+        index,
+    );
+    const vcpu_mmap_size = try nix.checked_ioctl(
+        @src(),
+        VcpuError.New,
         kvm.file.handle,
         nix.KVM_GET_VCPU_MMAP_SIZE,
         @as(u32, 0),
     );
-    if (vcpu_mmap_size <= 0) {
-        return VcpuError.New;
-    }
 
     const size: usize = @intCast(vcpu_mmap_size);
     const kvm_run = try std.os.mmap(
@@ -136,10 +139,13 @@ pub fn init(self: *const Self, preferred_target: nix.kvm_vcpu_init) !void {
     if (0 < self.index) {
         kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
     }
-    const r = nix.ioctl(self.fd, nix.KVM_ARM_VCPU_INIT, @intFromPtr(&kvi));
-    if (r < 0) {
-        return VcpuError.Init;
-    }
+    _ = try nix.checked_ioctl(
+        @src(),
+        VcpuError.Init,
+        self.fd,
+        nix.KVM_ARM_VCPU_INIT,
+        @intFromPtr(&kvi),
+    );
 }
 
 pub fn set_reg(
@@ -150,30 +156,40 @@ pub fn set_reg(
 ) !void {
     log.debug(@src(), "setting reg: 0x{x} to 0x{x}", .{ reg_id, value });
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-    const r = nix.ioctl(self.fd, nix.KVM_SET_ONE_REG, @intFromPtr(&kor));
-    if (r < 0) {
-        return VcpuError.SetReg;
-    }
+    _ = try nix.checked_ioctl(
+        @src(),
+        VcpuError.SetReg,
+        self.fd,
+        nix.KVM_SET_ONE_REG,
+        @intFromPtr(&kor),
+    );
 }
 
 pub fn get_reg(self: *const Self, reg_id: u64) !u64 {
     var value: u64 = undefined;
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-    const r = nix.ioctl(self.fd, nix.KVM_GET_ONE_REG, @intFromPtr(&kor));
-    if (r < 0) {
-        return VcpuError.GetReg;
-    }
+    _ = try nix.checked_ioctl(
+        @src(),
+        VcpuError.GetReg,
+        self.fd,
+        nix.KVM_GET_ONE_REG,
+        @intFromPtr(&kor),
+    );
     log.debug(@src(), "vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
     return value;
 }
 
 pub fn run(self: *Self, mmio: *Mmio) !bool {
-    const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
-    if (r < 0) {
-        log.err(@src(), "KVM_RUN returned error: {}:{}", .{ r, std.c.getErrno(r) });
+    _ = nix.checked_ioctl(
+        @src(),
+        VcpuError.Run,
+        self.fd,
+        nix.KVM_RUN,
+        @as(u32, 0),
+    ) catch |err| {
         try self.exit_event.write(1);
-        return false;
-    }
+        return err;
+    };
 
     switch (self.kvm_run.exit_reason) {
         nix.KVM_EXIT_IO => log.info(@src(), "Got KVM_EXIT_IO", .{}),
@@ -236,5 +252,5 @@ pub fn run_threaded(
     try self.set_thread_handler();
 
     barrier.wait();
-    while (try self.run(mmio)) {}
+    while (self.run(mmio) catch false) {}
 }

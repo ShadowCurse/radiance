@@ -116,10 +116,14 @@ pub fn new(vm: *const Vm, in: std.os.fd_t, out: std.os.fd_t, mmio_info: MmioDevi
     var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
     kvm_irqfd.fd = @intCast(irq_evt.fd);
     kvm_irqfd.gsi = mmio_info.irq;
-    const fd = nix.ioctl(vm.fd, nix.KVM_IRQFD, &kvm_irqfd);
-    if (fd < 0) {
-        return UartError.New;
-    }
+
+    _ = try nix.checked_ioctl(
+        @src(),
+        UartError.New,
+        vm.fd,
+        nix.KVM_IRQFD,
+        &kvm_irqfd,
+    );
 
     return Self{
         .in = in,

@@ -14,10 +14,11 @@ pub fn new() !Self {
 }
 
 pub fn version(self: *const Self) !i32 {
-    const v = std.c.ioctl(self.file.handle, nix.KVM_GET_API_VERSION, @as(usize, 0));
-    if (v < 0) {
-        return KvmError.KvmVersion;
-    } else {
-        return v;
-    }
+    return try nix.checked_ioctl(@src(), KvmError.KvmVersion, self.file.handle, nix.KVM_GET_API_VERSION, @as(usize, 0));
+    // const v = std.c.ioctl(self.file.handle, nix.KVM_GET_API_VERSION, @as(usize, 0));
+    // if (v < 0) {
+    //     return KvmError.KvmVersion;
+    // } else {
+    //     return v;
+    // }
 }

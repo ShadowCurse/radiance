@@ -43,10 +43,13 @@ pub fn new(vm: *const Vm) !Self {
         .fd = 0,
         .flags = 0,
     };
-    const r = nix.ioctl(vm.fd, nix.KVM_CREATE_DEVICE, @intFromPtr(&device));
-    if (r < 0) {
-        return Gicv2Error.New;
-    }
+    _ = try nix.checked_ioctl(
+        @src(),
+        Gicv2Error.New,
+        vm.fd,
+        nix.KVM_CREATE_DEVICE,
+        @intFromPtr(&device),
+    );
 
     const fd: std.os.fd_t = @intCast(device.fd);
 
@@ -111,9 +114,11 @@ fn set_attributes(
         .addr = addr,
     };
     log.debug(@src(), "setting gic attributes: {any}", .{kda});
-    const r = nix.ioctl(fd, nix.KVM_SET_DEVICE_ATTR, @intFromPtr(&kda));
-    if (r < 0) {
-        // log.err("gicv2 set addr error code: {}", .{r});
-        return Gicv2Error.SetAttributes;
-    }
+    _ = try nix.checked_ioctl(
+        @src(),
+        Gicv2Error.SetAttributes,
+        fd,
+        nix.KVM_SET_DEVICE_ATTR,
+        @intFromPtr(&kda),
+    );
 }
