@@ -4,7 +4,7 @@ const nix = @import("nix.zig");
 const Kvm = @import("kvm.zig");
 const Memory = @import("memory.zig");
 
-fd: std.os.fd_t,
+fd: nix.fd_t,
 
 const Self = @This();
 

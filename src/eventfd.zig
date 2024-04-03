@@ -1,7 +1,7 @@
 const std = @import("std");
 const nix = @import("nix.zig");
 
-fd: std.os.fd_t,
+fd: nix.fd_t,
 
 const Self = @This();
 
@@ -26,7 +26,8 @@ pub fn deinit(self: *Self) void {
 pub fn read(self: *Self) !u64 {
     var buf: u64 = undefined;
     const buf_slice = std.mem.asBytes(&buf);
-    if (nix.read(self.fd, buf_slice.ptr, buf_slice.len) < 0) {
+    const n = try nix.read(self.fd, buf_slice);
+    if (n != @sizeOf(u64)) {
         return EventfdError.Read;
     } else {
         return buf;
@@ -35,7 +36,8 @@ pub fn read(self: *Self) !u64 {
 
 pub fn write(self: *Self, val: u64) !void {
     const buf_slice = std.mem.asBytes(&val);
-    if (nix.write(self.fd, buf_slice.ptr, buf_slice.len) < 0) {
+    const n = try nix.write(self.fd, buf_slice);
+    if (n != @sizeOf(u64)) {
         return EventfdError.Write;
     }
 }

@@ -87,8 +87,8 @@ pub const UartError = error{
     New,
 };
 
-in: std.os.fd_t,
-out: std.os.fd_t,
+in: nix.fd_t,
+out: nix.fd_t,
 mmio_info: MmioDeviceInfo,
 
 baud_divisor_low: u8,
@@ -111,7 +111,7 @@ irq_evt: EventFd,
 
 const Self = @This();
 
-pub fn new(vm: *const Vm, in: std.os.fd_t, out: std.os.fd_t, mmio_info: MmioDeviceInfo) !Self {
+pub fn new(vm: *const Vm, in: nix.fd_t, out: nix.fd_t, mmio_info: MmioDeviceInfo) !Self {
     const irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK);
     var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
     kvm_irqfd.fd = @intCast(irq_evt.fd);
@@ -158,7 +158,7 @@ pub fn add_to_cmdline(self: *const Self, cmdline: *CmdLine) !void {
 
 pub fn read_input(self: *Self) !void {
     var buff: [8]u8 = undefined;
-    const n = try std.os.read(self.in, &buff);
+    const n = try nix.read(self.in, &buff);
     if (n <= 0) {
         return;
     }
@@ -250,7 +250,7 @@ pub fn write(self: *Self, addr: u64, data: []u8) !bool {
                         try self.received_data_interrupt();
                     } else |_| {}
                 } else {
-                    _ = try std.os.write(self.out, data);
+                    _ = try nix.write(self.out, data);
 
                     // Because we cannot block the driver, the THRE interrupt is sent
                     // irrespective of whether we are able to write the byte or not

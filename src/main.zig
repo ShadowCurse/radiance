@@ -79,7 +79,7 @@ pub fn main() !void {
         virtio_device_infos[i] = mmio.allocate();
     }
 
-    var uart = try Uart.new(&vm, std.os.STDIN_FILENO, std.os.STDOUT_FILENO, uart_device_info);
+    var uart = try Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new(rtc_device_info);
 
     var virtio_blocks = try allocator.alloc(VirtioBlock, config.drives.drives.items.len);
@@ -200,29 +200,29 @@ pub fn main() !void {
     log.info(@src(), "Successful shutdown", .{});
 }
 
-fn configure_terminal(stdin: *const std.fs.File) std.os.termios {
-    var ttystate: std.os.termios = undefined;
-    var ttysave: std.os.termios = undefined;
+fn configure_terminal(stdin: *const std.fs.File) nix.termios {
+    var ttystate: nix.termios = undefined;
+    var ttysave: nix.termios = undefined;
 
-    _ = std.os.linux.tcgetattr(stdin.handle, &ttystate);
+    _ = nix.tcgetattr(stdin.handle, &ttystate);
     ttysave = ttystate;
 
     //turn off canonical mode and echo
-    ttystate.lflag &= ~(std.os.linux.ICANON | std.os.linux.ECHO);
+    ttystate.lflag &= ~(nix.ICANON | nix.ECHO);
     //minimum of number input read.
     ttystate.cc[4] = 1;
 
     //set the terminal attributes.
-    _ = std.os.linux.tcsetattr(stdin.handle, std.os.linux.TCSA.NOW, &ttystate);
+    _ = nix.tcsetattr(stdin.handle, nix.TCSA.NOW, &ttystate);
     return ttysave;
 }
 
 fn restore_terminal(
     stdin: *const std.fs.File,
-    state: *const std.os.termios,
+    state: *const nix.termios,
 ) void {
     //set the terminal attributes.
-    _ = std.os.linux.tcsetattr(stdin.handle, std.os.linux.TCSA.NOW, state);
+    _ = nix.tcsetattr(stdin.handle, nix.TCSA.NOW, state);
 }
 
 test "simple test" {

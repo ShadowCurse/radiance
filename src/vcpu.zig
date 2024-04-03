@@ -25,7 +25,7 @@ pub const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1h |
     PSR_I_BIT |
     PSR_D_BIT;
 
-fd: std.os.fd_t,
+fd: nix.fd_t,
 kvm_run: *nix.kvm_run,
 index: u64,
 exit_event: EventFd,
@@ -79,7 +79,7 @@ fn set_thread_handler(self: *Self) !void {
         .mask = .{},
         .restorer = null,
     };
-    try std.os.sigaction(@intCast(self.exit_signal), &sigact, null);
+    try nix.sigaction(@intCast(self.exit_signal), &sigact, null);
 }
 
 pub fn kick_thread(
@@ -112,7 +112,7 @@ pub fn new(
     );
 
     const size: usize = @intCast(vcpu_mmap_size);
-    const kvm_run = try std.os.mmap(
+    const kvm_run = try nix.mmap(
         null,
         size,
         nix.PROT.READ | nix.PROT.WRITE,

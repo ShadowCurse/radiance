@@ -33,7 +33,7 @@ pub const Gicv2Error = error{
     SetAttributes,
 };
 
-fd: std.os.fd_t,
+fd: nix.fd_t,
 
 const Self = @This();
 
@@ -51,7 +51,7 @@ pub fn new(vm: *const Vm) !Self {
         @intFromPtr(&device),
     );
 
-    const fd: std.os.fd_t = @intCast(device.fd);
+    const fd: nix.fd_t = @intCast(device.fd);
 
     // Setting up the distributor attribute.
     // We are placing the GIC below 1GB so we need to substract the size of the distributor.
@@ -101,7 +101,7 @@ pub fn new(vm: *const Vm) !Self {
 }
 
 fn set_attributes(
-    fd: std.os.fd_t,
+    fd: nix.fd_t,
     flags: u32,
     group: u32,
     attr: u64,
