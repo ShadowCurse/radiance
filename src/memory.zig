@@ -33,8 +33,8 @@ const Self = @This();
 
 pub fn init(size: usize) !Self {
     const prot = nix.PROT.READ | nix.PROT.WRITE;
-    const flags = nix.MAP.PRIVATE | nix.MAP.ANONYMOUS | 0x4000; //std.os.system.MAP.NORESERVE;
-    const mem = try std.os.mmap(null, size, prot, flags, -1, 0);
+    const flags = nix.MAP.PRIVATE | nix.MAP.ANONYMOUS | nix.MAP.NORESERVE;
+    const mem = try nix.mmap(null, size, prot, flags, -1, 0);
 
     log.debug(@src(), "mem size: 0x{x}", .{size});
     log.debug(@src(), "guest_addr: 0x{x}", .{DRAM_START});
@@ -43,7 +43,7 @@ pub fn init(size: usize) !Self {
 }
 
 pub fn deinit(self: *const Self) void {
-    std.os.munmap(self.mem);
+    nix.munmap(self.mem);
 }
 
 pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *T {
@@ -65,7 +65,7 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
     const file_meta = try file.metadata();
     const kernel_size = file_meta.size();
 
-    const file_mem = try std.os.mmap(
+    const file_mem = try nix.mmap(
         self.mem.ptr,
         kernel_size,
         nix.PROT.READ | nix.PROT.WRITE,

@@ -11,7 +11,7 @@ const EventCallback = struct {
 };
 
 stop: bool,
-epollfd: std.os.fd_t,
+epollfd: nix.fd_t,
 events: [8]nix.epoll_event,
 event_callbacks_num: u64,
 event_callbacks: [8]EventCallback,
@@ -41,7 +41,7 @@ pub fn new() !Self {
 
 pub fn add_event(
     self: *Self,
-    fd: std.os.fd_t,
+    fd: nix.fd_t,
     callback: CallbackFn,
     parameter: CallbackParam,
 ) !void {
