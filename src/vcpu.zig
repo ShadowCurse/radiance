@@ -76,7 +76,7 @@ fn set_thread_handler(self: *Self) !void {
     const sigact = nix.Sigaction{
         .handler = .{ .handler = signal_handler },
         .flags = 4,
-        .mask = .{},
+        .mask = std.mem.zeroes(nix.sigset_t),
         .restorer = null,
     };
     try nix.sigaction(@intCast(self.exit_signal), &sigact, null);
@@ -112,11 +112,15 @@ pub fn new(
     );
 
     const size: usize = @intCast(vcpu_mmap_size);
+    const prot = nix.PROT.READ | nix.PROT.WRITE;
+    const flags = nix.MAP{
+        .TYPE = .SHARED,
+    };
     const kvm_run = try nix.mmap(
         null,
         size,
-        nix.PROT.READ | nix.PROT.WRITE,
-        nix.MAP.SHARED,
+        prot,
+        flags,
         fd,
         @as(u64, 0),
     );

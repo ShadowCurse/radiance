@@ -49,12 +49,12 @@ pub const VirtioBlock = struct {
         var dev_major = meta.inner.statx.dev_major;
         dev_major = dev_major << 16;
         dev_major = dev_major << 16;
-        var dev = meta.inner.statx.dev_minor | dev_major;
+        const dev = meta.inner.statx.dev_minor | dev_major;
 
         var rdev_major = meta.inner.statx.rdev_major;
         rdev_major = rdev_major << 16;
         rdev_major = rdev_major << 16;
-        var rdev = meta.inner.statx.rdev_minor | rdev_major;
+        const rdev = meta.inner.statx.rdev_minor | rdev_major;
 
         _ = try std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, meta.inner.statx.ino });
 
@@ -66,7 +66,7 @@ pub const VirtioBlock = struct {
 
         const nsectors_slice = std.mem.asBytes(&nsectors);
         const config_slice = std.mem.asBytes(&virtio_context.config_blob);
-        std.mem.copy(u8, config_slice, nsectors_slice);
+        @memcpy(config_slice, nsectors_slice);
 
         var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
         kvm_irqfd.fd = @intCast(virtio_context.irq_evt.fd);

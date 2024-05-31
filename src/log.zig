@@ -111,7 +111,7 @@ fn make_struct(
 
     return @Type(.{
         .Struct = .{
-            .layout = .Auto,
+            .layout = .auto,
             .fields = fields[0..],
             .decls = &[_]std.builtin.Type.Declaration{},
             .is_tuple = true,

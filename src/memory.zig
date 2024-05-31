@@ -33,7 +33,11 @@ const Self = @This();
 
 pub fn init(size: usize) !Self {
     const prot = nix.PROT.READ | nix.PROT.WRITE;
-    const flags = nix.MAP.PRIVATE | nix.MAP.ANONYMOUS | nix.MAP.NORESERVE;
+    const flags = nix.MAP{
+        .TYPE = .PRIVATE,
+        .ANONYMOUS = true,
+        .NORESERVE = true,
+    };
     const mem = try nix.mmap(null, size, prot, flags, -1, 0);
 
     log.debug(@src(), "mem size: 0x{x}", .{size});
@@ -65,11 +69,17 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
     const file_meta = try file.metadata();
     const kernel_size = file_meta.size();
 
+    const prot = nix.PROT.READ | nix.PROT.WRITE;
+    const flags = nix.MAP{
+        .TYPE = .PRIVATE,
+        .FIXED = true,
+        .NORESERVE = true,
+    };
     const file_mem = try nix.mmap(
         self.mem.ptr,
         kernel_size,
-        nix.PROT.READ | nix.PROT.WRITE,
-        nix.MAP.PRIVATE | nix.MAP.FIXED | 0x4000,
+        prot,
+        flags,
         file.handle,
         0,
     );

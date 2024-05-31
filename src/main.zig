@@ -19,8 +19,8 @@ const Mmio = @import("mmio.zig");
 const Vcpu = @import("vcpu.zig");
 const Vm = @import("vm.zig");
 
-pub const std_options = struct {
-    pub const log_level = .info;
+pub const std_options = std.Options{
+    .log_level = .info,
 };
 
 const Args = struct {
@@ -82,14 +82,14 @@ pub fn main() !void {
     var uart = try Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new(rtc_device_info);
 
-    var virtio_blocks = try allocator.alloc(VirtioBlock, config.drives.drives.items.len);
+    const virtio_blocks = try allocator.alloc(VirtioBlock, config.drives.drives.items.len);
     defer allocator.free(virtio_blocks);
     const vb_infos = virtio_device_infos[0..config.drives.drives.items.len];
     for (virtio_blocks, config.drives.drives.items, vb_infos) |*block, *drive, mmio_info| {
         block.* = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
     }
 
-    var vhost_nets = try allocator.alloc(VhostNet, config.networks.networks.items.len);
+    const vhost_nets = try allocator.alloc(VhostNet, config.networks.networks.items.len);
     defer allocator.free(vhost_nets);
     const vhn_infos = virtio_device_infos[config.drives.drives.items.len..];
     for (vhost_nets, config.networks.networks.items, vhn_infos) |*vhn, *net, mmio_info| {
@@ -121,7 +121,7 @@ pub fn main() !void {
 
     // create fdt
     const fdt_addr = fdt: {
-        var mpidrs = try allocator.alloc(u64, config.machine.vcpus);
+        const mpidrs = try allocator.alloc(u64, config.machine.vcpus);
         defer allocator.free(mpidrs);
         for (mpidrs, vcpus) |*mpidr, *vcpu| {
             mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
@@ -208,7 +208,8 @@ fn configure_terminal(stdin: *const std.fs.File) nix.termios {
     ttysave = ttystate;
 
     //turn off canonical mode and echo
-    ttystate.lflag &= ~(nix.ICANON | nix.ECHO);
+    ttystate.lflag.ECHO = false;
+    ttystate.lflag.ICANON = false;
     //minimum of number input read.
     ttystate.cc[4] = 1;
 
