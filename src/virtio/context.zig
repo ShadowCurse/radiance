@@ -67,7 +67,7 @@ pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) typ
         queues: [NUM_QUEUES]Queue,
         queue_events: [NUM_QUEUES]EventFd,
 
-        irq_status: std.atomic.Atomic(u32),
+        irq_status: std.atomic.Value(u32),
         irq_evt: EventFd,
 
         const Self = @This();
@@ -90,7 +90,7 @@ pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) typ
                 .queues = [_]Queue{Queue.new()} ** NUM_QUEUES,
                 .queue_events = [_]EventFd{try EventFd.new(0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
 
-                .irq_status = std.atomic.Atomic(u32).init(0),
+                .irq_status = std.atomic.Value(u32).init(0),
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
             };
         }

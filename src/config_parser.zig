@@ -182,7 +182,7 @@ pub fn parse(allocator: Allocator, config_path: []const u8) !Config {
     errdefer config.deinit(allocator);
 
     while (true) {
-        var writer = buffer.writer();
+        const writer = buffer.writer();
         reader.streamUntilDelimiter(writer, '\n', null) catch {
             break;
         };
@@ -216,7 +216,7 @@ fn parse_type(comptime T: type, reader: *Reader, buffer: *std.ArrayList(u8), all
     const type_fields = comptime @typeInfo(T).Struct.fields;
     var t: T = T.default();
     while (true) {
-        var writer = buffer.writer();
+        const writer = buffer.writer();
         reader.streamUntilDelimiter(writer, '\n', null) catch {
             break;
         };

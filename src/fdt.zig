@@ -335,7 +335,7 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
                 const number_of_sets: u32 = @intCast(cache.number_of_sets);
                 try builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
                 if (cache.cache_type.cache_type_str()) |s| {
-                    try builder.add_property(void, s, void);
+                    try builder.add_property(void, s, {});
                 }
                 prev_level = cache.level;
             }
@@ -371,7 +371,7 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
     _ = gic;
     try builder.begin_node("intc");
     try builder.add_property([:0]const u8, "compatible", "arm,gic-400");
-    try builder.add_property(void, "interrupt-controller", void);
+    try builder.add_property(void, "interrupt-controller", {});
     // "interrupt-cells" field specifies the number of cells needed to encode an
     // interrupt source. The type shall be a <u32> and the value shall be 3 if no PPI affinity
     // description is required.
@@ -380,7 +380,7 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
     try builder.add_property(u32, "phandle", FdtBuilder.GIC_PHANDLE);
     try builder.add_property(u32, "#address-cells", 2);
     try builder.add_property(u32, "#size-cells", 2);
-    try builder.add_property(void, "ranges", void);
+    try builder.add_property(void, "ranges", {});
 
     const gic_intr = [_]u32{
         FdtBuilder.GIC_FDT_IRQ_TYPE_PPI,
@@ -425,7 +425,7 @@ fn create_timer_node(builder: *FdtBuilder) !void {
     };
     try builder.begin_node("timer");
     try builder.add_property([:0]const u8, "compatible", "arm,armv8-timer");
-    try builder.add_property(void, "always-on", void);
+    try builder.add_property(void, "always-on", {});
     try builder.add_property([]const u32, "interrupts", &interrupts);
     try builder.end_node();
 }

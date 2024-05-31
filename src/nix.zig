@@ -150,22 +150,22 @@ pub const __libc_current_sigrtmin = C.__libc_current_sigrtmin;
 
 pub const PROT = std.os.linux.PROT;
 pub const MAP = std.os.linux.MAP;
+pub const MAP_TYPE = std.os.linux.MAP_TYPE;
 pub const Sigaction = std.os.linux.Sigaction;
+pub const sigset_t = std.os.linux.sigset_t;
 pub const tcgetattr = std.os.linux.tcgetattr;
 pub const tcsetattr = std.os.linux.tcsetattr;
-pub const ICANON = std.os.linux.ICANON;
-pub const ECHO = std.os.linux.ECHO;
 pub const TCSA = std.os.linux.TCSA;
-pub const termios = std.os.termios;
-pub const mmap = std.os.mmap;
-pub const munmap = std.os.munmap;
-pub const sigaction = std.os.sigaction;
-pub const fd_t = std.os.fd_t;
-pub const STDIN_FILENO = std.os.STDIN_FILENO;
-pub const STDOUT_FILENO = std.os.STDOUT_FILENO;
-pub const close = std.c.close;
-pub const read = std.os.read;
-pub const write = std.os.write;
+pub const termios = std.posix.termios;
+pub const mmap = std.posix.mmap;
+pub const munmap = std.posix.munmap;
+pub const sigaction = std.posix.sigaction;
+pub const fd_t = std.posix.fd_t;
+pub const STDIN_FILENO = std.posix.STDIN_FILENO;
+pub const STDOUT_FILENO = std.posix.STDOUT_FILENO;
+pub const close = std.posix.close;
+pub const read = std.posix.read;
+pub const write = std.posix.write;
 
 // ioctl in std uses c_int as a request type which is incorrect.
 pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
@@ -173,13 +173,13 @@ pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
 pub fn checked_ioctl(
     src: std.builtin.SourceLocation,
     err: anyerror,
-    fd: std.os.fd_t,
+    fd: fd_t,
     request: c_ulong,
     arg: anytype,
 ) !c_int {
     const r = ioctl(fd, request, arg);
     if (r < 0) {
-        log.err(src, "ioctl call error: {}:{}", .{ r, std.c.getErrno(r) });
+        log.err(src, "ioctl call error: {}:{}", .{ r, std.posix.errno(r) });
         return err;
     } else {
         return r;
