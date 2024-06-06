@@ -137,3 +137,79 @@ pub const Queue = struct {
         used_ring.idx = self.next_used;
     }
 };
+
+test "test_queue_pop_desc_chain" {
+    const expect = std.testing.expect;
+
+    var memory = Memory.init(0x1000) catch unreachable;
+    defer memory.deinit();
+
+    memory.guest_addr = 0;
+    @memset(memory.mem, 0);
+
+    const avail_ring_offset: u64 = 0;
+    const desc_table_offset: u64 = avail_ring_offset + @sizeOf(nix.vring_avail) * 4;
+
+    const avail_ring = memory.get_ptr(nix.vring_avail, avail_ring_offset);
+
+    var queue = Queue.new();
+    queue.size = 10;
+
+    const avail_ring_offset_hight: u32 = @truncate(avail_ring_offset >> 32);
+    const avail_ring_offset_low: u32 = @truncate(avail_ring_offset);
+    queue.set_avail_ring(true, avail_ring_offset_hight);
+    queue.set_avail_ring(false, avail_ring_offset_low);
+
+    const desc_table_offset_hight: u32 = @truncate(desc_table_offset >> 32);
+    const desc_table_offset_low: u32 = @truncate(desc_table_offset);
+    queue.set_desc_table(true, desc_table_offset_hight);
+    queue.set_desc_table(false, desc_table_offset_low);
+
+    try expect(queue.pop_desc_chain(&memory) == null);
+
+    avail_ring.idx = 10;
+    for (0..10) |i| {
+        avail_ring.ring()[i] = @intCast(i);
+    }
+    for (0..10) |i| {
+        const dc = queue.pop_desc_chain(&memory);
+        try expect(dc != null);
+        try expect(dc.?.index == @as(u16, @intCast(i)));
+        try expect(@intFromPtr(dc.?.desc_table.ptr) == @intFromPtr(memory.mem.ptr) + desc_table_offset);
+        try expect(dc.?.desc_table.len == queue.size);
+        try expect(queue.next_avail == i + 1);
+    }
+}
+
+test "test_queue_add_used_desc" {
+    const expect = std.testing.expect;
+
+    var memory = Memory.init(0x1000) catch unreachable;
+    defer memory.deinit();
+
+    memory.guest_addr = 0;
+    @memset(memory.mem, 0);
+
+    const avail_ring_offset: u64 = 0;
+    const desc_table_offset: u64 = avail_ring_offset + @sizeOf(nix.vring_avail) * 4;
+    const used_ring_offset: u64 = desc_table_offset + @sizeOf(nix.vring_desc) * 10;
+
+    const used_ring = memory.get_ptr(nix.vring_used, used_ring_offset);
+
+    var queue = Queue.new();
+    queue.size = 10;
+
+    const used_ring_offset_hight: u32 = @truncate(used_ring_offset >> 32);
+    const used_ring_offset_low: u32 = @truncate(used_ring_offset);
+    queue.set_used_ring(true, used_ring_offset_hight);
+    queue.set_used_ring(false, used_ring_offset_low);
+
+    for (0..10) |i| {
+        queue.add_used_desc(&memory, @intCast(i), 69);
+        const a = used_ring.ring()[i];
+        try expect(a.id == i);
+        try expect(a.len == 69);
+        try expect(queue.next_used == i + 1);
+        try expect(used_ring.idx == i + 1);
+    }
+}
