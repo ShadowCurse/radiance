@@ -87,6 +87,7 @@ pub const VhostNet = struct {
             1 << nix.VIRTIO_NET_F_GUEST_CSUM |
             1 << nix.VIRTIO_NET_F_CSUM |
             1 << nix.VIRTIO_F_VERSION_1 |
+            1 << nix.VIRTIO_RING_F_INDIRECT_DESC |
             1 << nix.VIRTIO_RING_F_EVENT_IDX |
             1 << nix.VIRTIO_NET_F_GUEST_TSO4 |
             1 << nix.VIRTIO_NET_F_HOST_TSO4 |
