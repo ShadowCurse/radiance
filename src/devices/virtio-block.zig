@@ -38,11 +38,9 @@ pub const VirtioBlock = struct {
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
     ) !Self {
-        var file_options: std.fs.File.OpenFlags = .{};
-        if (read_only) {
-            file_options.mode = std.fs.File.OpenMode.read_write;
-        }
-        const file = try std.fs.cwd().openFile(file_path, file_options);
+        const file = try std.fs.cwd().openFile(file_path, .{
+            .mode = if (read_only) .read_only else .read_write,
+        });
         const meta = try file.metadata();
         const nsectors = meta.size() >> SECTOR_SHIFT;
 
