@@ -2,6 +2,7 @@ const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
+const Vm = @import("../vm.zig");
 const EventFd = @import("../eventfd.zig");
 const Queue = @import("queue.zig").Queue;
 
@@ -26,6 +27,10 @@ pub const MMIO_MAGIC_VALUE: u32 = 0x7472_6976;
 // current version specified by the mmio standard (legacy devices used 1 here)
 pub const MMIO_VERSION: u32 = 2;
 
+pub const VirtioContextError = error{
+    New,
+};
+
 pub const VirtioActionTag = enum {
     NoAction,
     ActivateDevice,
@@ -42,28 +47,30 @@ pub const VirtioAction = union(VirtioActionTag) {
     QueueNotification: u32,
 };
 
-pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) type {
+pub fn VirtioContext(
+    comptime NUM_QUEUES: usize,
+    comptime DEVICE_TYPE: u32,
+    comptime CONFIG_TYPE: type,
+) type {
     if (NUM_QUEUES == 0) {
         unreachable;
     }
 
     return struct {
-        // Selects a set of 32 device feature bits
-        // accessible by reading from DeviceFeatures
-        device_features_word: u32,
-        avail_features: u64,
+        device_features_word: u32 = 0,
+        avail_features: u64 = 0,
 
-        driver_features_word: u32,
-        acked_features: u64,
+        driver_features_word: u32 = 0,
+        acked_features: u64 = 0,
 
-        device_type: u32,
-        device_status: u32,
-        interrupt_status: u32,
+        device_type: u32 = DEVICE_TYPE,
+        device_status: u32 = 0,
+        interrupt_status: u32 = 0,
 
-        config_blob: CONFIG_TYPE,
-        config_generation: u32,
+        config_blob: CONFIG_TYPE = undefined,
+        config_generation: u32 = 0,
 
-        selected_queue: u32,
+        selected_queue: u32 = 0,
         queues: [NUM_QUEUES]Queue,
         queue_events: [NUM_QUEUES]EventFd,
 
@@ -72,27 +79,46 @@ pub fn VirtioContext(comptime NUM_QUEUES: usize, comptime CONFIG_TYPE: type) typ
 
         const Self = @This();
 
-        pub fn new(device_type: u32) !Self {
-            return Self{
-                .device_features_word = 0,
-                .avail_features = 0,
-                .driver_features_word = 0,
-                .acked_features = 0,
-
-                .device_type = device_type,
-                .device_status = 0,
-                .interrupt_status = 0,
-
-                .config_blob = undefined,
-                .config_generation = 0,
-
-                .selected_queue = 0,
+        pub fn new(
+            vm: *const Vm,
+            irq: u32,
+            addr: u64,
+        ) !Self {
+            const self = Self{
                 .queues = [_]Queue{Queue.new()} ** NUM_QUEUES,
                 .queue_events = [_]EventFd{try EventFd.new(0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
 
                 .irq_status = std.atomic.Value(u32).init(0),
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
             };
+
+            var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
+            kvm_irqfd.fd = @intCast(self.irq_evt.fd);
+            kvm_irqfd.gsi = irq;
+            _ = try nix.checked_ioctl(
+                @src(),
+                VirtioContextError.New,
+                vm.fd,
+                nix.KVM_IRQFD,
+                &kvm_irqfd,
+            );
+
+            for (&self.queue_events, 0..) |*queue_event, i| {
+                var kvm_ioeventfd = std.mem.zeroInit(nix.kvm_ioeventfd, .{});
+                kvm_ioeventfd.datamatch = i;
+                kvm_ioeventfd.len = @sizeOf(u32);
+                kvm_ioeventfd.addr = addr + 0x50;
+                kvm_ioeventfd.fd = queue_event.fd;
+                kvm_ioeventfd.flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch;
+                _ = try nix.checked_ioctl(
+                    @src(),
+                    VirtioContextError.New,
+                    vm.fd,
+                    nix.KVM_IOEVENTFD,
+                    &kvm_ioeventfd,
+                );
+            }
+            return self;
         }
 
         fn update_device_status(self: *Self, status: u32) VirtioAction {

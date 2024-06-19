@@ -33,13 +33,14 @@ pub const VirtioNetError = error{
 
 pub const VhostNet = struct {
     memory: *Memory,
-    virtio_context: VirtioContext(2, VirtioNetConfig),
+    virtio_context: VIRTIO_CONTEXT,
     mmio_info: MmioDeviceInfo,
 
     tun: std.fs.File,
     vhost: ?std.fs.File,
 
     const Self = @This();
+    const VIRTIO_CONTEXT = VirtioContext(2, TYPE_NET, VirtioNetConfig);
 
     pub fn new(
         vm: *const Vm,
@@ -81,7 +82,11 @@ pub const VhostNet = struct {
             );
         }
 
-        var virtio_context = try VirtioContext(2, VirtioNetConfig).new(TYPE_NET);
+        var virtio_context = try VIRTIO_CONTEXT.new(
+            vm,
+            mmio_info.irq,
+            mmio_info.addr,
+        );
 
         virtio_context.avail_features =
             1 << nix.VIRTIO_F_VERSION_1 |
@@ -98,35 +103,6 @@ pub const VhostNet = struct {
         if (mac) |m| {
             virtio_context.config_blob = m;
             virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
-        }
-
-        {
-            var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
-            kvm_irqfd.fd = @intCast(virtio_context.irq_evt.fd);
-            kvm_irqfd.gsi = mmio_info.irq;
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.NewKVM_IRQFD,
-                vm.fd,
-                nix.KVM_IRQFD,
-                &kvm_irqfd,
-            );
-        }
-
-        for (&virtio_context.queue_events, 0..) |*queue_event, i| {
-            var kvm_ioeventfd = std.mem.zeroInit(nix.kvm_ioeventfd, .{});
-            kvm_ioeventfd.datamatch = i;
-            kvm_ioeventfd.len = @sizeOf(u32);
-            kvm_ioeventfd.addr = mmio_info.addr + 0x50;
-            kvm_ioeventfd.fd = queue_event.fd;
-            kvm_ioeventfd.flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch;
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.NewKVM_IOEVENTFD,
-                vm.fd,
-                nix.KVM_IOEVENTFD,
-                &kvm_ioeventfd,
-            );
         }
 
         return Self{
