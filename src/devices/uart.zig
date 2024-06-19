@@ -228,7 +228,7 @@ fn received_data_interrupt(self: *Self) !void {
 }
 
 pub fn write(self: *Self, addr: u64, data: []u8) !bool {
-    if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len - 1 < addr) {
+    if (!self.mmio_info.contains_addr(addr)) {
         return false;
     }
     const offset = addr - self.mmio_info.addr;
@@ -275,7 +275,7 @@ pub fn write(self: *Self, addr: u64, data: []u8) !bool {
 }
 
 pub fn read(self: *Self, addr: u64, data: []u8) !bool {
-    if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len - 1 < addr) {
+    if (!self.mmio_info.contains_addr(addr)) {
         return false;
     }
     const offset = addr - self.mmio_info.addr;

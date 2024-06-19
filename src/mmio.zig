@@ -32,6 +32,13 @@ pub const MmioDeviceInfo = struct {
     addr: u64,
     len: u64,
     irq: u32,
+
+    pub fn contains_addr(
+        self: *const MmioDeviceInfo,
+        addr: u64,
+    ) bool {
+        return self.addr <= addr and addr < self.addr + self.len;
+    }
 };
 
 last_irq: u32,
