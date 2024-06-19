@@ -23,12 +23,13 @@ pub const VirtioBlockError = error{
 pub const VirtioBlock = struct {
     read_only: bool,
     memory: *Memory,
-    virtio_context: VirtioContext(1, VirtioBlockConfig),
+    virtio_context: VIRTIO_CONTEXT,
     mmio_info: MmioDeviceInfo,
     file: std.fs.File,
     block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
     const Self = @This();
+    const VIRTIO_CONTEXT = VirtioContext(1, TYPE_BLOCK, VirtioBlockConfig);
 
     pub fn new(
         vm: *const Vm,
@@ -58,7 +59,11 @@ pub const VirtioBlock = struct {
 
         _ = try std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, meta.inner.statx.ino });
 
-        var virtio_context = try VirtioContext(1, VirtioBlockConfig).new(TYPE_BLOCK);
+        var virtio_context = try VIRTIO_CONTEXT.new(
+            vm,
+            mmio_info.irq,
+            mmio_info.addr,
+        );
         virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1); // | (1 << nix.VIRTIO_RING_F_EVENT_IDX);
         if (read_only) {
             virtio_context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
@@ -67,33 +72,6 @@ pub const VirtioBlock = struct {
         const nsectors_slice = std.mem.asBytes(&nsectors);
         const config_slice = std.mem.asBytes(&virtio_context.config_blob);
         @memcpy(config_slice, nsectors_slice);
-
-        var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
-        kvm_irqfd.fd = @intCast(virtio_context.irq_evt.fd);
-        kvm_irqfd.gsi = mmio_info.irq;
-        _ = try nix.checked_ioctl(
-            @src(),
-            VirtioBlockError.New,
-            vm.fd,
-            nix.KVM_IRQFD,
-            &kvm_irqfd,
-        );
-
-        for (&virtio_context.queue_events, 0..) |*queue_event, i| {
-            var kvm_ioeventfd = std.mem.zeroInit(nix.kvm_ioeventfd, .{});
-            kvm_ioeventfd.datamatch = i;
-            kvm_ioeventfd.len = @sizeOf(u32);
-            kvm_ioeventfd.addr = mmio_info.addr + 0x50;
-            kvm_ioeventfd.fd = queue_event.fd;
-            kvm_ioeventfd.flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch;
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioBlockError.New,
-                vm.fd,
-                nix.KVM_IOEVENTFD,
-                &kvm_ioeventfd,
-            );
-        }
 
         return Self{
             .read_only = read_only,
@@ -203,3 +181,5 @@ pub const VirtioBlock = struct {
         }
     }
 };
+
+test "test_queue_add_used_desc" {}
