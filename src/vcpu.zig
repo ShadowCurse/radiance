@@ -184,16 +184,17 @@ pub fn get_reg(self: *const Self, reg_id: u64) !u64 {
 }
 
 pub fn run(self: *Self, mmio: *Mmio) !bool {
-    _ = nix.checked_ioctl(
-        @src(),
-        VcpuError.Run,
-        self.fd,
-        nix.KVM_RUN,
-        @as(u32, 0),
-    ) catch |err| {
-        try self.exit_event.write(1);
-        return err;
-    };
+    const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
+    if (r < 0) {
+        const e = std.posix.errno(r);
+        switch (e) {
+            .INTR => return false,
+            else => {
+                log.err(@src(), "ioctl call error: {}:{}", .{ r, std.posix.errno(r) });
+                try self.exit_event.write(1);
+            },
+        }
+    }
 
     switch (self.kvm_run.exit_reason) {
         nix.KVM_EXIT_IO => log.info(@src(), "Got KVM_EXIT_IO", .{}),
