@@ -12,14 +12,17 @@ const EventCallback = struct {
 
 stop: bool,
 epollfd: nix.fd_t,
-events: [8]nix.epoll_event,
+events: [MAX_EVENTS]nix.epoll_event,
 event_callbacks_num: u64,
-event_callbacks: [8]EventCallback,
+event_callbacks: [MAX_EVENTS]EventCallback,
 
 const Self = @This();
 
+const MAX_EVENTS = 16;
+
 pub const EventLoopError = error{
     New,
+    TooMuchEvents,
     AddEvent,
     Run,
 };
@@ -47,6 +50,10 @@ pub fn add_event(
 ) !void {
     var event = std.mem.zeroInit(nix.epoll_event, .{});
     event.events = nix.EPOLLIN;
+
+    if (self.event_callbacks_num == MAX_EVENTS) {
+        return EventLoopError.TooMuchEvents;
+    }
 
     self.event_callbacks[self.event_callbacks_num].callback = callback;
     self.event_callbacks[self.event_callbacks_num].parameter = parameter;
