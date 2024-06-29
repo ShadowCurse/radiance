@@ -171,8 +171,8 @@ pub const write = std.posix.write;
 pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
 
 pub fn checked_ioctl(
-    src: std.builtin.SourceLocation,
-    err: anyerror,
+    comptime src: std.builtin.SourceLocation,
+    comptime err: anyerror,
     fd: fd_t,
     request: c_ulong,
     arg: anytype,
