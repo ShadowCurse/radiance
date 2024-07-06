@@ -250,7 +250,61 @@ const g = struct {
 
     fn response(self: *const Self, buffer: []u8) ![]const u8 {
         _ = self;
-        const msg = "xxxx" ** 16;
+        const msg = "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000107856341200005555xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx10000000";
+        return fmt_response(buffer, msg);
+    }
+};
+
+// 'p n'
+// Read the value of the register n
+const p = struct {
+    register: u64,
+
+    const Self = @This();
+
+    fn from_bytes(bytes: []const u8) ?Self {
+        return if (std.mem.startsWith(u8, bytes, "p")) blk: {
+            const register = std.fmt.parseInt(u8, bytes[1..], 16) catch return null;
+            break :blk .{
+                .register = register,
+            };
+        } else blk: {
+            break :blk null;
+        };
+    }
+
+    fn response(self: *const Self, buffer: []u8) ![]const u8 {
+        _ = self;
+        const msg = "00";
+        return fmt_response(buffer, msg);
+    }
+};
+
+// ‘m addr,length’
+// Read length addressable memory units starting at address addr
+const m = struct {
+    addr: u64,
+    length: u64,
+
+    const Self = @This();
+
+    fn from_bytes(bytes: []const u8) ?Self {
+        return if (std.mem.startsWith(u8, bytes, "m")) blk: {
+            var iter = std.mem.split(u8, bytes[1..], ",");
+            const addr = std.fmt.parseInt(u64, iter.next().?, 16) catch return null;
+            const length = std.fmt.parseInt(u64, iter.next().?, 16) catch return null;
+            break :blk .{
+                .addr = addr,
+                .length = length,
+            };
+        } else blk: {
+            break :blk null;
+        };
+    }
+
+    fn response(self: *const Self, buffer: []u8) ![]const u8 {
+        _ = self;
+        const msg = "00";
         return fmt_response(buffer, msg);
     }
 };
@@ -292,6 +346,8 @@ const PayloadEnum = enum {
     vCont,
     H,
     g,
+    p,
+    m,
     QuestionMark,
     Unknown,
 };
@@ -343,6 +399,8 @@ const Payload = union(PayloadEnum) {
     vCont: vCont,
     H: H,
     g: g,
+    p: p,
+    m: m,
     QuestionMark: QuestionMark,
     Unknown: Unknown,
 
@@ -358,22 +416,26 @@ const Payload = union(PayloadEnum) {
         } else blk: {
             const stripped = try Self.strip_bytes(bytes);
             log.info(@src(), "got stripped: {s}", .{stripped});
-            if (qSupported.from_bytes(stripped)) |p| {
-                break :blk .{ .qSupported = p };
-            } else if (qfThreadInfo.from_bytes(stripped)) |p| {
-                break :blk .{ .qfThreadInfo = p };
-            } else if (qsThreadInfo.from_bytes(stripped)) |p| {
-                break :blk .{ .qsThreadInfo = p };
-            } else if (qAttached.from_bytes(stripped)) |p| {
-                break :blk .{ .qAttached = p };
-            } else if (vCont.from_bytes(stripped)) |p| {
-                break :blk .{ .vCont = p };
-            } else if (H.from_bytes(stripped)) |p| {
-                break :blk .{ .H = p };
-            } else if (g.from_bytes(stripped)) |p| {
-                break :blk .{ .g = p };
-            } else if (QuestionMark.from_bytes(stripped)) |p| {
-                break :blk .{ .QuestionMark = p };
+            if (qSupported.from_bytes(stripped)) |payload| {
+                break :blk .{ .qSupported = payload };
+            } else if (qfThreadInfo.from_bytes(stripped)) |paylod| {
+                break :blk .{ .qfThreadInfo = paylod };
+            } else if (qsThreadInfo.from_bytes(stripped)) |payload| {
+                break :blk .{ .qsThreadInfo = payload };
+            } else if (qAttached.from_bytes(stripped)) |payload| {
+                break :blk .{ .qAttached = payload };
+            } else if (vCont.from_bytes(stripped)) |payload| {
+                break :blk .{ .vCont = payload };
+            } else if (H.from_bytes(stripped)) |payload| {
+                break :blk .{ .H = payload };
+            } else if (g.from_bytes(stripped)) |payload| {
+                break :blk .{ .g = payload };
+            } else if (p.from_bytes(stripped)) |payload| {
+                break :blk .{ .p = payload };
+            } else if (m.from_bytes(stripped)) |payload| {
+                break :blk .{ .m = payload };
+            } else if (QuestionMark.from_bytes(stripped)) |payload| {
+                break :blk .{ .QuestionMark = payload };
             } else {
                 log.warn(@src(), "Unknown payload: {s}", .{stripped});
                 break :blk .{ .Unknown = .{} };
@@ -430,48 +492,58 @@ pub const GdbServer = struct {
                     switch (paylod_type) {
                         .Acknowledgment => {},
                         .Retransmission => {},
-                        .qSupported => |*p| {
-                            const res = try p.response(&write_buffer);
-                            log.info(@src(), "sending qSupported ack: {s}", .{res});
+                        .qSupported => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
+                            log.info(@src(), "sending qSuinner_payloadinner_payloadorted ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
-                        .qfThreadInfo => |*p| {
-                            const res = try p.response(&write_buffer);
+                        .qfThreadInfo => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
                             log.info(@src(), "sending qfThreadInfo ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
-                        .qsThreadInfo => |*p| {
-                            const res = try p.response(&write_buffer);
+                        .qsThreadInfo => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
                             log.info(@src(), "sending qsThreadInfo ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
-                        .qAttached => |*p| {
-                            const res = try p.response(&write_buffer);
+                        .qAttached => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
                             log.info(@src(), "sending qAttached ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
-                        .vCont => |*p| {
-                            const res = try p.response(&write_buffer);
+                        .vCont => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
                             log.info(@src(), "sending vCont ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
-                        .H => |*p| {
-                            const res = try p.response(&write_buffer);
+                        .H => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
                             log.info(@src(), "sending H ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
-                        .g => |*p| {
-                            const res = try p.response(&write_buffer);
+                        .g => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
                             log.info(@src(), "sending g ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
-                        .QuestionMark => |*p| {
-                            const res = try p.response(&write_buffer);
+                        .p => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
+                            log.info(@src(), "sending p ack: {s}", .{res});
+                            _ = try self.connection.stream.write(res);
+                        },
+                        .m => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
+                            log.info(@src(), "sending m ack: {s}", .{res});
+                            _ = try self.connection.stream.write(res);
+                        },
+                        .QuestionMark => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
                             log.info(@src(), "sending QuestionMark ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
-                        .Unknown => |*p| {
-                            const res = try p.response();
+                        .Unknown => |*inner_payload| {
+                            const res = try inner_payload.response();
                             log.info(@src(), "sending Unknown ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
