@@ -188,18 +188,18 @@ const vCont = struct {
     const Type = enum {
         Continue,
         Step,
-        Stop,
         QuestionMark,
     };
 
     fn from_bytes(bytes: []const u8) ?Self {
         return if (std.mem.startsWith(u8, bytes, "vCont")) blk: {
-            const op_byte = bytes[4];
-            const t = switch (op_byte) {
-                'c' => Type.Continue,
-                's' => Type.Step,
-                't' => Type.Stop,
+            const t = switch (bytes[5]) {
                 '?' => Type.QuestionMark,
+                ';' => switch (bytes[6]) {
+                    'c' => Type.Continue,
+                    's' => Type.Step,
+                    else => break :blk null,
+                },
                 else => break :blk null,
             };
             break :blk .{
@@ -210,17 +210,19 @@ const vCont = struct {
         };
     }
 
-    fn response(self: *const Self, buffer: []u8) ![]const u8 {
+    fn response(self: *const Self, buffer: []u8, gdb: *GdbServer) ![]const u8 {
         const msg = switch (self.t) {
-            .Continue => "OK",
+            .Continue => blk: {
+                gdb.vcpus_barier.set();
+                break :blk "OK";
+            },
             .Step => "OK",
-            .Stop => "OK",
             .QuestionMark =>
             // support
             // c - continue
             // s - step
-            // t - stop
-            "vCont;c;s;t",
+            // "vCont;c;s",
+            "vCont;c;s",
         };
         return fmt_response(buffer, msg);
     }
