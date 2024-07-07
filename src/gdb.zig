@@ -250,7 +250,9 @@ const g = struct {
 
     fn response(self: *const Self, buffer: []u8) ![]const u8 {
         _ = self;
-        const msg = "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000107856341200005555xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx10000000";
+        // 33 8 byte regs
+        // x0 - x31, sp, pc
+        const msg = "0000000000000000" ** 33;
         return fmt_response(buffer, msg);
     }
 };
