@@ -505,7 +505,9 @@ pub const GdbServer = struct {
     connection: std.net.Server.Connection,
 
     vcpus: []Vcpu,
+    vcpu_threads: []std.Thread,
     vcpus_barier: *std.Thread.ResetEvent,
+    vcpu_exit_signal: i32,
     memory: *Memory,
     mmio: *Mmio,
     event_loop: *EventLoop,
@@ -515,7 +517,9 @@ pub const GdbServer = struct {
     pub fn init(
         socket_path: []const u8,
         vcpus: []Vcpu,
+        vcpu_threads: []std.Thread,
         vcpus_barier: *std.Thread.ResetEvent,
+        vcpu_exit_signal: i32,
         memory: *Memory,
         mmio: *Mmio,
         event_loop: *EventLoop,
@@ -533,14 +537,16 @@ pub const GdbServer = struct {
             .connection = connection,
 
             .vcpus = vcpus,
+            .vcpu_threads = vcpu_threads,
             .vcpus_barier = vcpus_barier,
+            .vcpu_exit_signal = vcpu_exit_signal,
             .memory = memory,
             .mmio = mmio,
             .event_loop = event_loop,
         };
     }
 
-    pub fn process_request(self: *const Self) !void {
+    pub fn process_request(self: *Self) !void {
         var read_buffer: [1024]u8 = undefined;
         var write_buffer: [1024]u8 = undefined;
         var len: usize = 9999;

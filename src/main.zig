@@ -190,7 +190,9 @@ pub fn main() !void {
         var gdb_server = try gdb.GdbServer.init(
             sp,
             vcpus,
+            vcpu_threads,
             &barrier,
+            vcpu_exit_signal,
             &memory,
             &mmio,
             &el,
