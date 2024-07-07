@@ -4,6 +4,8 @@ const nix = @import("nix.zig");
 const args_parser = @import("args_parser.zig");
 const config_parser = @import("config_parser.zig");
 
+const gdb = @import("gdb.zig");
+
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
@@ -183,10 +185,27 @@ pub fn main() !void {
         try el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
     }
 
-    // start vcpus
-    barrier.set();
-    // start event loop
-    try el.run();
+    if (config.gdb.socket_path) |sp| {
+        // start gdb server
+        var gdb_server = try gdb.GdbServer.init(
+            sp,
+            vcpus,
+            &barrier,
+            &memory,
+            &mmio,
+            &el,
+        );
+        try el.add_event(gdb_server.connection.stream.handle, @ptrCast(&gdb.GdbServer.process_request), &gdb_server);
+
+        // start event loop
+        try el.run();
+    } else {
+        // start vcpus
+        barrier.set();
+
+        // start event loop
+        try el.run();
+    }
 
     // stop all vcpus
     vcpu_threads[0].join();
