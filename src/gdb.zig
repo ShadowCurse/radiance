@@ -181,6 +181,7 @@ const qAttached = struct {
 
     fn response(self: *const Self, buffer: []u8) ![]const u8 {
         _ = self;
+        // The remote server attached to an existing process.
         const msg = "1";
         return fmt_response(buffer, msg);
     }
@@ -597,7 +598,7 @@ pub const GdbServer = struct {
                         .Acknowledgment => {},
                         .Retransmission => {},
                         .Interrupt => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
+                            const res = try inner_payload.response(&write_buffer, self);
                             log.info(@src(), "sending Interrupt ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
@@ -607,7 +608,7 @@ pub const GdbServer = struct {
                             _ = try self.connection.stream.write(res);
                         },
                         .qfThreadInfo => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
+                            const res = try inner_payload.response(&write_buffer, self);
                             log.info(@src(), "sending qfThreadInfo ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
@@ -622,7 +623,7 @@ pub const GdbServer = struct {
                             _ = try self.connection.stream.write(res);
                         },
                         .vCont => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
+                            const res = try inner_payload.response(&write_buffer, self);
                             log.info(@src(), "sending vCont ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
