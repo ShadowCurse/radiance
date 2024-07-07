@@ -144,11 +144,38 @@ pub const NetConfigs = struct {
     }
 };
 
+pub const GdbConfig = struct {
+    socket_path: ?[]const u8,
+
+    const Self = @This();
+
+    pub fn deinit(self: *Self, allocator: Allocator) void {
+        if (self.socket_path) |sp| {
+            allocator.free(sp);
+        }
+    }
+
+    pub fn default() Self {
+        return Self{ .socket_path = null };
+    }
+
+    fn update(
+        self: *Self,
+        reader: *Reader,
+        buffer: *std.ArrayList(u8),
+        allocator: Allocator,
+    ) !void {
+        const new_self = try parse_type(Self, reader, buffer, allocator);
+        self.* = new_self;
+    }
+};
+
 pub const Config = struct {
     machine: MachineConfig,
     kernel: KernelConfig,
     drives: DrivesConfigs,
     networks: NetConfigs,
+    gdb: GdbConfig,
 
     const Self = @This();
 
@@ -158,6 +185,7 @@ pub const Config = struct {
             .kernel = KernelConfig.default(),
             .drives = DrivesConfigs.default(),
             .networks = NetConfigs.default(),
+            .gdb = GdbConfig.default(),
         };
     }
 
@@ -165,6 +193,7 @@ pub const Config = struct {
         self.kernel.deinit(allocator);
         self.drives.deinit(allocator);
         self.networks.deinit(allocator);
+        self.gdb.deinit(allocator);
     }
 };
 
@@ -265,6 +294,10 @@ fn parse_type(comptime T: type, reader: *Reader, buffer: *std.ArrayList(u8), all
                         @field(t, field.name) = try allocator.dupeZ(u8, string);
                     },
                     []const u8 => {
+                        const string = std.mem.trim(u8, field_value, "\"");
+                        @field(t, field.name) = try allocator.dupe(u8, string);
+                    },
+                    ?[]const u8 => {
                         const string = std.mem.trim(u8, field_value, "\"");
                         @field(t, field.name) = try allocator.dupe(u8, string);
                     },
