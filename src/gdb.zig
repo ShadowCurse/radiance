@@ -303,9 +303,8 @@ const m = struct {
     }
 
     fn response(self: *const Self, buffer: []u8) ![]const u8 {
-        _ = self;
-        const msg = "00";
-        return fmt_response(buffer, msg);
+        var buff: [256]u8 = .{'0'} ** 256;
+        return fmt_response(buffer, buff[0..self.length]);
     }
 };
 
