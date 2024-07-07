@@ -1,6 +1,11 @@
 const std = @import("std");
 const log = @import("log.zig");
 
+const EventLoop = @import("event_loop.zig");
+const Memory = @import("memory.zig");
+const Mmio = @import("mmio.zig");
+const Vcpu = @import("vcpu.zig");
+
 fn fmt_response(buffer: []u8, msg: []const u8) ![]const u8 {
     var sum: u32 = 0;
     for (msg) |b| {
@@ -458,21 +463,39 @@ pub const GdbServer = struct {
     server: std.net.Server,
     connection: std.net.Server.Connection,
 
-    // vcpus: []const Vcpu,
-    // memory: *Memory,
-    // mmio: *Mmio,
+    vcpus: []Vcpu,
+    vcpus_barier: *std.Thread.ResetEvent,
+    memory: *Memory,
+    mmio: *Mmio,
+    event_loop: *EventLoop,
 
     const Self = @This();
 
-    pub fn init(socket_path: []const u8) !Self {
+    pub fn init(
+        socket_path: []const u8,
+        vcpus: []Vcpu,
+        vcpus_barier: *std.Thread.ResetEvent,
+        memory: *Memory,
+        mmio: *Mmio,
+        event_loop: *EventLoop,
+    ) !Self {
+        log.info(@src(), "Initializing gdb connection ...", .{});
         const address = try std.net.Address.initUnix(socket_path);
         var server = try address.listen(.{});
         defer server.deinit();
         const connection = try server.accept();
+        log.info(@src(), "gdb connection established", .{});
+
         return .{
             .address = address,
             .server = server,
             .connection = connection,
+
+            .vcpus = vcpus,
+            .vcpus_barier = vcpus_barier,
+            .memory = memory,
+            .mmio = mmio,
+            .event_loop = event_loop,
         };
     }
 
