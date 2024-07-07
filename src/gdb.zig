@@ -81,6 +81,16 @@ const ThreadId = struct {
     }
 };
 
+const Interrupt = struct {
+    const Self = @This();
+
+    fn response(self: *const Self, buffer: []u8) ![]const u8 {
+        _ = self;
+        const msg = "S05";
+        return fmt_response(buffer, msg);
+    }
+};
+
 const qSupported = struct {
     bytes: []const u8,
 
@@ -369,6 +379,7 @@ const Unknown = struct {
 const PayloadEnum = enum {
     Acknowledgment,
     Retransmission,
+    Interrupt,
     qSupported,
     qfThreadInfo,
     qsThreadInfo,
@@ -403,6 +414,10 @@ const PayloadIterator = struct {
             const payload = try Payload.from(self.buf[self.i .. self.i + 1]);
             self.i += 1;
             break :blk payload;
+        } else if (self.buf[self.i] == 0x03) blk: {
+            const payload = try Payload.from(self.buf[self.i .. self.i + 1]);
+            self.i += 1;
+            break :blk payload;
         } else if (self.buf[self.i] == '$') blk: {
             const slice = std.mem.sliceTo(self.buf[self.i..], '#');
             const payload_slice = self.buf[self.i .. self.i + slice.len + 2];
@@ -422,6 +437,7 @@ const PayloadError = error{
 const Payload = union(PayloadEnum) {
     Acknowledgment,
     Retransmission,
+    Interrupt: Interrupt,
     qSupported: qSupported,
     qfThreadInfo: qfThreadInfo,
     qsThreadInfo: qsThreadInfo,
@@ -441,6 +457,7 @@ const Payload = union(PayloadEnum) {
             break :blk switch (bytes[0]) {
                 '+' => .Acknowledgment,
                 '-' => .Retransmission,
+                0x03 => .{ .Interrupt = .{} },
                 else => PayloadError.Invalid,
             };
         } else blk: {
@@ -540,9 +557,14 @@ pub const GdbServer = struct {
                     switch (paylod_type) {
                         .Acknowledgment => {},
                         .Retransmission => {},
+                        .Interrupt => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer);
+                            log.info(@src(), "sending Interrupt ack: {s}", .{res});
+                            _ = try self.connection.stream.write(res);
+                        },
                         .qSupported => |*inner_payload| {
                             const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending qSuinner_payloadinner_payloadorted ack: {s}", .{res});
+                            log.info(@src(), "sending qSupported ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
                         .qfThreadInfo => |*inner_payload| {
