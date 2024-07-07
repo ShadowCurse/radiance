@@ -135,10 +135,16 @@ const qfThreadInfo = struct {
         };
     }
 
-    fn response(self: *const Self, buffer: []u8) ![]const u8 {
+    fn response(self: *const Self, buffer: []u8, gdb: *GdbServer) ![]const u8 {
         _ = self;
-        const msg = "mp01.01";
-        return fmt_response(buffer, msg);
+        var buff = try std.BoundedArray(u8, 16).init(0);
+        const writer = buff.writer();
+        for (0..gdb.vcpu_threads.len) |i| {
+            try std.fmt.formatInt(i, 16, .upper, .{}, writer);
+            try buff.append(',');
+        }
+        _ = buff.pop();
+        return fmt_response(buffer, buff.slice());
     }
 };
 
