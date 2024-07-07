@@ -351,6 +351,27 @@ const m = struct {
     }
 };
 
+// ‘c [addr]’
+// Continue at addr, which is the address to resume. If addr is omitted, resume at current address.
+const c = struct {
+    const Self = @This();
+
+    fn from_bytes(bytes: []const u8) ?Self {
+        return if (std.mem.startsWith(u8, bytes, "c")) blk: {
+            break :blk .{};
+        } else blk: {
+            break :blk null;
+        };
+    }
+
+    fn response(self: *const Self, buffer: []u8, gdb: *GdbServer) ![]const u8 {
+        _ = self;
+        gdb.vcpus_barier.set();
+        const msg = "OK";
+        return fmt_response(buffer, msg);
+    }
+};
+
 const QuestionMark = struct {
     const Self = @This();
 
@@ -391,6 +412,7 @@ const PayloadEnum = enum {
     g,
     p,
     m,
+    c,
     QuestionMark,
     Unknown,
 };
@@ -449,6 +471,7 @@ const Payload = union(PayloadEnum) {
     g: g,
     p: p,
     m: m,
+    c: c,
     QuestionMark: QuestionMark,
     Unknown: Unknown,
 
@@ -483,6 +506,8 @@ const Payload = union(PayloadEnum) {
                 break :blk .{ .p = payload };
             } else if (m.from_bytes(stripped)) |payload| {
                 break :blk .{ .m = payload };
+            } else if (c.from_bytes(stripped)) |payload| {
+                break :blk .{ .c = payload };
             } else if (QuestionMark.from_bytes(stripped)) |payload| {
                 break :blk .{ .QuestionMark = payload };
             } else {
@@ -613,6 +638,11 @@ pub const GdbServer = struct {
                         .m => |*inner_payload| {
                             const res = try inner_payload.response(&write_buffer);
                             log.info(@src(), "sending m ack: {s}", .{res});
+                            _ = try self.connection.stream.write(res);
+                        },
+                        .c => |*inner_payload| {
+                            const res = try inner_payload.response(&write_buffer, self);
+                            log.info(@src(), "sending c ack: {s}", .{res});
                             _ = try self.connection.stream.write(res);
                         },
                         .QuestionMark => |*inner_payload| {
