@@ -171,14 +171,29 @@ const qAttached = struct {
 };
 
 const vCont = struct {
-    bytes: []const u8,
+    t: Type,
 
     const Self = @This();
 
+    const Type = enum {
+        Continue,
+        Step,
+        Stop,
+        QuestionMark,
+    };
+
     fn from_bytes(bytes: []const u8) ?Self {
         return if (std.mem.startsWith(u8, bytes, "vCont")) blk: {
+            const op_byte = bytes[4];
+            const t = switch (op_byte) {
+                'c' => Type.Continue,
+                's' => Type.Step,
+                't' => Type.Stop,
+                '?' => Type.QuestionMark,
+                else => break :blk null,
+            };
             break :blk .{
-                .bytes = bytes,
+                .t = t,
             };
         } else blk: {
             break :blk null;
@@ -186,8 +201,17 @@ const vCont = struct {
     }
 
     fn response(self: *const Self, buffer: []u8) ![]const u8 {
-        _ = self;
-        const msg = "vCont;c;C";
+        const msg = switch (self.t) {
+            .Continue => "OK",
+            .Step => "OK",
+            .Stop => "OK",
+            .QuestionMark =>
+            // support
+            // c - continue
+            // s - step
+            // t - stop
+            "vCont;c;s;t",
+        };
         return fmt_response(buffer, msg);
     }
 };
