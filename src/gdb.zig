@@ -84,8 +84,14 @@ const ThreadId = struct {
 const Interrupt = struct {
     const Self = @This();
 
-    fn response(self: *const Self, buffer: []u8) ![]const u8 {
+    fn response(self: *const Self, buffer: []u8, gdb: *GdbServer) ![]const u8 {
         _ = self;
+
+        gdb.vcpus_barier.reset();
+        for (gdb.vcpu_threads) |*t| {
+            Vcpu.kick_thread(t, gdb.vcpu_exit_signal);
+        }
+
         const msg = "S05";
         return fmt_response(buffer, msg);
     }
