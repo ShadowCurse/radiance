@@ -218,9 +218,16 @@ pub fn parse(allocator: Allocator, config_path: []const u8) !Config {
 
         if (buffer.items.len != 0) {
             const filed_name = blk: {
+                // Skip comments
+                if (std.mem.startsWith(u8, buffer.items, "#")) {
+                    continue;
+                } else
+                // Find groups
                 if (std.mem.startsWith(u8, buffer.items, "[[")) {
                     break :blk buffer.items[2 .. buffer.items.len - 2];
-                } else if (std.mem.startsWith(u8, buffer.items, "[")) {
+                } else
+                // Find single enements
+                if (std.mem.startsWith(u8, buffer.items, "[")) {
                     break :blk buffer.items[1 .. buffer.items.len - 1];
                 } else {
                     return ConfigParseError.UnknownTableType;
