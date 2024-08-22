@@ -544,6 +544,10 @@ pub const GdbServer = struct {
     server: std.net.Server,
     connection: std.net.Server.Connection,
 
+    read_buffer: [1024]u8 = undefined,
+    write_buffer: [1024]u8 = undefined,
+    last_response: []const u8 = undefined,
+
     vcpus: []Vcpu,
     vcpu_threads: []std.Thread,
     vcpus_barier: *std.Thread.ResetEvent,
@@ -587,13 +591,17 @@ pub const GdbServer = struct {
     }
 
     pub fn process_request(self: *Self) !void {
-        var read_buffer: [1024]u8 = undefined;
-        var write_buffer: [1024]u8 = undefined;
-        var len: usize = 9999;
-        while (len != 0) {
+        while (true) {
             log.info(@src(), "reading payload", .{});
-            len = try self.connection.stream.read(&read_buffer);
-            const payload_data = read_buffer[0..len];
+
+            const len = try self.connection.stream.read(&self.read_buffer);
+            if (len == 0) {
+                self.event_loop.stop = true;
+                log.info(@src(), "got payload of len 0. exiting", .{});
+                return;
+            }
+
+            const payload_data = self.read_buffer[0..len];
             log.info(@src(), "got payload: {s} len: {}", .{ payload_data, len });
 
             var iter = PayloadIterator.new(payload_data);
@@ -602,71 +610,74 @@ pub const GdbServer = struct {
                     log.info(@src(), "payload type: {any}", .{paylod_type});
                     switch (paylod_type) {
                         .Acknowledgment => {},
-                        .Retransmission => {},
+                        .Retransmission => {
+                            log.info(@src(), "sending Retransmission: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
+                        },
                         .Interrupt => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer, self);
-                            log.info(@src(), "sending Interrupt ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer, self);
+                            log.info(@src(), "sending Interrupt ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .qSupported => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending qSupported ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            log.info(@src(), "sending qSupported ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .qfThreadInfo => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer, self);
-                            log.info(@src(), "sending qfThreadInfo ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer, self);
+                            log.info(@src(), "sending qfThreadInfo ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .qsThreadInfo => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending qsThreadInfo ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            log.info(@src(), "sending qsThreadInfo ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .qAttached => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending qAttached ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            log.info(@src(), "sending qAttached ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .vCont => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer, self);
-                            log.info(@src(), "sending vCont ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer, self);
+                            log.info(@src(), "sending vCont ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .H => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending H ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            log.info(@src(), "sending H ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .g => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending g ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            log.info(@src(), "sending g ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .p => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending p ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            log.info(@src(), "sending p ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .m => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending m ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            log.info(@src(), "sending m ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .c => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer, self);
-                            log.info(@src(), "sending c ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer, self);
+                            log.info(@src(), "sending c ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .QuestionMark => |*inner_payload| {
-                            const res = try inner_payload.response(&write_buffer);
-                            log.info(@src(), "sending QuestionMark ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            log.info(@src(), "sending QuestionMark ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                         .Unknown => |*inner_payload| {
-                            const res = try inner_payload.response();
-                            log.info(@src(), "sending Unknown ack: {s}", .{res});
-                            _ = try self.connection.stream.write(res);
+                            self.last_response = try inner_payload.response();
+                            log.info(@src(), "sending Unknown ack: {s}", .{self.last_response});
+                            _ = try self.connection.stream.write(self.last_response);
                         },
                     }
                 } else {
