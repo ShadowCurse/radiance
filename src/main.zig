@@ -158,7 +158,7 @@ pub fn main() !void {
     const state = configure_terminal(&stdin);
 
     // start vcpu threads
-    var vcpu_threads = try allocator.alloc(std.Thread, config.machine.vcpus);
+    const vcpu_threads = try allocator.alloc(std.Thread, config.machine.vcpus);
     defer allocator.free(vcpu_threads);
 
     std.log.info("starting vcpu threads", .{});
@@ -209,16 +209,9 @@ pub fn main() !void {
         try el.run();
     }
 
-    // stop all vcpus
-    vcpu_threads[0].join();
-    for (vcpu_threads[1..]) |*t| {
-        Vcpu.kick_thread(t, vcpu_exit_signal);
-        t.join();
-    }
-
+    log.info(@src(), "Shutting down", .{});
     restore_terminal(&stdin, &state);
-
-    log.info(@src(), "Successful shutdown", .{});
+    return;
 }
 
 fn configure_terminal(stdin: *const std.fs.File) nix.termios {
