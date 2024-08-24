@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
+const nix = @import("nix.zig");
 
 const EventLoop = @import("event_loop.zig");
 const Memory = @import("memory.zig");
@@ -571,8 +572,20 @@ pub const GdbServer = struct {
         log.info(@src(), "Initializing gdb connection ...", .{});
         const address = try std.net.Address.initUnix(socket_path);
         var server = try address.listen(.{});
-        defer server.deinit();
-        const connection = try server.accept();
+        errdefer server.deinit();
+
+        var accepted_addr: std.net.Address = undefined;
+        var addr_len: nix.socklen_t = @sizeOf(std.net.Address);
+        const fd = try nix.accept(
+            server.stream.handle,
+            &accepted_addr.any,
+            &addr_len,
+            nix.SOCK.CLOEXEC | nix.SOCK.NONBLOCK,
+        );
+        const connection = std.net.Server.Connection{
+            .stream = .{ .handle = fd },
+            .address = accepted_addr,
+        };
         log.info(@src(), "gdb connection established", .{});
 
         return .{
@@ -594,7 +607,12 @@ pub const GdbServer = struct {
         while (true) {
             log.info(@src(), "reading payload", .{});
 
-            const len = try self.connection.stream.read(&self.read_buffer);
+            const len = self.connection.stream.read(&self.read_buffer) catch |err| {
+                if (err == std.posix.ReadError.WouldBlock) {
+                    return;
+                }
+                return err;
+            };
             if (len == 0) {
                 self.event_loop.stop = true;
                 log.info(@src(), "got payload of len 0. exiting", .{});
