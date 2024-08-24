@@ -611,8 +611,8 @@ pub const GdbServer = struct {
                     switch (paylod_type) {
                         .Acknowledgment => {},
                         .Retransmission => {
-                            log.info(@src(), "sending Retransmission: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            // log.info(@src(), "sending Retransmission: {s}", .{self.last_response});
+                            // _ = try self.connection.stream.write(self.last_response);
                         },
                         .Interrupt => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
