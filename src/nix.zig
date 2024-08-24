@@ -121,6 +121,7 @@ pub const virtio_net_hdr_v1 = C.virtio_net_hdr_v1;
 
 pub const EPOLLIN = C.EPOLLIN;
 pub const EPOLL_CTL_ADD = C.EPOLL_CTL_ADD;
+pub const EPOLL_CTL_DEL = C.EPOLL_CTL_DEL;
 pub const epoll_ctl = C.epoll_ctl;
 pub const epoll_wait = C.epoll_wait;
 pub const epoll_create1 = C.epoll_create1;
