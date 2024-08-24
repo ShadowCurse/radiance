@@ -162,11 +162,14 @@ pub const mmap = std.posix.mmap;
 pub const munmap = std.posix.munmap;
 pub const sigaction = std.posix.sigaction;
 pub const fd_t = std.posix.fd_t;
+pub const socklen_t = std.posix.socklen_t;
 pub const STDIN_FILENO = std.posix.STDIN_FILENO;
 pub const STDOUT_FILENO = std.posix.STDOUT_FILENO;
+pub const SOCK = std.posix.SOCK;
 pub const close = std.posix.close;
 pub const read = std.posix.read;
 pub const write = std.posix.write;
+pub const accept = std.posix.accept;
 
 // ioctl in std uses c_int as a request type which is incorrect.
 pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;
