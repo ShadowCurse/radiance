@@ -13,8 +13,11 @@ const EventCallback = struct {
 stop: bool,
 epollfd: nix.fd_t,
 events: [MAX_EVENTS]nix.epoll_event,
-event_callbacks_num: u64,
-event_callbacks: [MAX_EVENTS]EventCallback,
+events_info_num: u64,
+events_info: [MAX_EVENTS]struct {
+    fd: nix.fd_t,
+    callback: EventCallback,
+},
 
 const Self = @This();
 
@@ -37,8 +40,8 @@ pub fn new() !Self {
         .stop = false,
         .epollfd = epollfd,
         .events = undefined,
-        .event_callbacks_num = 0,
-        .event_callbacks = undefined,
+        .events_info_num = 0,
+        .events_info = undefined,
     };
 }
 
@@ -51,17 +54,37 @@ pub fn add_event(
     var event = std.mem.zeroInit(nix.epoll_event, .{});
     event.events = nix.EPOLLIN;
 
-    if (self.event_callbacks_num == MAX_EVENTS) {
+    if (self.events_info_num == MAX_EVENTS) {
         return EventLoopError.TooMuchEvents;
     }
 
-    self.event_callbacks[self.event_callbacks_num].callback = callback;
-    self.event_callbacks[self.event_callbacks_num].parameter = parameter;
-    event.data.u64 = self.event_callbacks_num;
-    self.event_callbacks_num += 1;
+    self.events_info[self.events_info_num] = .{
+        .fd = fd,
+        .callback = .{
+            .callback = callback,
+            .parameter = parameter,
+        },
+    };
+
+    event.data.u64 = self.events_info_num;
+    self.events_info_num += 1;
 
     if (nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_ADD, fd, &event) < 0) {
         return EventLoopError.AddEvent;
+    }
+}
+
+pub fn remove_event(
+    self: *Self,
+    fd: nix.fd_t,
+) !void {
+    for (&self.events_info) |*ec| {
+        if (ec.fd == fd) {
+            if (nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_DEL, fd, null) < 0) {
+                return EventLoopError.AddEvent;
+            }
+            return;
+        }
     }
 }
 
@@ -75,7 +98,7 @@ pub fn run(self: *Self) !void {
         const n: usize = @intCast(nfds);
         for (0..n) |i| {
             const event = &self.events[i];
-            const callback = self.event_callbacks[event.data.u64];
+            const callback = self.events_info[event.data.u64].callback;
             try callback.callback(callback.parameter);
         }
     }
