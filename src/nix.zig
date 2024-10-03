@@ -127,9 +127,41 @@ pub const epoll_wait = C.epoll_wait;
 pub const epoll_create1 = C.epoll_create1;
 pub const epoll_event = C.epoll_event;
 
-pub const vring_desc = C.vring_desc;
-pub const vring_avail = C.vring_avail;
-pub const vring_used = C.vring_used;
+pub const vring_desc = extern struct {
+    addr: u64 = 0,
+    len: u32 = 0,
+    flags: u16 = 0,
+    next: u16 = 0,
+};
+pub const vring_avail = extern struct {
+    flags: u16 align(2) = 0,
+    idx: u16 = 0,
+    pub fn ring(self: *const vring_avail) @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), c_ushort) {
+        const Intermediate = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
+        const ReturnType = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), c_ushort);
+        return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 4)));
+    }
+    pub fn used_event(self: *const vring_avail, size: u16) *const u16 {
+        return @ptrFromInt(@intFromPtr(self) + @sizeOf(u16) * size);
+    }
+};
+pub const vring_used_elem = extern struct {
+    id: u32 = 0,
+    len: u32 = 0,
+};
+pub const vring_used = extern struct {
+    flags: u16 align(4) = 0,
+    idx: u16 = 0,
+    pub fn ring(self: *vring_used) @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), vring_used_elem) {
+        const Intermediate = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
+        const ReturnType = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), vring_used_elem);
+        return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 4)));
+    }
+    pub fn avail_event(self: *vring_used, size: u16) *u16 {
+        return @ptrFromInt(@intFromPtr(self) + @sizeOf(vring_used_elem) * size);
+    }
+};
+
 pub const VRING_DESC_F_NEXT = C.VRING_DESC_F_NEXT;
 
 pub const VHOST_SET_OWNER = C.VHOST_SET_OWNER;
