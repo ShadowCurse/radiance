@@ -49,7 +49,8 @@ pub const Queue = struct {
     next_used: u16,
 
     /// VIRTIO_F_RING_EVENT_IDX negotiated (notification suppression enabled)
-    uses_notif_suppression: bool,
+    notification_suppression: bool,
+    suppressed: u16,
 
     const Self = @This();
 
@@ -63,7 +64,8 @@ pub const Queue = struct {
             .ready = false,
             .next_avail = 0,
             .next_used = 0,
-            .uses_notif_suppression = false,
+            .notification_suppression = false,
+            .suppressed = 0,
         };
     }
 
@@ -91,13 +93,34 @@ pub const Queue = struct {
         }
     }
 
+    pub fn send_notification(self: *Self, memory: *const Memory) bool {
+        if (self.notification_suppression) {
+            @fence(.acquire);
+            // avail_ring is only written by the driver
+            const avail_ring = memory.get_ptr(nix.vring_avail, self.avail_ring);
+            const used_event = avail_ring.used_event(self.size).*;
+            const before = self.next_used -% self.suppressed;
+            const result = used_event -% before <= self.suppressed;
+            self.suppressed = 0;
+            return result;
+        } else {
+            return true;
+        }
+    }
+
     /// Pop the first available descriptor chain from the avail ring.
     pub fn pop_desc_chain(self: *Self, memory: *const Memory) ?DescriptorChain {
-        // std.atomic.fence(std.atomic.Ordering.Acquire);
+        @fence(.acquire);
+
+        if (self.notification_suppression) {
+            // used_ring is only written by the device
+            const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
+            used_ring.avail_event(self.size).* = self.next_avail;
+            @fence(.release);
+        }
 
         // avail_ring is only written by the driver
         const avail_ring = memory.get_ptr(nix.vring_avail, self.avail_ring);
-
         if (self.next_avail == avail_ring.idx) {
             return null;
         }
@@ -131,10 +154,11 @@ pub const Queue = struct {
         used_ring.ring()[next_used].len = data_len;
 
         self.next_used = self.next_used +% 1;
-
-        // std.atomic.fence(std.atomic.Ordering.Release);
+        self.suppressed = self.suppressed +% 1;
 
         used_ring.idx = self.next_used;
+
+        @fence(.release);
     }
 };
 
