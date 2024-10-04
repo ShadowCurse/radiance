@@ -9,6 +9,7 @@ const C = @cImport({
     @cInclude("linux/virtio_config.h");
     @cInclude("linux/virtio_blk.h");
     @cInclude("linux/virtio_net.h");
+    @cInclude("linux/virtio_mmio.h");
     @cInclude("sys/epoll.h");
     @cInclude("sys/eventfd.h");
     @cInclude("fcntl.h");
@@ -82,6 +83,8 @@ pub const kvm_ioeventfd_flag_nr_datamatch = C.kvm_ioeventfd_flag_nr_datamatch;
 
 pub const EFD_NONBLOCK = C.EFD_NONBLOCK;
 pub const eventfd = C.eventfd;
+
+pub const VIRTIO_MMIO_INT_VRING = C.VIRTIO_MMIO_INT_VRING;
 
 pub const VIRTIO_F_VERSION_1 = C.VIRTIO_F_VERSION_1;
 pub const VIRTIO_RING_F_EVENT_IDX = C.VIRTIO_RING_F_EVENT_IDX;
