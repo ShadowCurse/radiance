@@ -62,7 +62,7 @@ pub const VirtioBlock = struct {
             mmio_info.irq,
             mmio_info.addr,
         );
-        virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1); // | (1 << nix.VIRTIO_RING_F_EVENT_IDX);
+        virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1) | (1 << nix.VIRTIO_RING_F_EVENT_IDX);
         if (read_only) {
             virtio_context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
         }
@@ -96,7 +96,15 @@ pub const VirtioBlock = struct {
         const offset = addr - self.mmio_info.addr;
         switch (self.virtio_context.write(offset, data)) {
             VirtioAction.NoAction => {},
-            VirtioAction.ActivateDevice => {},
+            VirtioAction.ActivateDevice => {
+                // Only VIRTIO_MMIO_INT_VRING notification type is supported.
+                _ = self.virtio_context.irq_status.fetchOr(nix.VIRTIO_MMIO_INT_VRING, .seq_cst);
+                if (self.virtio_context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
+                    for (&self.virtio_context.queues) |*q| {
+                        q.notification_suppression = true;
+                    }
+                }
+            },
             else => |action| {
                 log.err(@src(), "unhandled write virtio action: {}", .{action});
             },
@@ -174,7 +182,11 @@ pub const VirtioBlock = struct {
                 const status_ptr = self.memory.get_ptr(u32, second_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
             }
+        }
 
+        if (self.virtio_context.queues[self.virtio_context.selected_queue]
+            .send_notification(self.memory))
+        {
             try self.virtio_context.irq_evt.write(1);
         }
     }
