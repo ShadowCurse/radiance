@@ -200,17 +200,11 @@ pub fn VirtioContext(
             switch (offset) {
                 0x14 => self.device_features_word = data_u32.*,
                 0x20 => {
-                    const value_u32 = data_u32.*;
-
-                    // TODO why shifting by 32 does not work
-                    var shifted = value_u32 << 16;
-                    shifted = shifted << 16;
-
                     switch (self.driver_features_word) {
                         // Set the lower 32-bits of the features bitfield.
-                        0 => self.avail_features = (self.avail_features & 0xffff_ffff_0000_0000) & value_u32,
+                        0 => self.acked_features |= data_u32.*,
                         // Set the upper 32-bits of the features bitfield.
-                        1 => self.avail_features = (self.avail_features & 0x0000_0000_ffff_ffff) & shifted,
+                        1 => self.acked_features |= @as(u64, data_u32.*) << 32,
                         else => unreachable,
                     }
                 },
