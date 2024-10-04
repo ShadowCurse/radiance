@@ -142,7 +142,7 @@ pub const vring_avail = extern struct {
         return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 4)));
     }
     pub fn used_event(self: *const vring_avail, size: u16) *const u16 {
-        return @ptrFromInt(@intFromPtr(self) + @sizeOf(u16) * size);
+        return @ptrFromInt(@intFromPtr(self) + 4 + @sizeOf(u16) * size);
     }
 };
 pub const vring_used_elem = extern struct {
@@ -158,7 +158,7 @@ pub const vring_used = extern struct {
         return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 4)));
     }
     pub fn avail_event(self: *vring_used, size: u16) *u16 {
-        return @ptrFromInt(@intFromPtr(self) + @sizeOf(vring_used_elem) * size);
+        return @ptrFromInt(@intFromPtr(self) + 4 + @sizeOf(vring_used_elem) * size);
     }
 };
 
