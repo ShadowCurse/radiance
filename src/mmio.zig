@@ -45,7 +45,6 @@ last_irq: u32,
 last_address: u64,
 num_devices: usize,
 devices: [10]MmioDevice,
-mutex: std.Thread.Mutex,
 
 const Self = @This();
 
@@ -55,7 +54,6 @@ pub fn new() Self {
         .last_address = MMIO_MEM_START,
         .num_devices = 0,
         .devices = undefined,
-        .mutex = .{},
     };
 }
 
@@ -77,8 +75,6 @@ pub fn add_device(self: *Self, device: MmioDevice) void {
 }
 
 pub fn write(self: *Self, addr: u64, data: []u8) !void {
-    self.mutex.lock();
-    defer self.mutex.unlock();
     var handled: bool = false;
     for (self.devices[0..self.num_devices]) |device| {
         switch (device) {
@@ -101,8 +97,6 @@ pub fn write(self: *Self, addr: u64, data: []u8) !void {
 }
 
 pub fn read(self: *Self, addr: u64, data: []u8) !void {
-    self.mutex.lock();
-    defer self.mutex.unlock();
     var handled: bool = false;
     for (self.devices[0..self.num_devices]) |device| {
         switch (device) {
