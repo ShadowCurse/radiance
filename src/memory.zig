@@ -52,7 +52,17 @@ pub fn deinit(self: *const Self) void {
 
 pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *T {
     const offset = addr - self.guest_addr;
+    std.debug.assert(offset + @sizeOf(T) <= self.mem.len);
     return @ptrFromInt(@as(u64, @intFromPtr(self.mem.ptr)) + offset);
+}
+
+pub fn get_slice(self: *const Self, comptime T: type, len: u64, addr: u64) []T {
+    const offset = addr - self.guest_addr;
+    std.debug.assert(offset + @sizeOf(T) * len <= self.mem.len);
+    var slice: []T = undefined;
+    slice.ptr = @ptrFromInt(@as(u64, @intFromPtr(self.mem.ptr)) + offset);
+    slice.len = len;
+    return slice;
 }
 
 pub fn last_addr(self: *const Self) u64 {
