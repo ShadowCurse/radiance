@@ -146,25 +146,19 @@ pub const VirtioBlock = struct {
                 switch (header.type) {
                     nix.VIRTIO_BLK_T_IN => {
                         try self.file.seekTo(offset);
-                        var buffer: []u8 = undefined;
-                        buffer.ptr = @ptrCast(self.memory.get_ptr(u8, data_addr));
-                        buffer.len = data_len;
+                        const buffer = self.memory.get_slice(u8, data_len, data_addr);
                         data_transfered = try self.file.read(buffer);
                     },
                     nix.VIRTIO_BLK_T_OUT => {
                         try self.file.seekTo(offset);
-                        var buffer: []const u8 = undefined;
-                        buffer.ptr = @ptrCast(self.memory.get_ptr(u8, data_addr));
-                        buffer.len = data_len;
+                        const buffer = self.memory.get_slice(u8, data_len, data_addr);
                         data_transfered = try self.file.write(buffer);
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
                         try self.file.sync();
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
-                        var buffer: []u8 = undefined;
-                        buffer.ptr = @ptrCast(self.memory.get_ptr(u8, data_addr));
-                        buffer.len = data_len;
+                        const buffer = self.memory.get_slice(u8, data_len, data_addr);
                         @memcpy(buffer, &self.block_id);
                         data_transfered = nix.VIRTIO_BLK_ID_BYTES;
                     },

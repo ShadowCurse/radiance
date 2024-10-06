@@ -130,10 +130,7 @@ pub const Queue = struct {
 
         self.next_avail = self.next_avail +% 1;
 
-        var desc_table_slice: []nix.vring_desc = undefined;
-        desc_table_slice.ptr = @ptrCast(memory.get_ptr(nix.vring_desc, self.desc_table));
-        desc_table_slice.len = self.size;
-
+        const desc_table_slice = memory.get_slice(nix.vring_desc, self.size, self.desc_table);
         return DescriptorChain{
             .desc_table = desc_table_slice,
             .index = desc_index,
