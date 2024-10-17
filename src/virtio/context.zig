@@ -84,9 +84,13 @@ pub fn VirtioContext(
             irq: u32,
             addr: u64,
         ) !Self {
+            var queue_events: [NUM_QUEUES]EventFd = undefined;
+            for (&queue_events) |*qe| {
+                qe.* = try EventFd.new(0, nix.EFD_NONBLOCK);
+            }
             const self = Self{
                 .queues = [_]Queue{Queue.new()} ** NUM_QUEUES,
-                .queue_events = [_]EventFd{try EventFd.new(0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
+                .queue_events = queue_events,
 
                 .irq_status = std.atomic.Value(u32).init(0),
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
