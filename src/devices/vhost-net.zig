@@ -98,7 +98,8 @@ pub const VhostNet = struct {
             1 << nix.VIRTIO_NET_F_HOST_TSO4 |
             1 << nix.VIRTIO_NET_F_GUEST_TSO6 |
             1 << nix.VIRTIO_NET_F_HOST_TSO6 |
-            1 << nix.VIRTIO_NET_F_HOST_USO |
+            1 << nix.VIRTIO_NET_F_GUEST_UFO |
+            1 << nix.VIRTIO_NET_F_HOST_UFO |
             1 << nix.VIRTIO_NET_F_MRG_RXBUF;
         if (mac) |m| {
             virtio_context.config_blob = m;
@@ -122,18 +123,18 @@ pub const VhostNet = struct {
         // TUN_F_UFO - UDP Fragmentation offload - UFO packets. Deprecated
         // TUN_F_USO4 - UDP Segmentation offload - USO for IPv4 packets
         // TUN_F_USO6 - USO for IPv6 packets
-        var tun_flags: u64 = 0;
-        if (self.virtio_context.acked_features & 1 << nix.VIRTIO_NET_F_CSUM != 0) {
-            tun_flags |= 1 << nix.TUN_F_CSUM;
+        var tun_flags: u32 = 0;
+        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_CSUM) != 0) {
+            tun_flags |= nix.TUN_F_CSUM;
         }
-        if (self.virtio_context.acked_features & 1 << nix.VIRTIO_NET_F_GUEST_UFO != 0) {
-            tun_flags |= 1 << nix.TUN_F_UFO;
+        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_UFO) != 0) {
+            tun_flags |= nix.TUN_F_UFO;
         }
-        if (self.virtio_context.acked_features & 1 << nix.VIRTIO_NET_F_GUEST_TSO4 != 0) {
-            tun_flags |= 1 << nix.TUN_F_TSO4;
+        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO4) != 0) {
+            tun_flags |= nix.TUN_F_TSO4;
         }
-        if (self.virtio_context.acked_features & 1 << nix.VIRTIO_NET_F_GUEST_TSO6 != 0) {
-            tun_flags |= 1 << nix.TUN_F_TSO6;
+        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
+            tun_flags |= nix.TUN_F_TSO6;
         }
         _ = try nix.checked_ioctl(
             @src(),
@@ -268,7 +269,7 @@ pub const VhostNet = struct {
     }
 
     pub fn write(self: *Self, addr: u64, data: []u8) !bool {
-        if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len - 1 < addr) {
+        if (!self.mmio_info.contains_addr(addr)) {
             return false;
         }
         const offset = addr - self.mmio_info.addr;
@@ -283,7 +284,7 @@ pub const VhostNet = struct {
     }
 
     pub fn read(self: *Self, addr: u64, data: []u8) !bool {
-        if (addr < self.mmio_info.addr or self.mmio_info.addr + self.mmio_info.len - 1 < addr) {
+        if (!self.mmio_info.contains_addr(addr)) {
             return false;
         }
         const offset = addr - self.mmio_info.addr;
