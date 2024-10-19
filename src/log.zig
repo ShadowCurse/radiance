@@ -1,5 +1,17 @@
 const std = @import("std");
 
+pub fn assert(
+    src: std.builtin.SourceLocation,
+    ok: bool,
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    if (!ok) {
+        err(src, format, args);
+        unreachable;
+    }
+}
+
 pub fn info(
     src: std.builtin.SourceLocation,
     comptime format: []const u8,
