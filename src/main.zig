@@ -10,6 +10,7 @@ const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
 const VhostNet = @import("devices/vhost-net.zig").VhostNet;
+const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
 const EventLoop = @import("event_loop.zig");
 const CmdLine = @import("cmdline.zig");
@@ -91,11 +92,33 @@ pub fn main() !void {
         block.* = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
     }
 
-    const vhost_nets = try allocator.alloc(VhostNet, config.networks.networks.items.len);
+    var vhost_net_count: u8 = 0;
+    var virtio_net_count: u8 = 0;
+    for (config.networks.networks.items) |*net_config| {
+        if (net_config.vhost) {
+            vhost_net_count += 1;
+        } else {
+            virtio_net_count += 1;
+        }
+    }
+
+    const virtio_nets = try allocator.alloc(VirtioNet, virtio_net_count);
+    defer allocator.free(virtio_nets);
+
+    const vhost_nets = try allocator.alloc(VhostNet, vhost_net_count);
     defer allocator.free(vhost_nets);
-    const vhn_infos = virtio_device_infos[config.drives.drives.items.len..];
-    for (vhost_nets, config.networks.networks.items, vhn_infos) |*vhn, *net, mmio_info| {
-        vhn.* = try VhostNet.new(&vm, net.dev_name, net.mac, &memory, mmio_info);
+
+    var virtio_net_index: u8 = 0;
+    var vhost_net_index: u8 = 0;
+    const net_infos = virtio_device_infos[config.drives.drives.items.len..];
+    for (config.networks.networks.items, net_infos) |*net_config, mmio_info| {
+        if (net_config.vhost) {
+            vhost_nets[vhost_net_index] = try VhostNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
+            vhost_net_index += 1;
+        } else {
+            virtio_nets[virtio_net_index] = try VirtioNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
+            virtio_net_index += 1;
+        }
     }
 
     mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
@@ -103,8 +126,11 @@ pub fn main() !void {
     for (virtio_blocks) |*virtio_block| {
         mmio.add_device(Mmio.MmioDevice{ .VirtioBlock = virtio_block });
     }
+    for (virtio_nets) |*virtio_net| {
+        mmio.add_device(.{ .VirtioNet = virtio_net });
+    }
     for (vhost_nets) |*vhost_net| {
-        mmio.add_device(Mmio.MmioDevice{ .VhostNet = vhost_net });
+        mmio.add_device(.{ .VhostNet = vhost_net });
     }
 
     // create kernel cmdline
@@ -181,6 +207,23 @@ pub fn main() !void {
             block,
         );
     }
+    for (virtio_nets) |*net| {
+        try el.add_event(
+            net.virtio_context.queue_events[0].fd,
+            @ptrCast(&VirtioNet.process_rx),
+            net,
+        );
+        try el.add_event(
+            net.virtio_context.queue_events[1].fd,
+            @ptrCast(&VirtioNet.process_tx),
+            net,
+        );
+        try el.add_event(
+            net.tun,
+            @ptrCast(&VirtioNet.process_tap),
+            net,
+        );
+    }
     for (vcpus) |*vcpu| {
         try el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
     }
@@ -241,6 +284,8 @@ fn restore_terminal(
 }
 
 pub const _queue = @import("./virtio/queue.zig");
+pub const _iov_ring = @import("./virtio/iov_ring.zig");
+pub const _ring_buffer = @import("./ring_buffer.zig");
 test {
     std.testing.refAllDecls(@This());
 }
