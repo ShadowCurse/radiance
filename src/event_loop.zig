@@ -31,10 +31,7 @@ pub const EventLoopError = error{
 };
 
 pub fn new() !Self {
-    const epollfd = nix.epoll_create1(0);
-    if (epollfd < 0) {
-        return EventLoopError.New;
-    }
+    const epollfd = try nix.epoll_create1(0);
 
     return Self{
         .stop = false,
@@ -69,9 +66,7 @@ pub fn add_event(
     event.data.u64 = self.events_info_num;
     self.events_info_num += 1;
 
-    if (nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_ADD, fd, &event) < 0) {
-        return EventLoopError.AddEvent;
-    }
+    try nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_ADD, fd, &event);
 }
 
 pub fn remove_event(
@@ -80,9 +75,7 @@ pub fn remove_event(
 ) !void {
     for (&self.events_info) |*ec| {
         if (ec.fd == fd) {
-            if (nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_DEL, fd, null) < 0) {
-                return EventLoopError.AddEvent;
-            }
+            try nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_DEL, fd, null);
             return;
         }
     }
@@ -90,7 +83,7 @@ pub fn remove_event(
 
 pub fn run(self: *Self) !void {
     while (!self.stop) {
-        const nfds = nix.epoll_wait(self.epollfd, &self.events, self.events.len, -1);
+        const nfds = nix.epoll_wait(self.epollfd, &self.events, -1);
         if (nfds < 0) {
             return EventLoopError.Run;
         }

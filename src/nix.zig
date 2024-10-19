@@ -87,6 +87,7 @@ pub const eventfd = C.eventfd;
 pub const VIRTIO_MMIO_INT_VRING = C.VIRTIO_MMIO_INT_VRING;
 
 pub const VIRTIO_F_VERSION_1 = C.VIRTIO_F_VERSION_1;
+pub const VIRTIO_F_RING_PACKED = C.VIRTIO_F_RING_PACKED;
 pub const VIRTIO_RING_F_EVENT_IDX = C.VIRTIO_RING_F_EVENT_IDX;
 pub const VIRTIO_RING_F_INDIRECT_DESC = C.VIRTIO_RING_F_INDIRECT_DESC;
 
@@ -105,6 +106,8 @@ pub const IFF_NO_PI = C.IFF_NO_PI;
 pub const IFF_VNET_HDR = C.IFF_VNET_HDR;
 pub const TUN_F_CSUM = C.TUN_F_CSUM;
 pub const TUN_F_UFO = C.TUN_F_UFO;
+pub const TUN_F_USO4 = C.TUN_F_USO4;
+pub const TUN_F_USO6 = C.TUN_F_USO6;
 pub const TUN_F_TSO4 = C.TUN_F_TSO4;
 pub const TUN_F_TSO6 = C.TUN_F_TSO6;
 pub const TUNSETOFFLOAD = C.TUNSETOFFLOAD;
@@ -116,19 +119,22 @@ pub const VIRTIO_NET_F_GUEST_TSO4 = C.VIRTIO_NET_F_GUEST_TSO4;
 pub const VIRTIO_NET_F_HOST_TSO4 = C.VIRTIO_NET_F_HOST_TSO4;
 pub const VIRTIO_NET_F_GUEST_TSO6 = C.VIRTIO_NET_F_GUEST_TSO6;
 pub const VIRTIO_NET_F_HOST_TSO6 = C.VIRTIO_NET_F_HOST_TSO6;
+pub const VIRTIO_NET_F_GUEST_UFO = C.VIRTIO_NET_F_GUEST_UFO;
+pub const VIRTIO_NET_F_HOST_UFO = C.VIRTIO_NET_F_HOST_UFO;
+pub const VIRTIO_NET_F_GUEST_USO4 = C.VIRTIO_NET_F_GUEST_USO4;
+pub const VIRTIO_NET_F_GUEST_USO6 = C.VIRTIO_NET_F_GUEST_USO6;
 pub const VIRTIO_NET_F_HOST_USO = C.VIRTIO_NET_F_HOST_USO;
 pub const VIRTIO_NET_F_MRG_RXBUF = C.VIRTIO_NET_F_MRG_RXBUF;
 pub const VIRTIO_NET_F_MAC = C.VIRTIO_NET_F_MAC;
-pub const VIRTIO_NET_F_GUEST_UFO = C.VIRTIO_NET_F_GUEST_UFO;
 pub const virtio_net_hdr_v1 = C.virtio_net_hdr_v1;
 
 pub const EPOLLIN = C.EPOLLIN;
 pub const EPOLL_CTL_ADD = C.EPOLL_CTL_ADD;
 pub const EPOLL_CTL_DEL = C.EPOLL_CTL_DEL;
-pub const epoll_ctl = C.epoll_ctl;
-pub const epoll_wait = C.epoll_wait;
-pub const epoll_create1 = C.epoll_create1;
-pub const epoll_event = C.epoll_event;
+pub const epoll_ctl = std.posix.epoll_ctl;
+pub const epoll_wait = std.posix.epoll_wait;
+pub const epoll_create1 = std.posix.epoll_create1;
+pub const epoll_event = std.os.linux.epoll_event;
 
 pub const vring_desc = extern struct {
     addr: u64 = 0,
@@ -139,12 +145,10 @@ pub const vring_desc = extern struct {
 pub const vring_avail = extern struct {
     flags: u16 align(2) = 0,
     idx: u16 = 0,
-    pub fn ring(self: *const vring_avail) @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), c_ushort) {
-        const Intermediate = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
-        const ReturnType = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), c_ushort);
-        return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 4)));
+    pub fn ring(self: *const volatile vring_avail) [*]const volatile u16 {
+        return @ptrCast(@alignCast(@as([*]const volatile u8, @ptrCast(self)) + 4));
     }
-    pub fn used_event(self: *const vring_avail, size: u16) *const u16 {
+    pub fn used_event(self: *const volatile vring_avail, size: u16) *const volatile u16 {
         return @ptrFromInt(@intFromPtr(self) + 4 + @sizeOf(u16) * size);
     }
 };
@@ -155,12 +159,11 @@ pub const vring_used_elem = extern struct {
 pub const vring_used = extern struct {
     flags: u16 align(4) = 0,
     idx: u16 = 0,
-    pub fn ring(self: *vring_used) @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), vring_used_elem) {
-        const Intermediate = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
-        const ReturnType = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), vring_used_elem);
-        return @as(ReturnType, @ptrCast(@alignCast(@as(Intermediate, @ptrCast(self)) + 4)));
+    // std.zig.c_translation.FlexibleArrayType
+    pub fn ring(self: *volatile vring_used) [*]volatile vring_used_elem {
+        return @ptrCast(@alignCast(@as([*]volatile u8, @ptrCast(self)) + 4));
     }
-    pub fn avail_event(self: *vring_used, size: u16) *u16 {
+    pub fn avail_event(self: *volatile vring_used, size: u16) *volatile u16 {
         return @ptrFromInt(@intFromPtr(self) + 4 + @sizeOf(vring_used_elem) * size);
     }
 };
@@ -201,10 +204,20 @@ pub const socklen_t = std.posix.socklen_t;
 pub const STDIN_FILENO = std.posix.STDIN_FILENO;
 pub const STDOUT_FILENO = std.posix.STDOUT_FILENO;
 pub const SOCK = std.posix.SOCK;
+pub const ReadError = std.posix.ReadError;
+pub const iovec = std.posix.iovec;
+pub const iovec_const = std.posix.iovec_const;
+pub const open = std.posix.open;
 pub const close = std.posix.close;
 pub const read = std.posix.read;
+pub const readv = std.posix.readv;
 pub const write = std.posix.write;
+pub const writev = std.posix.writev;
 pub const accept = std.posix.accept;
+
+pub const FD_CLOEXEC = std.posix.FD_CLOEXEC;
+pub const memfd_create = std.posix.memfd_create;
+pub const ftruncate = std.posix.ftruncate;
 
 // ioctl in std uses c_int as a request type which is incorrect.
 pub extern "c" fn ioctl(fd: fd_t, request: c_ulong, ...) c_int;

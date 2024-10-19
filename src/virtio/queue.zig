@@ -147,8 +147,10 @@ pub const Queue = struct {
         // used_ring is only written by the device
         const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
         const next_used = self.next_used % self.size;
-        used_ring.ring()[next_used].id = desc_id;
-        used_ring.ring()[next_used].len = data_len;
+        used_ring.ring()[next_used] = .{
+            .id = desc_id,
+            .len = data_len,
+        };
 
         self.next_used = self.next_used +% 1;
         self.suppressed = self.suppressed +% 1;
@@ -190,7 +192,7 @@ test "test_queue_pop_desc_chain" {
 
     avail_ring.idx = 10;
     for (0..10) |i| {
-        avail_ring.ring()[i] = @intCast(i);
+        @constCast(avail_ring.ring())[i] = @intCast(i);
     }
     for (0..10) |i| {
         const dc = queue.pop_desc_chain(&memory);
