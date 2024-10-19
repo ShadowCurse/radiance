@@ -36,7 +36,7 @@ pub const VhostNet = struct {
     virtio_context: VIRTIO_CONTEXT,
     mmio_info: MmioDeviceInfo,
 
-    tun: std.fs.File,
+    tun: nix.fd_t,
     vhost: ?std.fs.File,
 
     const Self = @This();
@@ -49,9 +49,10 @@ pub const VhostNet = struct {
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
     ) !Self {
-        const tun = try std.fs.openFileAbsolute(
+        const tun = try nix.open(
             "/dev/net/tun",
-            .{ .mode = .read_write, .lock_nonblocking = true },
+            .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
+            0,
         );
         var ifreq = std.mem.zeroInit(nix.ifreq, .{});
         @memcpy(ifreq.ifr_ifrn.ifrn_name[0..tap_name.len], tap_name);
@@ -66,7 +67,7 @@ pub const VhostNet = struct {
             _ = try nix.checked_ioctl(
                 @src(),
                 VirtioNetError.NewTUNSETIFF,
-                tun.handle,
+                tun,
                 nix.TUNSETIFF,
                 &ifreq,
             );
@@ -76,7 +77,7 @@ pub const VhostNet = struct {
             _ = try nix.checked_ioctl(
                 @src(),
                 VirtioNetError.NewTUNSETVNETHDRSZ,
-                tun.handle,
+                tun,
                 nix.TUNSETVNETHDRSZ,
                 &size,
             );
@@ -100,6 +101,9 @@ pub const VhostNet = struct {
             1 << nix.VIRTIO_NET_F_HOST_TSO6 |
             1 << nix.VIRTIO_NET_F_GUEST_UFO |
             1 << nix.VIRTIO_NET_F_HOST_UFO |
+            1 << nix.VIRTIO_NET_F_GUEST_USO4 |
+            1 << nix.VIRTIO_NET_F_GUEST_USO6 |
+            1 << nix.VIRTIO_NET_F_HOST_USO |
             1 << nix.VIRTIO_NET_F_MRG_RXBUF;
         if (mac) |m| {
             virtio_context.config_blob = m;
@@ -136,10 +140,16 @@ pub const VhostNet = struct {
         if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
             tun_flags |= nix.TUN_F_TSO6;
         }
+        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_USO4) != 0) {
+            tun_flags |= nix.TUN_F_USO4;
+        }
+        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_USO6) != 0) {
+            tun_flags |= nix.TUN_F_USO6;
+        }
         _ = try nix.checked_ioctl(
             @src(),
             VirtioNetError.ActivateTUNSETOFFLOAD,
-            self.tun.handle,
+            self.tun,
             nix.TUNSETOFFLOAD,
             tun_flags,
         );
@@ -254,7 +264,7 @@ pub const VhostNet = struct {
             {
                 const vring = nix.vhost_vring_file{
                     .index = @intCast(i),
-                    .fd = self.tun.handle,
+                    .fd = self.tun,
                 };
                 _ = try nix.checked_ioctl(
                     @src(),
