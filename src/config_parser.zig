@@ -103,6 +103,7 @@ pub const DrivesConfigs = struct {
 pub const NetConfig = struct {
     dev_name: [:0]const u8,
     mac: ?[6]u8,
+    vhost: bool,
 
     const Self = @This();
 
@@ -111,7 +112,11 @@ pub const NetConfig = struct {
     }
 
     pub fn default() Self {
-        return Self{ .dev_name = "", .mac = null };
+        return Self{
+            .dev_name = "",
+            .mac = null,
+            .vhost = false,
+        };
     }
 };
 
