@@ -50,7 +50,7 @@ pub fn deinit(self: *const Self) void {
     nix.munmap(self.mem);
 }
 
-pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *T {
+pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
     const offset = addr - self.guest_addr;
     std.debug.assert(offset + @sizeOf(T) <= self.mem.len);
     return @ptrFromInt(@as(u64, @intFromPtr(self.mem.ptr)) + offset);
