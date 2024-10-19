@@ -185,5 +185,3 @@ pub const VirtioBlock = struct {
         }
     }
 };
-
-test "test_queue_add_used_desc" {}
