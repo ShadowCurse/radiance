@@ -121,18 +121,6 @@ pub fn main() !void {
         }
     }
 
-    // mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
-    // mmio.add_device(Mmio.MmioDevice{ .Rtc = &rtc });
-    // for (virtio_blocks) |*virtio_block| {
-    //     mmio.add_device(Mmio.MmioDevice{ .VirtioBlock = virtio_block });
-    // }
-    // for (virtio_nets) |*virtio_net| {
-    //     mmio.add_device(.{ .VirtioNet = virtio_net });
-    // }
-    // for (vhost_nets) |*vhost_net| {
-    //     mmio.add_device(.{ .VhostNet = vhost_net });
-    // }
-
     mmio.add_device(.{ .ptr = &uart, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
     mmio.add_device(.{ .ptr = &rtc, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
     for (virtio_blocks) |*virtio_block| {
