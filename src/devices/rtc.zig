@@ -21,7 +21,6 @@ const RTCMIS: u16 = 0x018;
 // Interrupt Clear Register (WO).
 const RTCICR: u16 = 0x01C;
 
-mmio_info: MmioDeviceInfo,
 // The load register.
 lr: u32,
 // The offset applied to the counter to get the RTC value.
@@ -35,9 +34,8 @@ ris: u32,
 
 const Self = @This();
 
-pub fn new(mmio_info: MmioDeviceInfo) Self {
+pub fn new() Self {
     return Self{
-        .mmio_info = mmio_info,
         .lr = 0,
         .offset = 0,
         .mr = 0,
@@ -51,11 +49,7 @@ fn now() !u32 {
     return @intCast(n.timestamp.tv_sec);
 }
 
-pub fn write(self: *Self, addr: u64, data: []u8) !bool {
-    if (!self.mmio_info.contains_addr(addr)) {
-        return false;
-    }
-    const offset = addr - self.mmio_info.addr;
+pub fn write(self: *Self, offset: u64, data: []u8) !void {
     const val: *u32 = @alignCast(@ptrCast(data.ptr));
 
     switch (offset) {
@@ -79,18 +73,12 @@ pub fn write(self: *Self, addr: u64, data: []u8) !bool {
             self.ris &= ~val.*;
         },
         else => {
-            log.err(@src(), "invalid rtc write: addr: {x} data: {}", .{ addr, val.* });
+            log.err(@src(), "invalid rtc write: offset: {x} data: {}", .{ offset, val.* });
         },
     }
-    return true;
 }
 
-pub fn read(self: *Self, addr: u64, data: []u8) !bool {
-    if (!self.mmio_info.contains_addr(addr)) {
-        return false;
-    }
-    const offset = addr - self.mmio_info.addr;
-
+pub fn read(self: *Self, offset: u64, data: []u8) !void {
     const v = switch (offset) {
         // The RTC value is the time + offset as per:
         // https://developer.arm.com/documentation/ddi0224/c/Functional-overview/RTC-functional-description/Update-block
@@ -110,12 +98,11 @@ pub fn read(self: *Self, addr: u64, data: []u8) !bool {
         0xFF8 => @as(u32, 0x05),
         0xFFC => @as(u32, 0xB1),
         else => {
-            log.err(@src(), "invalid rtc read: addr: {x}", .{addr});
+            log.err(@src(), "invalid rtc read: offset: {x}", .{offset});
             return true;
         },
     };
 
     const bytes = std.mem.asBytes(&v);
     @memcpy(data, bytes);
-    return true;
 }
