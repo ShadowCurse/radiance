@@ -83,7 +83,7 @@ pub fn main() !void {
     }
 
     var uart = try Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
-    var rtc = Rtc.new(rtc_device_info);
+    var rtc = Rtc.new();
 
     const virtio_blocks = try allocator.alloc(VirtioBlock, config.drives.drives.items.len);
     defer allocator.free(virtio_blocks);
@@ -121,16 +121,28 @@ pub fn main() !void {
         }
     }
 
-    mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
-    mmio.add_device(Mmio.MmioDevice{ .Rtc = &rtc });
+    // mmio.add_device(Mmio.MmioDevice{ .Uart = &uart });
+    // mmio.add_device(Mmio.MmioDevice{ .Rtc = &rtc });
+    // for (virtio_blocks) |*virtio_block| {
+    //     mmio.add_device(Mmio.MmioDevice{ .VirtioBlock = virtio_block });
+    // }
+    // for (virtio_nets) |*virtio_net| {
+    //     mmio.add_device(.{ .VirtioNet = virtio_net });
+    // }
+    // for (vhost_nets) |*vhost_net| {
+    //     mmio.add_device(.{ .VhostNet = vhost_net });
+    // }
+
+    mmio.add_device(.{ .ptr = &uart, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
+    mmio.add_device(.{ .ptr = &rtc, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
     for (virtio_blocks) |*virtio_block| {
-        mmio.add_device(Mmio.MmioDevice{ .VirtioBlock = virtio_block });
+        mmio.add_device(.{ .ptr = virtio_block, .read_ptr = @ptrCast(&VirtioBlock.read), .write_ptr = @ptrCast(&VirtioBlock.write) });
     }
     for (virtio_nets) |*virtio_net| {
-        mmio.add_device(.{ .VirtioNet = virtio_net });
+        mmio.add_device(.{ .ptr = virtio_net, .read_ptr = @ptrCast(&VirtioNet.read), .write_ptr = @ptrCast(&VirtioNet.write) });
     }
     for (vhost_nets) |*vhost_net| {
-        mmio.add_device(.{ .VhostNet = vhost_net });
+        mmio.add_device(.{ .ptr = vhost_net, .read_ptr = @ptrCast(&VhostNet.read), .write_ptr = @ptrCast(&VhostNet.write) });
     }
 
     // create kernel cmdline
@@ -143,7 +155,7 @@ pub fn main() !void {
     } else {
         try cmdline.append(" root=/dev/vda rw");
     }
-    try uart.add_to_cmdline(&cmdline);
+    try Uart.add_to_cmdline(&cmdline, uart_device_info);
 
     const cmdline_0 = try cmdline.sentinel_str();
 

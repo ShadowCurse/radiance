@@ -15,25 +15,23 @@ pub const MMIO_MEM_SIZE: u64 = Memory.DRAM_START - Memory.MMIO_START;
 /// Needs to be bigger than 0x100.
 pub const MMIO_LEN: u64 = 0x1000;
 
-pub const MmioDevice = union(enum) {
-    Uart: *Uart,
-    Rtc: *Rtc,
-    VirtioBlock: *VirtioBlock,
-    VhostNet: *VhostNet,
-    VirtioNet: *VirtioNet,
+pub const MmioDevice = struct {
+    ptr: *anyopaque,
+    read_ptr: *const fn (*anyopaque, u64, []u8) anyerror!void,
+    write_ptr: *const fn (*anyopaque, u64, []u8) anyerror!void,
+
+    pub fn read(self: *const MmioDevice, addr: u64, data: []u8) anyerror!void {
+        return self.read_ptr(self.ptr, addr, data);
+    }
+    pub fn write(self: *const MmioDevice, addr: u64, data: []u8) anyerror!void {
+        return self.write_ptr(self.ptr, addr, data);
+    }
 };
 
 pub const MmioDeviceInfo = struct {
     addr: u64,
     len: u64,
     irq: u32,
-
-    pub fn contains_addr(
-        self: *const MmioDeviceInfo,
-        addr: u64,
-    ) bool {
-        return self.addr <= addr and addr < self.addr + self.len;
-    }
 };
 
 last_irq: u32,
@@ -70,47 +68,15 @@ pub fn add_device(self: *Self, device: MmioDevice) void {
 }
 
 pub fn write(self: *Self, addr: u64, data: []u8) !void {
-    var handled: bool = false;
-    for (self.devices[0..self.num_devices]) |device| {
-        switch (device) {
-            .Uart => |uart| handled = try uart.write(addr, data),
-            .Rtc => |rtc| handled = try rtc.write(addr, data),
-            .VirtioBlock => |vb| handled = try vb.write(addr, data),
-            .VhostNet => |vn| handled = try vn.write(addr, data),
-            .VirtioNet => |vn| handled = try vn.write(addr, data),
-        }
-        if (handled) {
-            break;
-        }
-    }
-    if (!handled) {
-        log.err(
-            @src(),
-            "unhandled mmio write addr: {x} data: {any}",
-            .{ addr, data },
-        );
-    }
+    const index = (addr - MMIO_MEM_START) / MMIO_LEN;
+    const offset = (addr - MMIO_MEM_START) - MMIO_LEN * index;
+    const device = self.devices[index];
+    try device.write(offset, data);
 }
 
 pub fn read(self: *Self, addr: u64, data: []u8) !void {
-    var handled: bool = false;
-    for (self.devices[0..self.num_devices]) |device| {
-        switch (device) {
-            .Uart => |uart| handled = try uart.read(addr, data),
-            .Rtc => |rtc| handled = try rtc.read(addr, data),
-            .VirtioBlock => |vb| handled = try vb.read(addr, data),
-            .VhostNet => |vn| handled = try vn.read(addr, data),
-            .VirtioNet => |vn| handled = try vn.read(addr, data),
-        }
-        if (handled) {
-            break;
-        }
-    }
-    if (!handled) {
-        log.err(
-            @src(),
-            "unhandled mmio read addr: {x} data: {any}",
-            .{ addr, data },
-        );
-    }
+    const index = (addr - MMIO_MEM_START) / MMIO_LEN;
+    const offset = (addr - MMIO_MEM_START) - MMIO_LEN * index;
+    const device = self.devices[index];
+    try device.read(offset, data);
 }

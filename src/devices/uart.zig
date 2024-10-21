@@ -89,7 +89,6 @@ pub const UartError = error{
 
 in: nix.fd_t,
 out: nix.fd_t,
-mmio_info: MmioDeviceInfo,
 
 baud_divisor_low: u8,
 baud_divisor_high: u8,
@@ -129,7 +128,6 @@ pub fn new(vm: *const Vm, in: nix.fd_t, out: nix.fd_t, mmio_info: MmioDeviceInfo
     return Self{
         .in = in,
         .out = out,
-        .mmio_info = mmio_info,
 
         .baud_divisor_low = DEFAULT_BAUD_DIVISOR_LOW,
         .baud_divisor_high = DEFAULT_BAUD_DIVISOR_HIGH,
@@ -151,9 +149,9 @@ pub fn new(vm: *const Vm, in: nix.fd_t, out: nix.fd_t, mmio_info: MmioDeviceInfo
     };
 }
 
-pub fn add_to_cmdline(self: *const Self, cmdline: *CmdLine) !void {
+pub fn add_to_cmdline(cmdline: *CmdLine, mmio_info: MmioDeviceInfo) !void {
     var buff: [50]u8 = undefined;
-    const cmd = try std.fmt.bufPrint(&buff, " earlycon=uart,mmio,0x{x:.8}", .{self.mmio_info.addr});
+    const cmd = try std.fmt.bufPrint(&buff, " earlycon=uart,mmio,0x{x:.8}", .{mmio_info.addr});
     try cmdline.append(cmd);
 }
 
@@ -228,11 +226,7 @@ fn received_data_interrupt(self: *Self) !void {
     }
 }
 
-pub fn write(self: *Self, addr: u64, data: []u8) !bool {
-    if (!self.mmio_info.contains_addr(addr)) {
-        return false;
-    }
-    const offset = addr - self.mmio_info.addr;
+pub fn write(self: *Self, offset: u64, data: []u8) !void {
     const value = data[0];
     switch (offset) {
         0 => {
@@ -272,14 +266,9 @@ pub fn write(self: *Self, addr: u64, data: []u8) !bool {
         7 => self.SCR = value,
         else => {},
     }
-    return true;
 }
 
-pub fn read(self: *Self, addr: u64, data: []u8) !bool {
-    if (!self.mmio_info.contains_addr(addr)) {
-        return false;
-    }
-    const offset = addr - self.mmio_info.addr;
+pub fn read(self: *Self, offset: u64, data: []u8) !void {
     data[0] = switch (offset) {
         0 => blk: {
             if (self.dlab_set()) {
@@ -343,5 +332,4 @@ pub fn read(self: *Self, addr: u64, data: []u8) !bool {
         7 => self.SCR,
         else => 0,
     };
-    return true;
 }

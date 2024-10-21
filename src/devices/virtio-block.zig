@@ -24,7 +24,6 @@ pub const VirtioBlock = struct {
     read_only: bool,
     memory: *Memory,
     virtio_context: VIRTIO_CONTEXT,
-    mmio_info: MmioDeviceInfo,
     file: std.fs.File,
     block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
@@ -75,7 +74,6 @@ pub const VirtioBlock = struct {
             .read_only = read_only,
             .memory = memory,
             .virtio_context = virtio_context,
-            .mmio_info = mmio_info,
             .file = file,
             .block_id = block_id,
         };
@@ -89,11 +87,7 @@ pub const VirtioBlock = struct {
         }
     }
 
-    pub fn write(self: *Self, addr: u64, data: []u8) !bool {
-        if (!self.mmio_info.contains_addr(addr)) {
-            return false;
-        }
-        const offset = addr - self.mmio_info.addr;
+    pub fn write(self: *Self, offset: u64, data: []u8) !void {
         switch (self.virtio_context.write(offset, data)) {
             VirtioAction.NoAction => {},
             VirtioAction.ActivateDevice => {
@@ -109,21 +103,15 @@ pub const VirtioBlock = struct {
                 log.err(@src(), "unhandled write virtio action: {}", .{action});
             },
         }
-        return true;
     }
 
-    pub fn read(self: *Self, addr: u64, data: []u8) !bool {
-        if (!self.mmio_info.contains_addr(addr)) {
-            return false;
-        }
-        const offset = addr - self.mmio_info.addr;
+    pub fn read(self: *Self, offset: u64, data: []u8) !void {
         switch (self.virtio_context.read(offset, data)) {
             VirtioAction.NoAction => {},
             else => |action| {
                 log.err(@src(), "unhandled read virtio action: {}", .{action});
             },
         }
-        return true;
     }
 
     pub fn process_queue(self: *Self) !void {

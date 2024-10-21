@@ -34,7 +34,6 @@ pub const VirtioNetError = error{
 pub const VhostNet = struct {
     memory: *Memory,
     virtio_context: VIRTIO_CONTEXT,
-    mmio_info: MmioDeviceInfo,
 
     tun: nix.fd_t,
     vhost: ?std.fs.File,
@@ -113,7 +112,6 @@ pub const VhostNet = struct {
         return Self{
             .memory = memory,
             .virtio_context = virtio_context,
-            .mmio_info = mmio_info,
             .tun = tun,
             .vhost = null,
         };
@@ -278,11 +276,7 @@ pub const VhostNet = struct {
         self.vhost = vhost;
     }
 
-    pub fn write(self: *Self, addr: u64, data: []u8) !bool {
-        if (!self.mmio_info.contains_addr(addr)) {
-            return false;
-        }
-        const offset = addr - self.mmio_info.addr;
+    pub fn write(self: *Self, offset: u64, data: []u8) !void {
         switch (self.virtio_context.write(offset, data)) {
             VirtioAction.NoAction => {},
             VirtioAction.ActivateDevice => try self.activate(),
@@ -290,20 +284,14 @@ pub const VhostNet = struct {
                 log.err(@src(), "unhandled write virtio action: {}", .{action});
             },
         }
-        return true;
     }
 
-    pub fn read(self: *Self, addr: u64, data: []u8) !bool {
-        if (!self.mmio_info.contains_addr(addr)) {
-            return false;
-        }
-        const offset = addr - self.mmio_info.addr;
+    pub fn read(self: *Self, offset: u64, data: []u8) !void {
         switch (self.virtio_context.read(offset, data)) {
             VirtioAction.NoAction => {},
             else => |action| {
                 log.err(@src(), "unhandled read virtio action: {}", .{action});
             },
         }
-        return true;
     }
 };
