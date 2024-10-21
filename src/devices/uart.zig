@@ -113,9 +113,10 @@ const Self = @This();
 
 pub fn new(vm: *const Vm, in: nix.fd_t, out: nix.fd_t, mmio_info: MmioDeviceInfo) !Self {
     const irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK);
-    var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
-    kvm_irqfd.fd = @intCast(irq_evt.fd);
-    kvm_irqfd.gsi = mmio_info.irq;
+    const kvm_irqfd: nix.kvm_irqfd = .{
+        .fd = @intCast(irq_evt.fd),
+        .gsi = mmio_info.irq,
+    };
 
     _ = try nix.checked_ioctl(
         @src(),
