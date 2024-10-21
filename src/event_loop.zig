@@ -48,9 +48,6 @@ pub fn add_event(
     callback: CallbackFn,
     parameter: CallbackParam,
 ) !void {
-    var event = std.mem.zeroInit(nix.epoll_event, .{});
-    event.events = nix.EPOLLIN;
-
     if (self.events_info_num == MAX_EVENTS) {
         return EventLoopError.TooMuchEvents;
     }
@@ -63,7 +60,10 @@ pub fn add_event(
         },
     };
 
-    event.data.u64 = self.events_info_num;
+    var event: nix.epoll_event = .{
+        .events = nix.EPOLLIN,
+        .data = .{ .u64 = self.events_info_num },
+    };
     self.events_info_num += 1;
 
     try nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_ADD, fd, &event);

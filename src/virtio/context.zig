@@ -96,9 +96,10 @@ pub fn VirtioContext(
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
             };
 
-            var kvm_irqfd = std.mem.zeroInit(nix.kvm_irqfd, .{});
-            kvm_irqfd.fd = @intCast(self.irq_evt.fd);
-            kvm_irqfd.gsi = irq;
+            const kvm_irqfd: nix.kvm_irqfd = .{
+                .fd = @intCast(self.irq_evt.fd),
+                .gsi = irq,
+            };
             _ = try nix.checked_ioctl(
                 @src(),
                 VirtioContextError.New,
@@ -108,12 +109,13 @@ pub fn VirtioContext(
             );
 
             for (&self.queue_events, 0..) |*queue_event, i| {
-                var kvm_ioeventfd = std.mem.zeroInit(nix.kvm_ioeventfd, .{});
-                kvm_ioeventfd.datamatch = i;
-                kvm_ioeventfd.len = @sizeOf(u32);
-                kvm_ioeventfd.addr = addr + 0x50;
-                kvm_ioeventfd.fd = queue_event.fd;
-                kvm_ioeventfd.flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch;
+                const kvm_ioeventfd: nix.kvm_ioeventfd = .{
+                    .datamatch = i,
+                    .len = @sizeOf(u32),
+                    .addr = addr + 0x50,
+                    .fd = queue_event.fd,
+                    .flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch,
+                };
                 _ = try nix.checked_ioctl(
                     @src(),
                     VirtioContextError.New,
