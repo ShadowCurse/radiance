@@ -57,24 +57,25 @@ pub fn VirtioContext(
     }
 
     return struct {
-        device_features_word: u32 = 0,
+        // There are 2 32 bits in 64 bit
+        device_features_word: u1 = 0,
         avail_features: u64 = 0,
 
-        driver_features_word: u32 = 0,
+        // There are 2 32 bits in 64 bit
+        driver_features_word: u1 = 0,
         acked_features: u64 = 0,
 
-        device_type: u32 = DEVICE_TYPE,
-        device_status: u32 = 0,
-        interrupt_status: u32 = 0,
+        // The biggest type if 2 (TYPE_NET)
+        device_type: u2 = DEVICE_TYPE,
+        device_status: u8 = 0,
 
         config_blob: CONFIG_TYPE = undefined,
-        config_generation: u32 = 0,
 
-        selected_queue: u32 = 0,
+        // There are max 2 queues
+        selected_queue: u1 = 0,
         queues: [NUM_QUEUES]Queue,
         queue_events: [NUM_QUEUES]EventFd,
 
-        irq_status: std.atomic.Value(u32),
         irq_evt: EventFd,
 
         const Self = @This();
@@ -91,8 +92,6 @@ pub fn VirtioContext(
             const self = Self{
                 .queues = [_]Queue{Queue.new()} ** NUM_QUEUES,
                 .queue_events = queue_events,
-
-                .irq_status = std.atomic.Value(u32).init(0),
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
             };
 
@@ -127,7 +126,7 @@ pub fn VirtioContext(
             return self;
         }
 
-        fn update_device_status(self: *Self, status: u32) VirtioAction {
+        fn update_device_status(self: *Self, status: u8) VirtioAction {
             const changed_bit = ~self.device_status & status;
             switch (changed_bit) {
                 ACKNOWLEDGE => if (self.device_status == INIT) {
@@ -172,7 +171,6 @@ pub fn VirtioContext(
                         0 => (self.avail_features & 0xFFFFFFFF),
                         // Get the upper 32-bits of the features bitfield.
                         1 => self.avail_features >> 32,
-                        else => unreachable,
                     };
                     const features_u32: u32 = @truncate(features);
                     data_u32.* = features_u32;
@@ -181,10 +179,11 @@ pub fn VirtioContext(
                 0x44 => data_u32.* = @intFromBool(self.queues[self.selected_queue].ready),
                 0x60 => {
                     // 0x1 means status is always ready
-                    data_u32.* = self.interrupt_status | 0x1;
+                    data_u32.* = 0x1;
                 },
                 0x70 => data_u32.* = self.device_status,
-                0xfc => data_u32.* = self.config_generation,
+                // No generation updates
+                0xfc => data_u32.* = 0,
                 0x100...0xfff => {
                     const new_offset = offset - 0x100;
                     const config_blob_slice = std.mem.asBytes(&self.config_blob);
@@ -204,27 +203,26 @@ pub fn VirtioContext(
         pub fn write(self: *Self, offset: u64, data: []u8) VirtioAction {
             const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
             switch (offset) {
-                0x14 => self.device_features_word = data_u32.*,
+                0x14 => self.device_features_word = @truncate(data_u32.*),
                 0x20 => {
                     switch (self.driver_features_word) {
                         // Set the lower 32-bits of the features bitfield.
                         0 => self.acked_features |= data_u32.*,
                         // Set the upper 32-bits of the features bitfield.
                         1 => self.acked_features |= @as(u64, data_u32.*) << 32,
-                        else => unreachable,
                     }
                 },
-                0x24 => self.driver_features_word = data_u32.*,
-                0x30 => self.selected_queue = data_u32.*,
+                0x24 => self.driver_features_word = @truncate(data_u32.*),
+                0x30 => self.selected_queue = @truncate(data_u32.*),
                 0x38 => {
                     self.queues[self.selected_queue].size = @truncate(data_u32.*);
                 },
                 0x44 => self.queues[self.selected_queue].ready = data_u32.* == 1,
                 0x50 => return VirtioAction{ .QueueNotification = data_u32.* },
                 0x64 => {
-                    self.interrupt_status &= ~data_u32.*;
+                    // There is no interrupt status to update
                 },
-                0x70 => return self.update_device_status(data_u32.*),
+                0x70 => return self.update_device_status(data[0]),
                 0x80 => self.queues[self.selected_queue].set_desc_table(false, data_u32.*),
                 0x84 => self.queues[self.selected_queue].set_desc_table(true, data_u32.*),
                 0x90 => self.queues[self.selected_queue].set_avail_ring(false, data_u32.*),
