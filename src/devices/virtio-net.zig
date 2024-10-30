@@ -152,7 +152,6 @@ pub const VirtioNet = struct {
             VirtioAction.NoAction => {},
             VirtioAction.ActivateDevice => {
                 // Only VIRTIO_MMIO_INT_VRING notification type is supported.
-                _ = self.virtio_context.irq_status.fetchOr(nix.VIRTIO_MMIO_INT_VRING, .seq_cst);
                 if (self.virtio_context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
                     for (&self.virtio_context.queues) |*q| {
                         q.notification_suppression = true;
