@@ -6,6 +6,8 @@ const Gicv2 = @import("gicv2.zig");
 const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
 const Memory = @import("memory.zig");
 
+const FdtDataType = std.ArrayListAligned(u8, @alignOf(u32));
+
 pub const FdtHeader = packed struct {
     magic: u32,
     totalsize: u32,
@@ -26,7 +28,7 @@ pub const FdtReserveEntry = packed struct {
 
 // https://devicetree-specification.readthedocs.io/en/stable/flattened-format.html
 pub const FdtBuilder = struct {
-    data: std.ArrayList(u8),
+    data: FdtDataType,
     strings_map: std.StringHashMap(usize),
     stored_strings: std.ArrayList(u8),
 
@@ -58,7 +60,7 @@ pub const FdtBuilder = struct {
     const Self = @This();
 
     pub fn new(allocator: Allocator) !Self {
-        var data = std.ArrayList(u8).init(allocator);
+        var data = FdtDataType.init(allocator);
 
         // Allocation 40 bytes. This is a size of FdtHeader struct.
         // For some reason @sizeOf(FdtHeader) returns 48.
@@ -98,7 +100,7 @@ pub const FdtBuilder = struct {
         return last_addr - Self.FDT_MAX_SIZE + 1;
     }
 
-    fn align_data(data: *std.ArrayList(u8), alignment: usize) !void {
+    fn align_data(data: *FdtDataType, alignment: usize) !void {
         const offset = data.items.len % alignment;
         if (offset != 0) {
             try data.appendNTimes(
@@ -108,7 +110,7 @@ pub const FdtBuilder = struct {
         }
     }
 
-    fn write_fdt_reserve_entry(data: *std.ArrayList(u8), entries: []FdtReserveEntry) !void {
+    fn write_fdt_reserve_entry(data: *FdtDataType, entries: []FdtReserveEntry) !void {
         for (entries) |entry| {
             try Self.data_append(u64, data, entry.address);
             try Self.data_append(u64, data, entry.size);
@@ -118,7 +120,7 @@ pub const FdtBuilder = struct {
         try Self.data_append(u64, data, @as(u64, 0));
     }
 
-    fn data_append(comptime t: type, data: *std.ArrayList(u8), item: t) !void {
+    fn data_append(comptime t: type, data: *FdtDataType, item: t) !void {
         switch (t) {
             void => {},
             u32, u64 => {
