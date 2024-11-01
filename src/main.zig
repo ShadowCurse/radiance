@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
+const allocator = @import("allocator.zig");
 const args_parser = @import("args_parser.zig");
 const config_parser = @import("config_parser.zig");
 
@@ -34,18 +35,35 @@ pub fn main() !void {
     const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    var tmp_memory = allocator.TmpMemory.init();
+    const tmp_alloc = tmp_memory.allocator();
 
-    var config = try config_parser.parse(
-        allocator,
+    const config = try config_parser.parse(
+        tmp_alloc,
         args.config_path,
     );
-    defer config.deinit(allocator);
+
+    var vhost_net_count: u32 = 0;
+    var virtio_net_count: u32 = 0;
+    for (config.networks.networks.items) |*net_config| {
+        if (net_config.vhost) {
+            vhost_net_count += 1;
+        } else {
+            virtio_net_count += 1;
+        }
+    }
+
+    const permanent_memory_size = @sizeOf(Vcpu) * config.machine.vcpus +
+        @sizeOf(std.Thread) * config.machine.vcpus +
+        @sizeOf(VirtioBlock) * config.drives.drives.items.len +
+        @sizeOf(VirtioNet) * virtio_net_count +
+        @sizeOf(VhostNet) * vhost_net_count;
+
+    log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
+    var permanent_memory = try allocator.PermanentMemory.init(permanent_memory_size);
+    const permanent_alloc = permanent_memory.allocator();
 
     var memory = try Memory.init(config.machine.memory_mb << 20);
-    defer memory.deinit();
     const kernel_load_address = try memory.load_linux_kernel(config.kernel.path);
 
     const kvm = try Kvm.new();
@@ -57,8 +75,7 @@ pub fn main() !void {
     const kvi = try vm.get_preferred_target();
 
     // create vcpu
-    var vcpus = try allocator.alloc(Vcpu, config.machine.vcpus);
-    defer allocator.free(vcpus);
+    var vcpus = try permanent_alloc.alloc(Vcpu, config.machine.vcpus);
 
     const vcpu_exit_signal = Vcpu.get_vcpu_interrupt_signal();
 
@@ -76,8 +93,7 @@ pub fn main() !void {
     const rtc_device_info = mmio.allocate();
 
     const virtio_device_infos_num = config.drives.drives.items.len + config.networks.networks.items.len;
-    var virtio_device_infos = try allocator.alloc(Mmio.MmioDeviceInfo, virtio_device_infos_num);
-    defer allocator.free(virtio_device_infos);
+    var virtio_device_infos = try tmp_alloc.alloc(Mmio.MmioDeviceInfo, virtio_device_infos_num);
     for (0..virtio_device_infos_num) |i| {
         virtio_device_infos[i] = mmio.allocate();
     }
@@ -85,28 +101,14 @@ pub fn main() !void {
     var uart = try Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new();
 
-    const virtio_blocks = try allocator.alloc(VirtioBlock, config.drives.drives.items.len);
-    defer allocator.free(virtio_blocks);
+    const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, config.drives.drives.items.len);
     const vb_infos = virtio_device_infos[0..config.drives.drives.items.len];
     for (virtio_blocks, config.drives.drives.items, vb_infos) |*block, *drive, mmio_info| {
         block.* = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
     }
 
-    var vhost_net_count: u8 = 0;
-    var virtio_net_count: u8 = 0;
-    for (config.networks.networks.items) |*net_config| {
-        if (net_config.vhost) {
-            vhost_net_count += 1;
-        } else {
-            virtio_net_count += 1;
-        }
-    }
-
-    const virtio_nets = try allocator.alloc(VirtioNet, virtio_net_count);
-    defer allocator.free(virtio_nets);
-
-    const vhost_nets = try allocator.alloc(VhostNet, vhost_net_count);
-    defer allocator.free(vhost_nets);
+    const virtio_nets = try permanent_alloc.alloc(VirtioNet, virtio_net_count);
+    const vhost_nets = try permanent_alloc.alloc(VhostNet, vhost_net_count);
 
     var virtio_net_index: u8 = 0;
     var vhost_net_index: u8 = 0;
@@ -134,8 +136,7 @@ pub fn main() !void {
     }
 
     // create kernel cmdline
-    var cmdline = try CmdLine.new(allocator, 50);
-    defer cmdline.deinit();
+    var cmdline = try CmdLine.new(tmp_alloc, 50);
 
     try cmdline.append("console=ttyS0 reboot=k panic=1 pci=off");
     if (virtio_blocks[0].read_only) {
@@ -149,14 +150,13 @@ pub fn main() !void {
 
     // create fdt
     const fdt_addr = fdt: {
-        const mpidrs = try allocator.alloc(u64, config.machine.vcpus);
-        defer allocator.free(mpidrs);
+        const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
         for (mpidrs, vcpus) |*mpidr, *vcpu| {
             mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
         }
 
         var fdt = try FDT.create_fdt(
-            allocator,
+            tmp_alloc,
             &memory,
             mpidrs,
             cmdline_0,
@@ -165,7 +165,6 @@ pub fn main() !void {
             rtc_device_info,
             virtio_device_infos,
         );
-        defer fdt.deinit();
 
         const fdt_addr = try memory.load_fdt(&fdt);
         break :fdt fdt_addr;
@@ -184,8 +183,11 @@ pub fn main() !void {
     const state = configure_terminal(&stdin);
 
     // start vcpu threads
-    const vcpu_threads = try allocator.alloc(std.Thread, config.machine.vcpus);
-    defer allocator.free(vcpu_threads);
+    const vcpu_threads = try permanent_alloc.alloc(std.Thread, config.machine.vcpus);
+
+    // free temporary memory
+    log.info(@src(), "temporary memory used: {} bytes", .{tmp_memory.used_capacity()});
+    tmp_memory.deinit();
 
     std.log.info("starting vcpu threads", .{});
     var barrier: std.Thread.ResetEvent = .{};
