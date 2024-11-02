@@ -2,6 +2,12 @@
 
 Experimental KVM based VMM for aarch64 platform.
 
+Defining characteristics:
+- no external dependencies
+- statically compiled (no libc or musl)
+- no memory allocations after the VM start
+- minimal memory overhead over requested VM memory size
+
 Build:
 ```bash
     $ zig build -Doptimize=ReleaseFast -j4
