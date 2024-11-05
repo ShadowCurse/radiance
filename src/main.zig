@@ -77,10 +77,8 @@ pub fn main() !void {
     // create vcpu
     var vcpus = try permanent_alloc.alloc(Vcpu, config.machine.vcpus);
 
-    const vcpu_exit_signal = Vcpu.get_vcpu_interrupt_signal();
-
     for (vcpus, 0..) |*vcpu, i| {
-        vcpu.* = try Vcpu.new(&kvm, &vm, i, vcpu_exit_signal);
+        vcpu.* = try Vcpu.new(&kvm, &vm, i);
         try vcpu.init(kvi);
     }
 
@@ -237,7 +235,6 @@ pub fn main() !void {
             vcpus,
             vcpu_threads,
             &barrier,
-            vcpu_exit_signal,
             &memory,
             &mmio,
             &el,

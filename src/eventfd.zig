@@ -11,11 +11,8 @@ pub const EventfdError = error{
     Write,
 };
 
-pub fn new(init: u32, flags: i32) !Self {
-    const fd = nix.eventfd(init, flags);
-    if (fd < 0) {
-        return EventfdError.Create;
-    }
+pub fn new(init: u32, flags: u32) !Self {
+    const fd = try nix.eventfd(init, flags);
     return Self{ .fd = fd };
 }
 
