@@ -113,7 +113,7 @@ pub fn VirtioContext(
                     .len = @sizeOf(u32),
                     .addr = addr + 0x50,
                     .fd = queue_event.fd,
-                    .flags = 1 << nix.kvm_ioeventfd_flag_nr_datamatch,
+                    .flags = nix.KVM_IOEVENTFD_FLAG_NR_DATAMATCH,
                 };
                 _ = try nix.checked_ioctl(
                     @src(),

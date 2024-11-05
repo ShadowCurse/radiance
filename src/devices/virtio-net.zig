@@ -55,14 +55,14 @@ pub const VirtioNet = struct {
             0,
         );
         var ifreq = std.mem.zeroInit(nix.ifreq, .{});
-        @memcpy(ifreq.ifr_ifrn.ifrn_name[0..tap_name.len], tap_name);
+        @memcpy(ifreq.ifrn.name[0..tap_name.len], tap_name);
         // IFF_TAP / IFF_TUN - select TAP or TUN
         // IFF_NO_CARRIER - Holding an open tap device file descriptor sets the Ethernet interface CARRIER flag up. In some cases it might be desired to delay that until a TUNSETCARRIER call.
         // IFF_NO_PI - Historically each packet on tap had a "struct tun_pi" 4 byte prefix. There are now better alternatives and this option disables this prefix.
         // IFF_TUN_EXCL - Ensures a new device is created. Returns EBUSY if the device exists
         // IFF_VNET_HDR -Prepend "struct virtio_net_hdr" before the RX and TX packets, should be followed by setsockopt(TUNSETVNETHDRSZ).
         // IFF_MULTI_QUEUE - Use multi queue tap, see below.
-        ifreq.ifr_ifru.ifru_flags = nix.IFF_TAP | nix.IFF_NO_PI | nix.IFF_VNET_HDR;
+        ifreq.ifru.flags = nix.IFF_TAP | nix.IFF_NO_PI | nix.IFF_VNET_HDR;
         {
             _ = try nix.checked_ioctl(
                 @src(),

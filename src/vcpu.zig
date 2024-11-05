@@ -25,11 +25,12 @@ pub const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1h |
     PSR_I_BIT |
     PSR_D_BIT;
 
+pub const VCPU_SIGNAL = nix.SIGUSR1;
+
 fd: nix.fd_t,
 kvm_run: *nix.kvm_run,
 index: u64,
 exit_event: EventFd,
-exit_signal: i32,
 // Needed for signal handler to kick vcpu from the KVM_RUN loop
 threadlocal var self_ref: ?*Self = null;
 
@@ -44,7 +45,7 @@ pub const VcpuError = error{
 };
 
 pub fn core_reg_id(comptime name: []const u8) u64 {
-    const offset = @offsetOf(nix.kvm_regs, "regs") + @offsetOf(nix.struct_user_pt_regs, name);
+    const offset = @offsetOf(nix.kvm_regs, "regs") + @offsetOf(nix.user_pt_regs, name);
     return nix.KVM_REG_ARM64 |
         nix.KVM_REG_SIZE_U64 |
         nix.KVM_REG_ARM_CORE |
@@ -67,34 +68,25 @@ fn signal_handler(s: c_int) callconv(.C) void {
     Self.self_ref.?.kvm_run.immediate_exit = 1;
 }
 
-/// Return number of available real-time signal with highest priority
-pub fn get_vcpu_interrupt_signal() i32 {
-    return nix.__libc_current_sigrtmin();
-}
-
-fn set_thread_handler(self: *Self) !void {
+fn set_thread_handler() !void {
     const sigact = nix.Sigaction{
         .handler = .{ .handler = signal_handler },
         .flags = 4,
         .mask = std.mem.zeroes(nix.sigset_t),
         .restorer = null,
     };
-    try nix.sigaction(@intCast(self.exit_signal), &sigact, null);
+    try nix.sigaction(VCPU_SIGNAL, &sigact, null);
 }
 
-pub fn kick_thread(
-    thread: *const std.Thread,
-    exit_signal: i32,
-) void {
-    const r = nix.pthread_kill(@intFromPtr(thread.impl.handle), exit_signal);
-    log.debug(@src(), "kick_thread result: {}", .{r});
+pub fn kick_threads() void {
+    const pid = nix.getpid();
+    _ = nix.kill(pid, VCPU_SIGNAL);
 }
 
 pub fn new(
     kvm: *const Kvm,
     vm: *const Vm,
     index: u64,
-    exit_signal: i32,
 ) !Self {
     const fd = try nix.checked_ioctl(
         @src(),
@@ -132,7 +124,6 @@ pub fn new(
         .kvm_run = @ptrCast(kvm_run.ptr),
         .index = index,
         .exit_event = exit_event,
-        .exit_signal = exit_signal,
     };
 }
 
@@ -200,7 +191,7 @@ pub fn run(self: *Self, mmio: *Mmio) !bool {
         nix.KVM_EXIT_IO => log.info(@src(), "Got KVM_EXIT_IO", .{}),
         nix.KVM_EXIT_HLT => log.info(@src(), "Got KVM_EXIT_HLT", .{}),
         nix.KVM_EXIT_SYSTEM_EVENT => {
-            switch (self.kvm_run.unnamed_0.system_event.type) {
+            switch (self.kvm_run.kvm_exit_info.system_event.type) {
                 nix.KVM_SYSTEM_EVENT_SHUTDOWN => {
                     log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN", .{});
                     try self.exit_event.write(1);
@@ -228,15 +219,15 @@ pub fn run(self: *Self, mmio: *Mmio) !bool {
             }
         },
         nix.KVM_EXIT_MMIO => {
-            if (self.kvm_run.unnamed_0.mmio.is_write == 1) {
+            if (self.kvm_run.kvm_exit_info.mmio.is_write == 1) {
                 try mmio.write(
-                    self.kvm_run.unnamed_0.mmio.phys_addr,
-                    self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len],
+                    self.kvm_run.kvm_exit_info.mmio.phys_addr,
+                    self.kvm_run.kvm_exit_info.mmio.data[0..self.kvm_run.kvm_exit_info.mmio.len],
                 );
             } else {
                 try mmio.read(
-                    self.kvm_run.unnamed_0.mmio.phys_addr,
-                    self.kvm_run.unnamed_0.mmio.data[0..self.kvm_run.unnamed_0.mmio.len],
+                    self.kvm_run.kvm_exit_info.mmio.phys_addr,
+                    self.kvm_run.kvm_exit_info.mmio.data[0..self.kvm_run.kvm_exit_info.mmio.len],
                 );
             }
         },
@@ -254,7 +245,7 @@ pub fn run_threaded(
     self_ref = self;
     const now = try std.time.Instant.now();
     log.info(@src(), "startup time: {}ms", .{now.since(start_time.*) / 1000_000});
-    try self.set_thread_handler();
+    try Self.set_thread_handler();
 
     barrier.wait();
     while (self.run(mmio) catch false) {}

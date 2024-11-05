@@ -89,9 +89,10 @@ const Interrupt = struct {
         _ = self;
 
         gdb.vcpus_barier.reset();
-        for (gdb.vcpu_threads) |*t| {
-            Vcpu.kick_thread(t, gdb.vcpu_exit_signal);
-        }
+        // for (gdb.vcpu_threads) |*t| {
+        //     Vcpu.kick_thread(t, gdb.vcpu_exit_signal);
+        // }
+        Vcpu.kick_threads();
 
         const msg = "S05";
         return fmt_response(buffer, msg);
@@ -552,7 +553,6 @@ pub const GdbServer = struct {
     vcpus: []Vcpu,
     vcpu_threads: []std.Thread,
     vcpus_barier: *std.Thread.ResetEvent,
-    vcpu_exit_signal: i32,
     memory: *Memory,
     mmio: *Mmio,
     event_loop: *EventLoop,
@@ -564,7 +564,6 @@ pub const GdbServer = struct {
         vcpus: []Vcpu,
         vcpu_threads: []std.Thread,
         vcpus_barier: *std.Thread.ResetEvent,
-        vcpu_exit_signal: i32,
         memory: *Memory,
         mmio: *Mmio,
         event_loop: *EventLoop,
@@ -596,7 +595,6 @@ pub const GdbServer = struct {
             .vcpus = vcpus,
             .vcpu_threads = vcpu_threads,
             .vcpus_barier = vcpus_barier,
-            .vcpu_exit_signal = vcpu_exit_signal,
             .memory = memory,
             .mmio = mmio,
             .event_loop = event_loop,
