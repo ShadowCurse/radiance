@@ -16,8 +16,10 @@ const IovRing = @import("../virtio/iov_ring.zig");
 const RingBuffer = @import("../ring_buffer.zig").RingBuffer;
 
 pub const TYPE_NET: u32 = 1;
-pub const MacAddr = [6]u8;
-pub const VirtioNetConfig = MacAddr;
+
+pub const Config = [6]u8;
+pub const QueueSizes = .{ 256, 256 };
+
 const RX_INDEX = 0;
 const TX_INDEX = 1;
 
@@ -40,7 +42,7 @@ pub const VirtioNet = struct {
     activated: bool = false,
 
     const Self = @This();
-    const VIRTIO_CONTEXT = VirtioContext(2, TYPE_NET, VirtioNetConfig);
+    const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
 
     pub fn new(
         vm: *const Vm,
@@ -85,6 +87,7 @@ pub const VirtioNet = struct {
 
         var virtio_context = try VIRTIO_CONTEXT.new(
             vm,
+            QueueSizes,
             mmio_info.irq,
             mmio_info.addr,
         );

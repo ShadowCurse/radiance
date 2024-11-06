@@ -82,6 +82,7 @@ pub fn VirtioContext(
 
         pub fn new(
             vm: *const Vm,
+            queue_sizes: [NUM_QUEUES]u16,
             irq: u32,
             addr: u64,
         ) !Self {
@@ -89,8 +90,12 @@ pub fn VirtioContext(
             for (&queue_events) |*qe| {
                 qe.* = try EventFd.new(0, nix.EFD_NONBLOCK);
             }
+            var queues: [NUM_QUEUES]Queue = undefined;
+            for (&queues, queue_sizes) |*q, size| {
+                q.* = Queue.new(size);
+            }
             const self = Self{
-                .queues = [_]Queue{Queue.new()} ** NUM_QUEUES,
+                .queues = queues,
                 .queue_events = queue_events,
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
             };
@@ -175,7 +180,7 @@ pub fn VirtioContext(
                     const features_u32: u32 = @truncate(features);
                     data_u32.* = features_u32;
                 },
-                0x34 => data_u32.* = Queue.MAX_SIZE,
+                0x34 => data_u32.* = self.queues[self.selected_queue].max_size,
                 0x44 => data_u32.* = @intFromBool(self.queues[self.selected_queue].ready),
                 0x60 => {
                     // 0x1 means status is always ready
