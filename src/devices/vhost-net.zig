@@ -12,8 +12,8 @@ const VirtioAction = VIRTIO.VirtioAction;
 
 pub const TYPE_NET: u32 = 1;
 
-pub const MacAddr = [6]u8;
-pub const VirtioNetConfig = MacAddr;
+pub const Config = [6]u8;
+pub const QueueSizes = .{ 256, 256 };
 
 pub const VirtioNetError = error{
     NewTUNSETIFF,
@@ -39,7 +39,7 @@ pub const VhostNet = struct {
     vhost: ?std.fs.File,
 
     const Self = @This();
-    const VIRTIO_CONTEXT = VirtioContext(2, TYPE_NET, VirtioNetConfig);
+    const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
 
     pub fn new(
         vm: *const Vm,
@@ -84,6 +84,7 @@ pub const VhostNet = struct {
 
         var virtio_context = try VIRTIO_CONTEXT.new(
             vm,
+            QueueSizes,
             mmio_info.irq,
             mmio_info.addr,
         );

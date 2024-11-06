@@ -29,8 +29,6 @@ pub const DescriptorChain = struct {
 
 /// A virtio queue's parameters.
 pub const Queue = struct {
-    pub const MAX_SIZE: u32 = 256;
-
     /// Guest physical address of the descriptor table.
     /// Points to `nix.vring_desc`.
     desc_table: u64,
@@ -40,6 +38,8 @@ pub const Queue = struct {
     /// Guest physical address of the used ring.
     /// Points to `nix.vring_used`
     used_ring: u64,
+    /// Max size of the queue driver can select.
+    max_size: u16,
     /// The queue size in elements the driver selected
     size: u16,
     /// Indicates if the queue is finished with configuration
@@ -55,11 +55,12 @@ pub const Queue = struct {
     const Self = @This();
 
     /// Constructs an empty virtio queue with the given `max_size`.
-    pub fn new() Self {
+    pub fn new(max_size: u16) Self {
         return Self{
             .desc_table = 0,
             .avail_ring = 0,
             .used_ring = 0,
+            .max_size = max_size,
             .size = 0,
             .ready = false,
             .next_avail = 0,

@@ -14,7 +14,8 @@ pub const CONFIG_SPACE_SIZE: usize = 8;
 pub const SECTOR_SHIFT: u8 = 9;
 pub const TYPE_BLOCK: u32 = 2;
 
-pub const VirtioBlockConfig = [CONFIG_SPACE_SIZE]u8;
+pub const Config = [CONFIG_SPACE_SIZE]u8;
+pub const QueueSizes = .{ 256, 256 };
 
 pub const VirtioBlockError = error{
     New,
@@ -28,7 +29,7 @@ pub const VirtioBlock = struct {
     block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
     const Self = @This();
-    const VIRTIO_CONTEXT = VirtioContext(1, TYPE_BLOCK, VirtioBlockConfig);
+    const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_BLOCK, Config);
 
     pub fn new(
         vm: *const Vm,
@@ -58,6 +59,7 @@ pub const VirtioBlock = struct {
 
         var virtio_context = try VIRTIO_CONTEXT.new(
             vm,
+            QueueSizes,
             mmio_info.irq,
             mmio_info.addr,
         );
