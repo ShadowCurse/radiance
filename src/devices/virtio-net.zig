@@ -287,7 +287,7 @@ const RxChains = struct {
             chain_info.capacity += desc.len;
             const iovec_slice = memory.get_slice(u8, desc.len, desc.addr);
             const iovec: nix.iovec = .{
-                .base = iovec_slice.ptr,
+                .base = @volatileCast(iovec_slice.ptr),
                 .len = iovec_slice.len,
             };
             self.iovec_ring.push_back(iovec);
@@ -365,7 +365,7 @@ const TxChain = struct {
         while (chain.next()) |desc| {
             const iovec_slice = memory.get_slice(u8, desc.len, desc.addr);
             const iovec: nix.iovec_const = .{
-                .base = iovec_slice.ptr,
+                .base = @volatileCast(iovec_slice.ptr),
                 .len = iovec_slice.len,
             };
             self.iovec_array.append(iovec) catch unreachable;

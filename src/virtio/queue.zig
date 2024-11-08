@@ -6,7 +6,7 @@ const Memory = @import("../memory.zig");
 /// A virtio descriptor chain.
 pub const DescriptorChain = struct {
     // Address of descriptor table in guest memory
-    desc_table: []nix.vring_desc,
+    desc_table: []volatile nix.vring_desc,
     /// Index into the descriptor table
     index: ?u16,
 
