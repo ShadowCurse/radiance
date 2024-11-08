@@ -136,12 +136,12 @@ pub const VirtioBlock = struct {
                     nix.VIRTIO_BLK_T_IN => {
                         try self.file.seekTo(offset);
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        data_transfered = try self.file.read(buffer);
+                        data_transfered = try self.file.read(@volatileCast(buffer));
                     },
                     nix.VIRTIO_BLK_T_OUT => {
                         try self.file.seekTo(offset);
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        data_transfered = try self.file.write(buffer);
+                        data_transfered = try self.file.write(@volatileCast(buffer));
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
                         try self.file.sync();
