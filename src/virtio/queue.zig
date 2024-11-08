@@ -176,7 +176,7 @@ test "test_queue_pop_desc_chain" {
 
     const avail_ring = memory.get_ptr(nix.vring_avail, avail_ring_offset);
 
-    var queue = Queue.new();
+    var queue = Queue.new(10);
     queue.size = 10;
 
     const avail_ring_offset_hight: u32 = @truncate(avail_ring_offset >> 32);
@@ -220,7 +220,7 @@ test "test_queue_add_used_desc" {
 
     const used_ring = memory.get_ptr(nix.vring_used, used_ring_offset);
 
-    var queue = Queue.new();
+    var queue = Queue.new(10);
     queue.size = 10;
 
     const used_ring_offset_hight: u32 = @truncate(used_ring_offset >> 32);
