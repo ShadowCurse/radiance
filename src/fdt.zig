@@ -6,19 +6,81 @@ const Gicv2 = @import("gicv2.zig");
 const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
 const Memory = @import("memory.zig");
 
-const FdtDataType = std.ArrayListAligned(u8, @alignOf(u32));
+const FdtData = struct {
+    mem: []u8,
+    len: u64,
 
-pub const FdtHeader = packed struct {
-    magic: u32,
-    totalsize: u32,
-    off_dt_struct: u32,
-    off_dt_strings: u32,
-    off_mem_rsvmap: u32,
-    version: u32,
-    last_comp_version: u32,
-    boot_cpuid_phys: u32,
-    size_dt_strings: u32,
-    size_dt_struct: u32,
+    const Self = @This();
+
+    pub fn init(memory: *const Memory) Self {
+        const fdt_addr = FdtBuilder.fdt_addr(memory.last_addr());
+        const memory_fdt_start = fdt_addr - memory.guest_addr;
+        return .{
+            .mem = memory.mem[memory_fdt_start..],
+            .len = 0,
+        };
+    }
+
+    pub fn align_self(self: *Self, alignment: u64) void {
+        const offset = self.len % alignment;
+        if (offset != 0) {
+            self.len += alignment - offset;
+        }
+    }
+
+    pub fn write_fdt_reserve_entry(self: *Self, entries: []FdtReserveEntry) void {
+        for (entries) |entry| {
+            self.append(u64, entry.address);
+            self.append(u64, entry.size);
+        }
+        // The list of reserved blocks shall be terminated with an entry where both address and size are equal to 0
+        self.append(u64, @as(u64, 0));
+        self.append(u64, @as(u64, 0));
+    }
+
+    pub fn append(self: *Self, comptime t: type, item: t) void {
+        switch (t) {
+            void => {},
+            u32, u64 => {
+                const b = @byteSwap(item);
+                const bytes = std.mem.asBytes(&b);
+                @memcpy(self.mem[self.len .. self.len + bytes.len], bytes);
+                self.len += bytes.len;
+            },
+            []const u32, []const u64 => {
+                for (item) |i| {
+                    const b = @byteSwap(i);
+                    const bytes = std.mem.asBytes(&b);
+                    @memcpy(self.mem[self.len .. self.len + bytes.len], bytes);
+                    self.len += bytes.len;
+                }
+            },
+            []const u8 => {
+                @memcpy(self.mem[self.len .. self.len + item.len], item);
+                self.len += item.len;
+            },
+            [:0]const u8 => {
+                @memcpy(self.mem[self.len .. self.len + item.len], item);
+                self.len += item.len;
+                self.mem[self.len] = 0;
+                self.len += 1;
+            },
+            else => std.debug.panic("Unknown type: {any}", .{t}),
+        }
+    }
+};
+
+pub const FdtHeader = extern struct {
+    magic: u32 = 0,
+    totalsize: u32 = 0,
+    off_dt_struct: u32 = 0,
+    off_dt_strings: u32 = 0,
+    off_mem_rsvmap: u32 = 0,
+    version: u32 = 0,
+    last_comp_version: u32 = 0,
+    boot_cpuid_phys: u32 = 0,
+    size_dt_strings: u32 = 0,
+    size_dt_struct: u32 = 0,
 };
 
 pub const FdtReserveEntry = packed struct {
@@ -26,9 +88,10 @@ pub const FdtReserveEntry = packed struct {
     size: u64,
 };
 
+// Builder for DeviceTree directly in the VM memory.
 // https://devicetree-specification.readthedocs.io/en/stable/flattened-format.html
 pub const FdtBuilder = struct {
-    data: FdtDataType,
+    data: FdtData,
     strings_map: std.StringHashMap(usize),
     stored_strings: std.ArrayList(u8),
 
@@ -59,26 +122,25 @@ pub const FdtBuilder = struct {
 
     const Self = @This();
 
-    pub fn new(allocator: Allocator) !Self {
-        var data = FdtDataType.init(allocator);
+    pub fn new(allocator: Allocator, memory: *const Memory) Self {
+        var data = FdtData.init(memory);
 
         // Allocation 40 bytes. This is a size of FdtHeader struct.
-        // For some reason @sizeOf(FdtHeader) returns 48.
-        try data.resize(40);
-        @memset(data.items, 0);
+        const header: FdtHeader = .{};
+        data.append([]const u8, std.mem.asBytes(&header));
 
         // The memory reservation block shall be aligned to an 8-byte boundary
-        try Self.align_data(&data, 8);
+        data.align_self(8);
 
-        const off_mem_rsvmap: u32 = @intCast(data.items.len);
+        const off_mem_rsvmap: u32 = @intCast(data.len);
 
-        try Self.write_fdt_reserve_entry(&data, &.{});
+        data.write_fdt_reserve_entry(&.{});
 
         // The structure block to a 4-byte boundary
-        try Self.align_data(&data, 4);
-        const off_dt_struct: u32 = @intCast(data.items.len);
+        data.align_self(4);
+        const off_dt_struct: u32 = @intCast(data.len);
 
-        const header_ptr: *FdtHeader = @ptrCast(@alignCast(data.items.ptr));
+        const header_ptr: *FdtHeader = @ptrCast(@alignCast(data.mem.ptr));
         // All values in the FDT should be in big endian format.
         header_ptr.off_dt_struct = @byteSwap(off_dt_struct);
         header_ptr.off_mem_rsvmap = @byteSwap(off_mem_rsvmap);
@@ -90,74 +152,24 @@ pub const FdtBuilder = struct {
         };
     }
 
-    pub fn deinit(self: *Self) void {
-        self.data.deinit();
-        self.strings_map.deinit();
-        self.stored_strings.deinit();
-    }
-
     pub fn fdt_addr(last_addr: u64) u64 {
         return last_addr - Self.FDT_MAX_SIZE + 1;
     }
 
-    fn align_data(data: *FdtDataType, alignment: usize) !void {
-        const offset = data.items.len % alignment;
-        if (offset != 0) {
-            try data.appendNTimes(
-                0,
-                alignment - offset,
-            );
-        }
+    pub fn begin_node(self: *Self, name: [:0]const u8) void {
+        self.data.append(u32, FDT_BEGIN_NODE);
+        self.data.append([:0]const u8, name);
+        self.data.align_self(4);
     }
 
-    fn write_fdt_reserve_entry(data: *FdtDataType, entries: []FdtReserveEntry) !void {
-        for (entries) |entry| {
-            try Self.data_append(u64, data, entry.address);
-            try Self.data_append(u64, data, entry.size);
-        }
-        // The list of reserved blocks shall be terminated with an entry where both address and size are equal to 0
-        try Self.data_append(u64, data, @as(u64, 0));
-        try Self.data_append(u64, data, @as(u64, 0));
-    }
-
-    fn data_append(comptime t: type, data: *FdtDataType, item: t) !void {
-        switch (t) {
-            void => {},
-            u32, u64 => {
-                const i = @byteSwap(item);
-                try data.appendSlice(@as([]const u8, std.mem.asBytes(&i)));
-            },
-            []const u32, []const u64 => {
-                for (item) |i| {
-                    const s = @byteSwap(i);
-                    try data.appendSlice(@as([]const u8, std.mem.asBytes(&s)));
-                }
-            },
-            []const u8 => {
-                try data.appendSlice(item);
-            },
-            [:0]const u8 => {
-                try data.appendSlice(item);
-                try data.append(0);
-            },
-            else => std.debug.panic("Unknown type: {any}", .{t}),
-        }
-    }
-
-    pub fn begin_node(self: *Self, name: [:0]const u8) !void {
-        try Self.data_append(u32, &self.data, FDT_BEGIN_NODE);
-        try Self.data_append([:0]const u8, &self.data, name);
-        try Self.align_data(&self.data, 4);
-    }
-
-    pub fn end_node(self: *Self) !void {
-        try Self.data_append(u32, &self.data, FDT_END_NODE);
+    pub fn end_node(self: *Self) void {
+        self.data.append(u32, FDT_END_NODE);
     }
 
     /// Expects integer types to be in big endian format. (use @byteSwap(..) before passing integers)
-    pub fn add_property(self: *Self, comptime t: type, name: [:0]const u8, item: t) !void {
-        const name_offset = try self.string_offset(name);
-        try Self.data_append(u32, &self.data, FDT_PROP);
+    pub fn add_property(self: *Self, comptime t: type, name: [:0]const u8, item: t) void {
+        const name_offset = self.string_offset(name);
+        self.data.append(u32, FDT_PROP);
         const bytes: usize = switch (t) {
             void => 0,
             u32, u64 => @sizeOf(t),
@@ -167,47 +179,47 @@ pub const FdtBuilder = struct {
             else => std.debug.panic("Unknown type: {any}", .{t}),
         };
         const len: u32 = @intCast(bytes);
-        try Self.data_append(u32, &self.data, len);
+        self.data.append(u32, len);
         const offset: u32 = @intCast(name_offset);
-        try Self.data_append(u32, &self.data, offset);
-        try Self.data_append(t, &self.data, item);
+        self.data.append(u32, offset);
+        self.data.append(t, item);
         // All tokens shall be aligned on a 32-bit boundary,
         // which may require padding bytes (with 0)
         // to be inserted after the previous token’s data
-        try Self.align_data(&self.data, 4);
+        self.data.align_self(4);
     }
 
-    fn string_offset(self: *Self, s: [:0]const u8) !usize {
+    fn string_offset(self: *Self, s: [:0]const u8) usize {
         if (self.strings_map.get(s)) |offset| {
             return offset;
         } else {
             const new_offset = self.stored_strings.items.len;
-            try self.stored_strings.appendSlice(s);
-            try self.stored_strings.append(0);
-            try self.strings_map.put(s, new_offset);
+            self.stored_strings.appendSlice(s) catch unreachable;
+            self.stored_strings.append(0) catch unreachable;
+            self.strings_map.put(s, new_offset) catch unreachable;
             return new_offset;
         }
     }
 
-    pub fn finish(self: *Self) !void {
-        try Self.data_append(u32, &self.data, FDT_END);
+    pub fn finish(self: *Self) void {
+        self.data.append(u32, FDT_END);
 
-        const header_ptr: *FdtHeader = @ptrCast(@alignCast(self.data.items.ptr));
+        const header_ptr: *FdtHeader = @ptrCast(@alignCast(self.data.mem.ptr));
         // All values in the FDT should be in big endian format.
         header_ptr.magic = @byteSwap(FDT_MAGIC);
-        header_ptr.totalsize = @byteSwap(@as(u32, @intCast(self.data.items.len + self.stored_strings.items.len)));
+        header_ptr.totalsize = @byteSwap(@as(u32, @intCast(self.data.len + self.stored_strings.items.len)));
         // Already set.
         // header_ptr.off_dt_struct: u32,
-        header_ptr.off_dt_strings = @byteSwap(@as(u32, @intCast(self.data.items.len)));
+        header_ptr.off_dt_strings = @byteSwap(@as(u32, @intCast(self.data.len)));
         // Already set.
         // header_ptr.off_mem_rsvmap: u32,
         header_ptr.version = @byteSwap(FDT_VERSION);
         header_ptr.last_comp_version = @byteSwap(FDT_LAST_COMP_VERSION);
         header_ptr.boot_cpuid_phys = 0;
         header_ptr.size_dt_strings = @byteSwap(@as(u32, @intCast(self.stored_strings.items.len)));
-        header_ptr.size_dt_struct = @byteSwap(@as(u32, @intCast(self.data.items.len)) - @byteSwap(header_ptr.off_dt_struct));
+        header_ptr.size_dt_struct = @byteSwap(@as(u32, @intCast(self.data.len)) - @byteSwap(header_ptr.off_dt_struct));
 
-        try Self.data_append([]const u8, &self.data, self.stored_strings.items);
+        self.data.append([]const u8, self.stored_strings.items);
     }
 };
 
@@ -220,44 +232,45 @@ pub fn create_fdt(
     serial_device_info: MmioDeviceInfo,
     rtc_device_info: MmioDeviceInfo,
     virtio_devices_info: []const MmioDeviceInfo,
-) !FdtBuilder {
+) !u64 {
     const ADDRESS_CELLS: u32 = 0x2;
     const SIZE_CELLS: u32 = 0x2;
     const GIC_PHANDLE: u32 = 1;
 
-    var fdt_builder = try FdtBuilder.new(allocator);
+    var fdt_builder = FdtBuilder.new(allocator, memory);
 
     // use &.{0} to make an empty string with 0 at the end
-    try fdt_builder.begin_node(&.{0});
+    fdt_builder.begin_node(&.{0});
 
-    try fdt_builder.add_property([:0]const u8, "compatible", "linux,dummy-virt");
+    fdt_builder.add_property([:0]const u8, "compatible", "linux,dummy-virt");
     // For info on #address-cells and size-cells read "Note about cells and address representation"
     // from the above mentioned txt file.
-    try fdt_builder.add_property(u32, "#address-cells", ADDRESS_CELLS);
-    try fdt_builder.add_property(u32, "#size-cells", SIZE_CELLS);
+    fdt_builder.add_property(u32, "#address-cells", ADDRESS_CELLS);
+    fdt_builder.add_property(u32, "#size-cells", SIZE_CELLS);
     // This is not mandatory but we use it to point the root node to the node
     // containing description of the interrupt controller for this VM.
-    try fdt_builder.add_property(u32, "interrupt-parent", GIC_PHANDLE);
+    fdt_builder.add_property(u32, "interrupt-parent", GIC_PHANDLE);
 
     try create_cpu_fdt(&fdt_builder, mpidrs);
-    try create_memory_fdt(&fdt_builder, memory);
-    try create_cmdline_fdt(&fdt_builder, cmdline);
-    try create_gic_fdt(&fdt_builder, gic);
-    try create_timer_node(&fdt_builder);
-    try create_clock_node(&fdt_builder);
-    try create_psci_node(&fdt_builder);
+    create_memory_fdt(&fdt_builder, memory);
+    create_cmdline_fdt(&fdt_builder, cmdline);
+    create_gic_fdt(&fdt_builder, gic);
+    create_timer_node(&fdt_builder);
+    create_clock_node(&fdt_builder);
+    create_psci_node(&fdt_builder);
 
-    try create_serial_node(&fdt_builder, serial_device_info);
-    try create_rtc_node(&fdt_builder, rtc_device_info);
+    create_serial_node(&fdt_builder, serial_device_info);
+    create_rtc_node(&fdt_builder, rtc_device_info);
 
     for (virtio_devices_info) |*info| {
-        try create_virtio_node(&fdt_builder, info);
+        create_virtio_node(&fdt_builder, info);
     }
 
     // End Header node.
-    try fdt_builder.end_node();
-    try fdt_builder.finish();
-    return fdt_builder;
+    fdt_builder.end_node();
+    fdt_builder.finish();
+
+    return FdtBuilder.fdt_addr(memory.last_addr());
 }
 
 fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
@@ -270,23 +283,23 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
     const cache_dir = try CacheDir.new();
     const cache_entries = try cache_dir.get_caches();
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml.
-    try builder.begin_node("cpus");
+    builder.begin_node("cpus");
     // As per documentation, on ARM v8 64-bit systems value should be set to 2.
-    try builder.add_property(u32, "#address-cells", 0x02);
-    try builder.add_property(u32, "#size-cells", 0x0);
+    builder.add_property(u32, "#address-cells", 0x02);
+    builder.add_property(u32, "#size-cells", 0x0);
 
     for (mpidrs, 0..) |mpidr, i| {
         var print_buff: [20]u8 = undefined;
-        const cpu_name = try std.fmt.bufPrintZ(&print_buff, "cpu@{x}", .{i});
-        try builder.begin_node(cpu_name);
-        try builder.add_property([:0]const u8, "device_type", "cpu");
-        try builder.add_property([:0]const u8, "compatible", "arm,arm-v8");
+        const cpu_name = std.fmt.bufPrintZ(&print_buff, "cpu@{x}", .{i}) catch unreachable;
+        builder.begin_node(cpu_name);
+        builder.add_property([:0]const u8, "device_type", "cpu");
+        builder.add_property([:0]const u8, "compatible", "arm,arm-v8");
         // The power state coordination interface (PSCI) needs to be enabled for
         // all vcpus.
-        try builder.add_property([:0]const u8, "enable-method", "psci");
+        builder.add_property([:0]const u8, "enable-method", "psci");
         // Set the field to first 24 bits of the MPIDR - Multiprocessor Affinity Register.
         // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0488c/BABHBJCI.html.
-        try builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
+        builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
         for (cache_entries) |entry| {
             const cache = entry orelse continue;
             if (cache.level != 1) {
@@ -294,13 +307,13 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
             }
             // https://github.com/devicetree-org/devicetree-specification/releases/download/v0.3/devicetree-specification-v0.3.pdf
             const cache_size: u32 = @intCast(cache.size);
-            try builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+            builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
 
             const line_size: u32 = @intCast(cache.line_size);
-            try builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+            builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
 
             const number_of_sets: u32 = @intCast(cache.number_of_sets);
-            try builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
+            builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
         }
         var prev_level: u8 = 1;
         var in_cache_node: bool = false;
@@ -314,75 +327,75 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
                 @as(u32, @intCast(mpidrs.len)) * @as(u32, cache.level - 2) +
                 @as(u32, @intCast(i)) / cache.cpus_per_unit;
             if (prev_level != cache.level) {
-                try builder.add_property(u32, "next-level-cache", cache_phandle);
+                builder.add_property(u32, "next-level-cache", cache_phandle);
                 if (prev_level > 1 and in_cache_node) {
-                    try builder.end_node();
+                    builder.end_node();
                 }
             }
             if (i % cache.cpus_per_unit == 0) {
                 in_cache_node = true;
-                const node_name = try std.fmt.bufPrintZ(
+                const node_name = std.fmt.bufPrintZ(
                     &print_buff,
                     "l{}-{}-cache",
                     .{ cache.level, i / cache.cpus_per_unit },
-                );
-                try builder.begin_node(node_name);
-                try builder.add_property(u32, "phandle", cache_phandle);
-                try builder.add_property([:0]const u8, "compatible", "cache");
-                try builder.add_property(u32, "cache-level", cache.level);
+                ) catch unreachable;
+                builder.begin_node(node_name);
+                builder.add_property(u32, "phandle", cache_phandle);
+                builder.add_property([:0]const u8, "compatible", "cache");
+                builder.add_property(u32, "cache-level", cache.level);
                 const cache_size: u32 = @intCast(cache.size);
-                try builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+                builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
                 const line_size: u32 = @intCast(cache.line_size);
-                try builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+                builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
                 const number_of_sets: u32 = @intCast(cache.number_of_sets);
-                try builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
+                builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
                 if (cache.cache_type.cache_type_str()) |s| {
-                    try builder.add_property(void, s, {});
+                    builder.add_property(void, s, {});
                 }
                 prev_level = cache.level;
             }
         }
         if (in_cache_node) {
-            try builder.end_node();
+            builder.end_node();
         }
 
-        try builder.end_node();
+        builder.end_node();
     }
-    try builder.end_node();
+    builder.end_node();
 }
 
-fn create_memory_fdt(builder: *FdtBuilder, memory: *const Memory) !void {
+fn create_memory_fdt(builder: *FdtBuilder, memory: *const Memory) void {
     const mem_size = memory.guest_addr + memory.mem.len - Memory.DRAM_START;
     // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
     // for an explanation of this.
     const mem_reg_prop = [_]u64{ Memory.DRAM_START, mem_size };
 
-    try builder.begin_node("memory");
-    try builder.add_property([:0]const u8, "device_type", "memory");
-    try builder.add_property([]const u64, "reg", &mem_reg_prop);
-    try builder.end_node();
+    builder.begin_node("memory");
+    builder.add_property([:0]const u8, "device_type", "memory");
+    builder.add_property([]const u64, "reg", &mem_reg_prop);
+    builder.end_node();
 }
 
-fn create_cmdline_fdt(builder: *FdtBuilder, cmdline: [:0]const u8) !void {
-    try builder.begin_node("chosen");
-    try builder.add_property([:0]const u8, "bootargs", cmdline);
-    try builder.end_node();
+fn create_cmdline_fdt(builder: *FdtBuilder, cmdline: [:0]const u8) void {
+    builder.begin_node("chosen");
+    builder.add_property([:0]const u8, "bootargs", cmdline);
+    builder.end_node();
 }
 
-fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
+fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) void {
     _ = gic;
-    try builder.begin_node("intc");
-    try builder.add_property([:0]const u8, "compatible", "arm,gic-400");
-    try builder.add_property(void, "interrupt-controller", {});
+    builder.begin_node("intc");
+    builder.add_property([:0]const u8, "compatible", "arm,gic-400");
+    builder.add_property(void, "interrupt-controller", {});
     // "interrupt-cells" field specifies the number of cells needed to encode an
     // interrupt source. The type shall be a <u32> and the value shall be 3 if no PPI affinity
     // description is required.
-    try builder.add_property(u32, "#interrupt-cells", 3);
-    try builder.add_property([]const u64, "reg", &Gicv2.DEVICE_PROPERTIES);
-    try builder.add_property(u32, "phandle", FdtBuilder.GIC_PHANDLE);
-    try builder.add_property(u32, "#address-cells", 2);
-    try builder.add_property(u32, "#size-cells", 2);
-    try builder.add_property(void, "ranges", {});
+    builder.add_property(u32, "#interrupt-cells", 3);
+    builder.add_property([]const u64, "reg", &Gicv2.DEVICE_PROPERTIES);
+    builder.add_property(u32, "phandle", FdtBuilder.GIC_PHANDLE);
+    builder.add_property(u32, "#address-cells", 2);
+    builder.add_property(u32, "#size-cells", 2);
+    builder.add_property(void, "ranges", {});
 
     const gic_intr = [_]u32{
         FdtBuilder.GIC_FDT_IRQ_TYPE_PPI,
@@ -390,25 +403,25 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) !void {
         FdtBuilder.IRQ_TYPE_LEVEL_HI,
     };
 
-    try builder.add_property([]const u32, "interrupts", &gic_intr);
-    try builder.end_node();
+    builder.add_property([]const u32, "interrupts", &gic_intr);
+    builder.end_node();
 }
 
-fn create_clock_node(builder: *FdtBuilder) !void {
+fn create_clock_node(builder: *FdtBuilder) void {
     // The Advanced Peripheral Bus (APB) is part of the Advanced Microcontroller Bus Architecture
     // (AMBA) protocol family. It defines a low-cost interface that is optimized for minimal power
     // consumption and reduced interface complexity.
     // PCLK is the clock source and this node defines exactly the clock for the APB.
-    try builder.begin_node("apb-pclk");
-    try builder.add_property([:0]const u8, "compatible", "fixed-clock");
-    try builder.add_property(u32, "#clock-cells", 0x0);
-    try builder.add_property(u32, "clock-frequency", 24_000_000);
-    try builder.add_property([:0]const u8, "clock-output-names", "clk24mhz");
-    try builder.add_property(u32, "phandle", FdtBuilder.CLOCK_PHANDLE);
-    try builder.end_node();
+    builder.begin_node("apb-pclk");
+    builder.add_property([:0]const u8, "compatible", "fixed-clock");
+    builder.add_property(u32, "#clock-cells", 0x0);
+    builder.add_property(u32, "clock-frequency", 24_000_000);
+    builder.add_property([:0]const u8, "clock-output-names", "clk24mhz");
+    builder.add_property(u32, "phandle", FdtBuilder.CLOCK_PHANDLE);
+    builder.end_node();
 }
 
-fn create_timer_node(builder: *FdtBuilder) !void {
+fn create_timer_node(builder: *FdtBuilder) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arch_timer.txt
     // These are fixed interrupt numbers for the timer device.
     const interrupts: [12]u32 = .{
@@ -425,71 +438,71 @@ fn create_timer_node(builder: *FdtBuilder) !void {
         10,
         FdtBuilder.IRQ_TYPE_LEVEL_HI,
     };
-    try builder.begin_node("timer");
-    try builder.add_property([:0]const u8, "compatible", "arm,armv8-timer");
-    try builder.add_property(void, "always-on", {});
-    try builder.add_property([]const u32, "interrupts", &interrupts);
-    try builder.end_node();
+    builder.begin_node("timer");
+    builder.add_property([:0]const u8, "compatible", "arm,armv8-timer");
+    builder.add_property(void, "always-on", {});
+    builder.add_property([]const u32, "interrupts", &interrupts);
+    builder.end_node();
 }
 
-fn create_psci_node(builder: *FdtBuilder) !void {
-    try builder.begin_node("psci");
-    try builder.add_property([:0]const u8, "compatible", "arm,psci-0.2");
+fn create_psci_node(builder: *FdtBuilder) void {
+    builder.begin_node("psci");
+    builder.add_property([:0]const u8, "compatible", "arm,psci-0.2");
     // Two methods available: hvc and smc.
     // As per documentation, PSCI calls between a guest and hypervisor may use the HVC conduit
     // instead of SMC. So, since we are using kvm, we need to use hvc.
-    try builder.add_property([:0]const u8, "method", "hvc");
-    try builder.end_node();
+    builder.add_property([:0]const u8, "method", "hvc");
+    builder.end_node();
 }
 
-fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) !void {
+fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
     var buff: [20]u8 = undefined;
-    const name = try std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{device_info.addr});
-    try builder.begin_node(name);
+    const name = std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{device_info.addr}) catch unreachable;
+    builder.begin_node(name);
 
-    try builder.add_property([:0]const u8, "compatible", "ns16550a");
-    try builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
-    try builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
-    try builder.add_property([:0]const u8, "clock-names", "apb_pclk");
-    try builder.add_property(
+    builder.add_property([:0]const u8, "compatible", "ns16550a");
+    builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
+    builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
+    builder.add_property([:0]const u8, "clock-names", "apb_pclk");
+    builder.add_property(
         []const u32,
         "interrupts",
         &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, device_info.irq, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
-    try builder.end_node();
+    builder.end_node();
 }
 
-fn create_rtc_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) !void {
+fn create_rtc_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
     // Driver requirements:
     // https://elixir.bootlin.com/linux/latest/source/Documentation/devicetree/bindings/rtc/arm,pl031.yaml
     // We do not offer the `interrupt` property because the device
     // does not implement interrupt support.
     var buff: [20]u8 = undefined;
-    const name = try std.fmt.bufPrintZ(&buff, "rtc@{x:.8}", .{device_info.addr});
-    try builder.begin_node(name);
+    const name = std.fmt.bufPrintZ(&buff, "rtc@{x:.8}", .{device_info.addr}) catch unreachable;
+    builder.begin_node(name);
 
-    try builder.add_property([:0]const u8, "compatible", "arm,pl031\u{0}arm,primecell");
-    try builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
-    try builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
-    try builder.add_property([:0]const u8, "clock-names", "apb_pclk");
-    try builder.end_node();
+    builder.add_property([:0]const u8, "compatible", "arm,pl031\u{0}arm,primecell");
+    builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
+    builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
+    builder.add_property([:0]const u8, "clock-names", "apb_pclk");
+    builder.end_node();
 }
 
 fn create_virtio_node(
     builder: *FdtBuilder,
     device_info: *const MmioDeviceInfo,
-) !void {
+) void {
     var buff: [30]u8 = undefined;
-    const name = try std.fmt.bufPrintZ(&buff, "virtio_mmio@{x:.8}", .{device_info.addr});
-    try builder.begin_node(name);
+    const name = std.fmt.bufPrintZ(&buff, "virtio_mmio@{x:.8}", .{device_info.addr}) catch unreachable;
+    builder.begin_node(name);
 
-    try builder.add_property([:0]const u8, "compatible", "virtio,mmio");
-    try builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
-    try builder.add_property(
+    builder.add_property([:0]const u8, "compatible", "virtio,mmio");
+    builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
+    builder.add_property(
         []const u32,
         "interrupts",
         &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, device_info.irq, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
-    try builder.add_property(u32, "interrupt-parent", FdtBuilder.GIC_PHANDLE);
-    try builder.end_node();
+    builder.add_property(u32, "interrupt-parent", FdtBuilder.GIC_PHANDLE);
+    builder.end_node();
 }

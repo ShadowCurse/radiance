@@ -108,15 +108,3 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
 
     return DRAM_START + text_offset;
 }
-
-/// Loads fdt at the end of the memory.
-pub fn load_fdt(self: *Self, fdt: *const FdtBuilder) !u64 {
-    const fdt_addr = FdtBuilder.fdt_addr(self.last_addr());
-    const memory_fdt_start = fdt_addr - self.guest_addr;
-    const memory_fdt_end = memory_fdt_start + fdt.data.items.len;
-    @memcpy(
-        self.mem[memory_fdt_start..memory_fdt_end],
-        fdt.data.items[0..fdt.data.items.len],
-    );
-    return fdt_addr;
-}
