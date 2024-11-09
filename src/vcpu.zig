@@ -244,7 +244,7 @@ pub fn run_threaded(
 ) !void {
     self_ref = self;
     const now = try std.time.Instant.now();
-    log.info(@src(), "startup time: {}ms", .{now.since(start_time.*) / 1000_000});
+    log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / 1000});
     try Self.set_thread_handler();
 
     barrier.wait();
