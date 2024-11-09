@@ -61,6 +61,15 @@ pub fn build(b: *std.Build) void {
     });
     unit_tests.linkLibC();
 
+    if (b.option(bool, "generate-coverage", "Generate test coverage")) |_| {
+        unit_tests.setExecCmd(&.{
+            "kcov",
+            "--exclude-pattern=/nix",
+            "kcov-output",
+            null,
+        });
+    }
+
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
