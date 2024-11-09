@@ -45,3 +45,9 @@ To compile kernel use:
 make -Image -j
 ```
 The resulting kernel image will be at `arch/arm64/boot/Image`.
+
+Kcov:
+```bash
+zig test src/main.zig -lc --test-cmd kcov --test-cmd "--exclude-pattern=/nix" --test-cmd kcov-output --test-cmd-bin
+
+```
