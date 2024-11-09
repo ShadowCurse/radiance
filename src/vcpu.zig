@@ -98,7 +98,7 @@ pub fn new(
     const vcpu_mmap_size = try nix.checked_ioctl(
         @src(),
         VcpuError.New,
-        kvm.file.handle,
+        kvm.fd,
         nix.KVM_GET_VCPU_MMAP_SIZE,
         @as(u32, 0),
     );

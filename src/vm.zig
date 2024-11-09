@@ -27,7 +27,7 @@ pub fn new(kvm: *const Kvm) !Self {
     const fd = try nix.checked_ioctl(
         @src(),
         VmError.New,
-        kvm.*.file.handle,
+        kvm.fd,
         nix.KVM_CREATE_VM,
         @as(usize, 0),
     );
