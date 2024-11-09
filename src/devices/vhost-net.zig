@@ -36,7 +36,7 @@ pub const VhostNet = struct {
     virtio_context: VIRTIO_CONTEXT,
 
     tun: nix.fd_t,
-    vhost: ?std.fs.File,
+    vhost: ?nix.fd_t,
 
     const Self = @This();
     const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
@@ -153,14 +153,19 @@ pub const VhostNet = struct {
             tun_flags,
         );
 
-        const vhost = try std.fs.openFileAbsolute(
+        const vhost = try nix.open(
             "/dev/vhost-net",
-            .{ .mode = .read_write, .lock_nonblocking = true },
+            .{
+                .CLOEXEC = true,
+                .NONBLOCK = true,
+                .ACCMODE = .RDWR,
+            },
+            0,
         );
         _ = try nix.checked_ioctl(
             @src(),
             VirtioNetError.ActivateVHOST_SET_OWNER,
-            vhost.handle,
+            vhost,
             nix.VHOST_SET_OWNER,
             .{},
         );
@@ -173,7 +178,7 @@ pub const VhostNet = struct {
             _ = try nix.checked_ioctl(
                 @src(),
                 VirtioNetError.ActivateVHOST_SET_FEATURES,
-                vhost.handle,
+                vhost,
                 nix.VHOST_SET_FEATURES,
                 &features,
             );
@@ -193,7 +198,7 @@ pub const VhostNet = struct {
             _ = try nix.checked_ioctl(
                 @src(),
                 VirtioNetError.ActivateVHOST_SET_MEM_TABLE,
-                vhost.handle,
+                vhost,
                 nix.VHOST_SET_MEM_TABLE,
                 &memory,
             );
@@ -207,7 +212,7 @@ pub const VhostNet = struct {
             _ = try nix.checked_ioctl(
                 @src(),
                 VirtioNetError.ActivateVHOST_SET_VRING_CALL,
-                vhost.handle,
+                vhost,
                 nix.VHOST_SET_VRING_CALL,
                 &vring,
             );
@@ -221,7 +226,7 @@ pub const VhostNet = struct {
             _ = try nix.checked_ioctl(
                 @src(),
                 VirtioNetError.ActivateVHOST_SET_VRING_KICK,
-                vhost.handle,
+                vhost,
                 nix.VHOST_SET_VRING_KICK,
                 &vring,
             );
@@ -236,7 +241,7 @@ pub const VhostNet = struct {
                 _ = try nix.checked_ioctl(
                     @src(),
                     VirtioNetError.ActivateVHOST_SET_VRING_NUM,
-                    vhost.handle,
+                    vhost,
                     nix.VHOST_SET_VRING_NUM,
                     &vring,
                 );
@@ -254,7 +259,7 @@ pub const VhostNet = struct {
                 _ = try nix.checked_ioctl(
                     @src(),
                     VirtioNetError.ActivateVHOST_SET_VRING_ADDR,
-                    vhost.handle,
+                    vhost,
                     nix.VHOST_SET_VRING_ADDR,
                     &vring,
                 );
@@ -268,7 +273,7 @@ pub const VhostNet = struct {
                 _ = try nix.checked_ioctl(
                     @src(),
                     VirtioNetError.ActivateVHOST_NET_SET_BACKEND,
-                    vhost.handle,
+                    vhost,
                     nix.VHOST_NET_SET_BACKEND,
                     &vring,
                 );
