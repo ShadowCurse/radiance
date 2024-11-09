@@ -83,7 +83,7 @@ pub fn main() !void {
     }
 
     // create interrupt controller
-    const gicv2 = try Gicv2.new(&vm);
+    try Gicv2.new(&vm);
 
     // create mmio devices
     var mmio = Mmio.new();
@@ -157,7 +157,6 @@ pub fn main() !void {
         &memory,
         mpidrs,
         cmdline_0,
-        &gicv2,
         uart_device_info,
         rtc_device_info,
         virtio_device_infos,

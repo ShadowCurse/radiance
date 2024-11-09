@@ -106,17 +106,13 @@ pub const FdtBuilder = struct {
     const FDT_NOP: u32 = 0x00000004;
     const FDT_END: u32 = 0x00000009;
 
-    // This is a value for uniquely identifying the FDT node declaring the interrupt controller.
     const GIC_PHANDLE: u32 = 1;
-    // This is a value for uniquely identifying the FDT node containing the clock definition.
     const CLOCK_PHANDLE: u32 = 2;
-    // As per kvm tool and
-    // https://www.kernel.org/doc/Documentation/devicetree/bindings/interrupt-controller/arm%2Cgic.txt
-    // Look for "The 1st cell..."
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arm%2Cgic.yaml
     const GIC_FDT_IRQ_TYPE_SPI: u32 = 0;
     const GIC_FDT_IRQ_TYPE_PPI: u32 = 1;
 
-    // From https://elixir.bootlin.com/linux/v4.9.62/source/include/dt-bindings/interrupt-controller/irq.h#L17
+    // https://github.com/torvalds/linux/blob/master/include/dt-bindings/interrupt-controller/irq.h
     const IRQ_TYPE_EDGE_RISING: u32 = 1;
     const IRQ_TYPE_LEVEL_HI: u32 = 4;
 
@@ -228,14 +224,13 @@ pub fn create_fdt(
     memory: *const Memory,
     mpidrs: []const u64,
     cmdline: [:0]const u8,
-    gic: *const Gicv2,
     serial_device_info: MmioDeviceInfo,
     rtc_device_info: MmioDeviceInfo,
     virtio_devices_info: []const MmioDeviceInfo,
 ) !u64 {
+    // https://mjmwired.net/kernel/Documentation/devicetree/booting-without-of.txt
     const ADDRESS_CELLS: u32 = 0x2;
     const SIZE_CELLS: u32 = 0x2;
-    const GIC_PHANDLE: u32 = 1;
 
     var fdt_builder = FdtBuilder.new(allocator, memory);
 
@@ -243,18 +238,14 @@ pub fn create_fdt(
     fdt_builder.begin_node(&.{0});
 
     fdt_builder.add_property([:0]const u8, "compatible", "linux,dummy-virt");
-    // For info on #address-cells and size-cells read "Note about cells and address representation"
-    // from the above mentioned txt file.
     fdt_builder.add_property(u32, "#address-cells", ADDRESS_CELLS);
     fdt_builder.add_property(u32, "#size-cells", SIZE_CELLS);
-    // This is not mandatory but we use it to point the root node to the node
-    // containing description of the interrupt controller for this VM.
-    fdt_builder.add_property(u32, "interrupt-parent", GIC_PHANDLE);
+    fdt_builder.add_property(u32, "interrupt-parent", FdtBuilder.GIC_PHANDLE);
 
     try create_cpu_fdt(&fdt_builder, mpidrs);
     create_memory_fdt(&fdt_builder, memory);
     create_cmdline_fdt(&fdt_builder, cmdline);
-    create_gic_fdt(&fdt_builder, gic);
+    create_gic_fdt(&fdt_builder);
     create_timer_node(&fdt_builder);
     create_clock_node(&fdt_builder);
     create_psci_node(&fdt_builder);
@@ -266,7 +257,6 @@ pub fn create_fdt(
         create_virtio_node(&fdt_builder, info);
     }
 
-    // End Header node.
     fdt_builder.end_node();
     fdt_builder.finish();
 
@@ -274,17 +264,13 @@ pub fn create_fdt(
 }
 
 fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
-    // This phandle is used to uniquely identify the FDT nodes containing cache information. Each cpu
-    // can have a variable number of caches, some of these caches may be shared with other cpus.
-    // So, we start the indexing of the phandles used from a really big number and then substract from
-    // it as we need more and more phandle for each cache representation.
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml
+    // In order to not overlap with other phandles start from a big offset.
     const LAST_CACHE_PHANDLE: u32 = 4000;
 
     const cache_dir = try CacheDir.new();
     const cache_entries = try cache_dir.get_caches();
-    // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml.
     builder.begin_node("cpus");
-    // As per documentation, on ARM v8 64-bit systems value should be set to 2.
     builder.add_property(u32, "#address-cells", 0x02);
     builder.add_property(u32, "#size-cells", 0x0);
 
@@ -294,18 +280,13 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
         builder.begin_node(cpu_name);
         builder.add_property([:0]const u8, "device_type", "cpu");
         builder.add_property([:0]const u8, "compatible", "arm,arm-v8");
-        // The power state coordination interface (PSCI) needs to be enabled for
-        // all vcpus.
         builder.add_property([:0]const u8, "enable-method", "psci");
-        // Set the field to first 24 bits of the MPIDR - Multiprocessor Affinity Register.
-        // See http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0488c/BABHBJCI.html.
         builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
         for (cache_entries) |entry| {
             const cache = entry orelse continue;
             if (cache.level != 1) {
                 continue;
             }
-            // https://github.com/devicetree-org/devicetree-specification/releases/download/v0.3/devicetree-specification-v0.3.pdf
             const cache_size: u32 = @intCast(cache.size);
             builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
 
@@ -365,9 +346,8 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
 }
 
 fn create_memory_fdt(builder: *FdtBuilder, memory: *const Memory) void {
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/usage-model.rst
     const mem_size = memory.guest_addr + memory.mem.len - Memory.DRAM_START;
-    // See https://github.com/torvalds/linux/blob/master/Documentation/devicetree/booting-without-of.txt#L960
-    // for an explanation of this.
     const mem_reg_prop = [_]u64{ Memory.DRAM_START, mem_size };
 
     builder.begin_node("memory");
@@ -382,14 +362,11 @@ fn create_cmdline_fdt(builder: *FdtBuilder, cmdline: [:0]const u8) void {
     builder.end_node();
 }
 
-fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) void {
-    _ = gic;
+fn create_gic_fdt(builder: *FdtBuilder) void {
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arm%2Cgic.yaml
     builder.begin_node("intc");
     builder.add_property([:0]const u8, "compatible", "arm,gic-400");
     builder.add_property(void, "interrupt-controller", {});
-    // "interrupt-cells" field specifies the number of cells needed to encode an
-    // interrupt source. The type shall be a <u32> and the value shall be 3 if no PPI affinity
-    // description is required.
     builder.add_property(u32, "#interrupt-cells", 3);
     builder.add_property([]const u64, "reg", &Gicv2.DEVICE_PROPERTIES);
     builder.add_property(u32, "phandle", FdtBuilder.GIC_PHANDLE);
@@ -408,10 +385,7 @@ fn create_gic_fdt(builder: *FdtBuilder, gic: *const Gicv2) void {
 }
 
 fn create_clock_node(builder: *FdtBuilder) void {
-    // The Advanced Peripheral Bus (APB) is part of the Advanced Microcontroller Bus Architecture
-    // (AMBA) protocol family. It defines a low-cost interface that is optimized for minimal power
-    // consumption and reduced interface complexity.
-    // PCLK is the clock source and this node defines exactly the clock for the APB.
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/clock/fixed-clock.yaml
     builder.begin_node("apb-pclk");
     builder.add_property([:0]const u8, "compatible", "fixed-clock");
     builder.add_property(u32, "#clock-cells", 0x0);
@@ -422,8 +396,8 @@ fn create_clock_node(builder: *FdtBuilder) void {
 }
 
 fn create_timer_node(builder: *FdtBuilder) void {
-    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arch_timer.txt
-    // These are fixed interrupt numbers for the timer device.
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/timer/arm%2Carch_timer.yaml
+    // Use 13, 14, 11, 10 interrupts as in the example
     const interrupts: [12]u32 = .{
         FdtBuilder.GIC_FDT_IRQ_TYPE_PPI,
         13,
@@ -446,16 +420,15 @@ fn create_timer_node(builder: *FdtBuilder) void {
 }
 
 fn create_psci_node(builder: *FdtBuilder) void {
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/psci.yaml
     builder.begin_node("psci");
     builder.add_property([:0]const u8, "compatible", "arm,psci-0.2");
-    // Two methods available: hvc and smc.
-    // As per documentation, PSCI calls between a guest and hypervisor may use the HVC conduit
-    // instead of SMC. So, since we are using kvm, we need to use hvc.
     builder.add_property([:0]const u8, "method", "hvc");
     builder.end_node();
 }
 
 fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/serial/8250.yaml
     var buff: [20]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{device_info.addr}) catch unreachable;
     builder.begin_node(name);
@@ -473,10 +446,7 @@ fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
 }
 
 fn create_rtc_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
-    // Driver requirements:
-    // https://elixir.bootlin.com/linux/latest/source/Documentation/devicetree/bindings/rtc/arm,pl031.yaml
-    // We do not offer the `interrupt` property because the device
-    // does not implement interrupt support.
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/rtc/arm%2Cpl031.yaml
     var buff: [20]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "rtc@{x:.8}", .{device_info.addr}) catch unreachable;
     builder.begin_node(name);
@@ -492,6 +462,7 @@ fn create_virtio_node(
     builder: *FdtBuilder,
     device_info: *const MmioDeviceInfo,
 ) void {
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/virtio/mmio.yaml
     var buff: [30]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "virtio_mmio@{x:.8}", .{device_info.addr}) catch unreachable;
     builder.begin_node(name);
