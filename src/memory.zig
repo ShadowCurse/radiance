@@ -73,11 +73,15 @@ pub fn last_addr(self: *const Self) u64 {
 /// Returns the guest memory address where
 /// the executable code starts.
 pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
-    var file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-
-    const file_meta = try file.metadata();
-    const kernel_size = file_meta.size();
+    const fd = try nix.open(
+        path,
+        .{
+            .CLOEXEC = true,
+            .ACCMODE = .RDONLY,
+        },
+        0,
+    );
+    const meta = try nix.statx(fd);
 
     const prot = nix.PROT.READ | nix.PROT.WRITE;
     const flags = nix.MAP{
@@ -87,10 +91,10 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
     };
     const file_mem = try nix.mmap(
         self.mem.ptr,
-        kernel_size,
+        meta.size,
         prot,
         flags,
-        file.handle,
+        fd,
         0,
     );
 
