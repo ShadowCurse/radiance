@@ -25,7 +25,7 @@ pub const VirtioBlock = struct {
     read_only: bool,
     memory: *Memory,
     virtio_context: VIRTIO_CONTEXT,
-    file: std.fs.File,
+    fd: nix.fd_t,
     block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
     const Self = @This();
@@ -38,24 +38,29 @@ pub const VirtioBlock = struct {
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
     ) !Self {
-        const file = try std.fs.cwd().openFile(file_path, .{
-            .mode = if (read_only) .read_only else .read_write,
-        });
-        const meta = try file.metadata();
-        const nsectors = meta.size() >> SECTOR_SHIFT;
+        const fd = try nix.open(
+            file_path,
+            .{
+                .CLOEXEC = true,
+                .ACCMODE = if (read_only) .RDONLY else .RDWR,
+            },
+            0,
+        );
+        const statx = try nix.statx(fd);
+        const nsectors = statx.size >> SECTOR_SHIFT;
 
         var block_id = [_]u8{0} ** nix.VIRTIO_BLK_ID_BYTES;
-        var dev_major = meta.inner.statx.dev_major;
+        var dev_major = statx.dev_major;
         dev_major = dev_major << 16;
         dev_major = dev_major << 16;
-        const dev = meta.inner.statx.dev_minor | dev_major;
+        const dev = statx.dev_minor | dev_major;
 
-        var rdev_major = meta.inner.statx.rdev_major;
+        var rdev_major = statx.rdev_major;
         rdev_major = rdev_major << 16;
         rdev_major = rdev_major << 16;
-        const rdev = meta.inner.statx.rdev_minor | rdev_major;
+        const rdev = statx.rdev_minor | rdev_major;
 
-        _ = try std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, meta.inner.statx.ino });
+        _ = try std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, statx.ino });
 
         var virtio_context = try VIRTIO_CONTEXT.new(
             vm,
@@ -76,7 +81,7 @@ pub const VirtioBlock = struct {
             .read_only = read_only,
             .memory = memory,
             .virtio_context = virtio_context,
-            .file = file,
+            .fd = fd,
             .block_id = block_id,
         };
     }
@@ -134,17 +139,17 @@ pub const VirtioBlock = struct {
                 var data_transfered: usize = 0;
                 switch (header.type) {
                     nix.VIRTIO_BLK_T_IN => {
-                        try self.file.seekTo(offset);
+                        try nix.lseek_SET(self.fd, offset);
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        data_transfered = try self.file.read(@volatileCast(buffer));
+                        data_transfered = try nix.read(self.fd, @volatileCast(buffer));
                     },
                     nix.VIRTIO_BLK_T_OUT => {
-                        try self.file.seekTo(offset);
+                        try nix.lseek_SET(self.fd, offset);
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        data_transfered = try self.file.write(@volatileCast(buffer));
+                        data_transfered = try nix.write(self.fd, @volatileCast(buffer));
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
-                        try self.file.sync();
+                        try nix.fsync(self.fd);
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
@@ -160,7 +165,7 @@ pub const VirtioBlock = struct {
                 self.virtio_context.queues[self.virtio_context.selected_queue]
                     .add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
             } else {
-                try self.file.sync();
+                try nix.fsync(self.fd);
 
                 const status_ptr = self.memory.get_ptr(u32, second_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
