@@ -359,6 +359,31 @@ pub const readv = std.posix.readv;
 pub const write = std.posix.write;
 pub const writev = std.posix.writev;
 pub const accept = std.posix.accept;
+pub const lseek_SET = std.posix.lseek_SET;
+pub const fsync = std.posix.fsync;
+pub const errno = std.posix.errno;
+
+pub const Statx = std.os.linux.Statx;
+pub fn statx(fd: fd_t) !Statx {
+    var stx = std.mem.zeroes(Statx);
+    const rcx = std.os.linux.statx(
+        fd,
+        "\x00",
+        std.os.linux.AT.EMPTY_PATH,
+        std.os.linux.STATX_TYPE |
+            std.os.linux.STATX_MODE |
+            std.os.linux.STATX_ATIME |
+            std.os.linux.STATX_MTIME |
+            std.os.linux.STATX_BTIME,
+        &stx,
+    );
+
+    switch (errno(rcx)) {
+        .SUCCESS => {},
+        else => |e| return std.posix.unexpectedErrno(e),
+    }
+    return stx;
+}
 
 pub const FD_CLOEXEC = std.posix.FD_CLOEXEC;
 pub const memfd_create = std.posix.memfd_create;
