@@ -147,26 +147,21 @@ pub fn main() !void {
     const cmdline_0 = try cmdline.sentinel_str();
 
     // create fdt
-    const fdt_addr = fdt: {
-        const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
-        for (mpidrs, vcpus) |*mpidr, *vcpu| {
-            mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
-        }
+    const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
+    for (mpidrs, vcpus) |*mpidr, *vcpu| {
+        mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
+    }
 
-        var fdt = try FDT.create_fdt(
-            tmp_alloc,
-            &memory,
-            mpidrs,
-            cmdline_0,
-            &gicv2,
-            uart_device_info,
-            rtc_device_info,
-            virtio_device_infos,
-        );
-
-        const fdt_addr = try memory.load_fdt(&fdt);
-        break :fdt fdt_addr;
-    };
+    const fdt_addr = try FDT.create_fdt(
+        tmp_alloc,
+        &memory,
+        mpidrs,
+        cmdline_0,
+        &gicv2,
+        uart_device_info,
+        rtc_device_info,
+        virtio_device_infos,
+    );
 
     // configure vcpus
     try vcpus[0].set_reg(u64, Vcpu.PC, kernel_load_address);
