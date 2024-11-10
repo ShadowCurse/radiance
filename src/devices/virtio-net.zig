@@ -332,14 +332,13 @@ const RxChains = struct {
                 bytes_left -= chain_info.capacity;
             }
         }
+        net_hdr_v1.num_buffers = chains_used;
 
         queue.next_used = queue.next_used +% chains_used;
         queue.suppressed = queue.suppressed +% chains_used;
-        used_ring.idx = queue.next_used;
-
-        net_hdr_v1.num_buffers = chains_used;
 
         @fence(.release);
+        used_ring.idx = queue.next_used;
     }
 };
 

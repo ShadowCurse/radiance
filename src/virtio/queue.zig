@@ -156,9 +156,8 @@ pub const Queue = struct {
         self.next_used = self.next_used +% 1;
         self.suppressed = self.suppressed +% 1;
 
-        used_ring.idx = self.next_used;
-
         @fence(.release);
+        used_ring.idx = self.next_used;
     }
 };
 
