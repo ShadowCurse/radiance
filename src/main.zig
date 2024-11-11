@@ -36,10 +36,10 @@ pub fn main() !void {
     const args = try args_parser.parse(Args);
 
     var tmp_memory = allocator.TmpMemory.init();
-    const tmp_alloc = tmp_memory.allocator();
+    const config_alloc = tmp_memory.allocator();
 
     const config = try config_parser.parse(
-        tmp_alloc,
+        config_alloc,
         args.config_path,
     );
 
@@ -64,7 +64,12 @@ pub fn main() !void {
     const permanent_alloc = permanent_memory.allocator();
 
     var memory = try Memory.init(config.machine.memory_mb << 20);
-    const kernel_load_address = try memory.load_linux_kernel(config.kernel.path);
+    const load_result = try memory.load_linux_kernel(config.kernel.path);
+    const kernel_load_address = load_result[0];
+    const kernel_size = load_result[1];
+
+    var guest_memory = allocator.GuestMemory.init(&memory, kernel_size);
+    const tmp_alloc = guest_memory.allocator();
 
     const kvm = try Kvm.new();
 

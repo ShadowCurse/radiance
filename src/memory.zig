@@ -71,9 +71,9 @@ pub fn last_addr(self: *const Self) u64 {
 
 /// Loads the linux kernel into the memory.
 /// Returns the guest memory address where
-/// the executable code starts.
+/// the executable code starts and a size of the kernel.
 /// https://github.com/torvalds/linux/blob/master/Documentation/arch/arm64/booting.rst
-pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
+pub fn load_linux_kernel(self: *Self, path: []const u8) !struct { u64, u64 } {
     const fd = try nix.open(
         path,
         .{
@@ -107,5 +107,5 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !u64 {
         text_offset = 0x80000;
     }
 
-    return DRAM_START + text_offset;
+    return .{ DRAM_START + text_offset, meta.size };
 }
