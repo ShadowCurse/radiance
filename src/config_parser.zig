@@ -1,6 +1,8 @@
 const std = @import("std");
+const nix = @import("nix.zig");
+
 const Allocator = std.mem.Allocator;
-const Reader = std.fs.File.Reader;
+const SplitIterator = std.mem.SplitIterator;
 
 pub const ConfigParseError = error{
     UnknownTableType,
@@ -9,264 +11,159 @@ pub const ConfigParseError = error{
 };
 
 pub const MachineConfig = struct {
-    vcpus: u32,
-    memory_mb: u32,
+    vcpus: u32 = 0,
+    memory_mb: u32 = 0,
 
     const Self = @This();
 
-    pub fn default() Self {
-        return Self{
-            .vcpus = 0,
-            .memory_mb = 0,
-        };
-    }
-
-    fn update(
-        self: *Self,
-        reader: *Reader,
-        buffer: *std.ArrayList(u8),
-        allocator: Allocator,
-    ) !void {
-        const new_self = try parse_type(Self, reader, buffer, allocator);
+    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        const new_self = try parse_type(Self, line_iter);
         self.* = new_self;
     }
 };
 
 pub const KernelConfig = struct {
-    path: []const u8,
+    path: []const u8 = "",
 
     const Self = @This();
 
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        allocator.free(self.path);
-    }
-
-    pub fn default() Self {
-        return Self{ .path = "" };
-    }
-
-    fn update(
-        self: *Self,
-        reader: *Reader,
-        buffer: *std.ArrayList(u8),
-        allocator: Allocator,
-    ) !void {
-        const new_self = try parse_type(Self, reader, buffer, allocator);
+    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        const new_self = try parse_type(Self, line_iter);
         self.* = new_self;
     }
 };
 
 pub const DriveConfig = struct {
-    read_only: bool,
-    path: []const u8,
-
-    const Self = @This();
-
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        allocator.free(self.path);
-    }
-
-    pub fn default() Self {
-        return Self{ .read_only = false, .path = "" };
-    }
+    read_only: bool = false,
+    path: []const u8 = "",
 };
 
 pub const DrivesConfigs = struct {
-    drives: std.ArrayListUnmanaged(DriveConfig),
+    drives: std.BoundedArray(DriveConfig, 8) = .{},
 
     const Self = @This();
 
-    pub fn default() Self {
-        return Self{
-            .drives = std.ArrayListUnmanaged(DriveConfig){},
-        };
-    }
-
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        for (self.drives.items) |*drive| {
-            drive.deinit(allocator);
-        }
-        self.drives.deinit(allocator);
-    }
-
-    fn update(
-        self: *Self,
-        reader: *Reader,
-        buffer: *std.ArrayList(u8),
-        allocator: Allocator,
-    ) !void {
-        const new_config = try parse_type(DriveConfig, reader, buffer, allocator);
-        try self.drives.append(allocator, new_config);
+    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        const new_config = try parse_type(DriveConfig, line_iter);
+        try self.drives.append(new_config);
     }
 };
 
 pub const NetConfig = struct {
-    dev_name: [:0]const u8,
-    mac: ?[6]u8,
-    vhost: bool,
-
-    const Self = @This();
-
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        allocator.free(self.dev_name);
-    }
-
-    pub fn default() Self {
-        return Self{
-            .dev_name = "",
-            .mac = null,
-            .vhost = false,
-        };
-    }
+    dev_name: []const u8 = "",
+    mac: ?[6]u8 = null,
+    vhost: bool = false,
 };
 
 pub const NetConfigs = struct {
-    networks: std.ArrayListUnmanaged(NetConfig),
+    networks: std.BoundedArray(NetConfig, 8) = .{},
 
     const Self = @This();
 
-    pub fn default() Self {
-        return Self{
-            .networks = std.ArrayListUnmanaged(NetConfig){},
-        };
-    }
-
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        for (self.networks.items) |*net| {
-            net.deinit(allocator);
-        }
-        self.networks.deinit(allocator);
-    }
-
-    fn update(
-        self: *Self,
-        reader: *Reader,
-        buffer: *std.ArrayList(u8),
-        allocator: Allocator,
-    ) !void {
-        const new_config = try parse_type(NetConfig, reader, buffer, allocator);
-        try self.networks.append(allocator, new_config);
+    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        const new_config = try parse_type(NetConfig, line_iter);
+        try self.networks.append(new_config);
     }
 };
 
 pub const GdbConfig = struct {
-    socket_path: ?[]const u8,
+    socket_path: ?[]const u8 = null,
 
     const Self = @This();
 
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        if (self.socket_path) |sp| {
-            allocator.free(sp);
-        }
-    }
-
-    pub fn default() Self {
-        return Self{ .socket_path = null };
-    }
-
-    fn update(
-        self: *Self,
-        reader: *Reader,
-        buffer: *std.ArrayList(u8),
-        allocator: Allocator,
-    ) !void {
-        const new_self = try parse_type(Self, reader, buffer, allocator);
+    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        const new_self = try parse_type(Self, line_iter);
         self.* = new_self;
     }
 };
 
 pub const Config = struct {
-    machine: MachineConfig,
-    kernel: KernelConfig,
-    drives: DrivesConfigs,
-    networks: NetConfigs,
-    gdb: GdbConfig,
+    machine: MachineConfig = .{},
+    kernel: KernelConfig = .{},
+    drives: DrivesConfigs = .{},
+    networks: NetConfigs = .{},
+    gdb: GdbConfig = .{},
+};
+
+pub const ParseResult = struct {
+    config: Config = .{},
+    file_mem: []align(std.mem.page_size) const u8 = undefined,
 
     const Self = @This();
 
-    pub fn default() Self {
-        return Self{
-            .machine = MachineConfig.default(),
-            .kernel = KernelConfig.default(),
-            .drives = DrivesConfigs.default(),
-            .networks = NetConfigs.default(),
-            .gdb = GdbConfig.default(),
-        };
-    }
-
-    pub fn deinit(self: *Self, allocator: Allocator) void {
-        self.kernel.deinit(allocator);
-        self.drives.deinit(allocator);
-        self.networks.deinit(allocator);
-        self.gdb.deinit(allocator);
+    pub fn deinit(self: *const Self) void {
+        nix.munmap(self.file_mem);
     }
 };
 
-pub fn parse(allocator: Allocator, config_path: []const u8) !Config {
-    var file_options: std.fs.File.OpenFlags = .{};
-    file_options.mode = std.fs.File.OpenMode.read_write;
-    const file = try std.fs.cwd().openFile(config_path, file_options);
-    var reader = file.reader();
+pub fn parse(config_path: []const u8) !ParseResult {
+    const fd = try nix.open(
+        config_path,
+        .{
+            .ACCMODE = .RDONLY,
+        },
+        0,
+    );
+    defer nix.close(fd);
 
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
+    const statx = try nix.statx(fd);
+    const file_mem = try nix.mmap(
+        null,
+        statx.size,
+        nix.PROT.READ,
+        .{
+            .TYPE = .PRIVATE,
+        },
+        fd,
+        0,
+    );
 
+    var line_iter = std.mem.splitScalar(u8, file_mem, '\n');
     const type_fields = comptime @typeInfo(Config).Struct.fields;
-    var config = Config.default();
-    errdefer config.deinit(allocator);
+    var config: Config = .{};
 
-    while (true) {
-        const writer = buffer.writer();
-        reader.streamUntilDelimiter(writer, '\n', null) catch {
-            break;
-        };
-
-        if (buffer.items.len != 0) {
+    while (line_iter.next()) |line| {
+        if (line.len != 0) {
             const filed_name = blk: {
                 // Skip comments
-                if (std.mem.startsWith(u8, buffer.items, "#")) {
+                if (std.mem.startsWith(u8, line, "#")) {
                     continue;
                 } else
                 // Find groups
-                if (std.mem.startsWith(u8, buffer.items, "[[")) {
-                    break :blk buffer.items[2 .. buffer.items.len - 2];
+                if (std.mem.startsWith(u8, line, "[[")) {
+                    break :blk line[2 .. line.len - 2];
                 } else
                 // Find single enements
-                if (std.mem.startsWith(u8, buffer.items, "[")) {
-                    break :blk buffer.items[1 .. buffer.items.len - 1];
+                if (std.mem.startsWith(u8, line, "[")) {
+                    break :blk line[1 .. line.len - 1];
                 } else {
                     return ConfigParseError.UnknownTableType;
                 }
             };
             inline for (type_fields) |field| {
                 if (std.mem.eql(u8, field.name, filed_name)) {
-                    buffer.clearRetainingCapacity();
-                    try @field(config, field.name).update(&reader, &buffer, allocator);
+                    try @field(config, field.name).update(&line_iter);
                     break;
                 }
             }
         }
-
-        buffer.clearRetainingCapacity();
     }
 
-    return config;
+    return .{
+        .config = config,
+        .file_mem = file_mem,
+    };
 }
 
-fn parse_type(comptime T: type, reader: *Reader, buffer: *std.ArrayList(u8), allocator: Allocator) !T {
+fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
     const type_fields = comptime @typeInfo(T).Struct.fields;
-    var t: T = T.default();
-    while (true) {
-        const writer = buffer.writer();
-        reader.streamUntilDelimiter(writer, '\n', null) catch {
-            break;
-        };
-
-        if (buffer.items.len == 0 or buffer.items[0] == '[') {
+    var t: T = .{};
+    while (line_iter.next()) |line| {
+        if (line.len == 0 or line[0] == '[') {
             break;
         }
 
-        var iter = std.mem.splitScalar(u8, buffer.items, '=');
+        var iter = std.mem.splitScalar(u8, line, '=');
         const field_name = blk: {
             if (iter.next()) |name| {
                 break :blk std.mem.trim(u8, name, " ");
@@ -303,15 +200,15 @@ fn parse_type(comptime T: type, reader: *Reader, buffer: *std.ArrayList(u8), all
                     },
                     [:0]const u8 => {
                         const string = std.mem.trim(u8, field_value, "\"");
-                        @field(t, field.name) = try allocator.dupeZ(u8, string);
+                        @field(t, field.name) = string;
                     },
                     []const u8 => {
                         const string = std.mem.trim(u8, field_value, "\"");
-                        @field(t, field.name) = try allocator.dupe(u8, string);
+                        @field(t, field.name) = string;
                     },
                     ?[]const u8 => {
                         const string = std.mem.trim(u8, field_value, "\"");
-                        @field(t, field.name) = try allocator.dupe(u8, string);
+                        @field(t, field.name) = string;
                     },
                     u32 => {
                         @field(t, field.name) = try std.fmt.parseInt(u32, field_value, 10);
@@ -323,7 +220,6 @@ fn parse_type(comptime T: type, reader: *Reader, buffer: *std.ArrayList(u8), all
                 }
             }
         }
-        buffer.clearRetainingCapacity();
     }
     return t;
 }

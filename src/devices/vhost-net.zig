@@ -43,7 +43,7 @@ pub const VhostNet = struct {
 
     pub fn new(
         vm: *const Vm,
-        tap_name: [:0]const u8,
+        tap_name: []const u8,
         mac: ?[6]u8,
         memory: *Memory,
         mmio_info: MmioDeviceInfo,

@@ -3,30 +3,6 @@ const nix = @import("nix.zig");
 
 const Memory = @import("memory.zig");
 
-pub const TmpMemory = struct {
-    inner: std.heap.ArenaAllocator,
-
-    const Self = @This();
-
-    pub fn init() Self {
-        return .{
-            .inner = std.heap.ArenaAllocator.init(std.heap.page_allocator),
-        };
-    }
-
-    pub fn deinit(self: *const Self) void {
-        self.inner.deinit();
-    }
-
-    pub fn allocator(self: *Self) std.mem.Allocator {
-        return self.inner.allocator();
-    }
-
-    pub fn used_capacity(self: *const Self) usize {
-        return self.inner.queryCapacity();
-    }
-};
-
 pub const GuestMemory = struct {
     inner: std.heap.FixedBufferAllocator,
 
