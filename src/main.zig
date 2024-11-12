@@ -34,18 +34,12 @@ const Args = struct {
 pub fn main() !void {
     const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
-
-    var tmp_memory = allocator.TmpMemory.init();
-    const config_alloc = tmp_memory.allocator();
-
-    const config = try config_parser.parse(
-        config_alloc,
-        args.config_path,
-    );
+    const config_parse_result = try config_parser.parse(args.config_path);
+    const config = &config_parse_result.config;
 
     var vhost_net_count: u32 = 0;
     var virtio_net_count: u32 = 0;
-    for (config.networks.networks.items) |*net_config| {
+    for (config.networks.networks.slice()) |*net_config| {
         if (net_config.vhost) {
             vhost_net_count += 1;
         } else {
@@ -55,7 +49,7 @@ pub fn main() !void {
 
     const permanent_memory_size = @sizeOf(Vcpu) * config.machine.vcpus +
         @sizeOf(std.Thread) * config.machine.vcpus +
-        @sizeOf(VirtioBlock) * config.drives.drives.items.len +
+        @sizeOf(VirtioBlock) * @as(u32, @intCast(config.drives.drives.len)) +
         @sizeOf(VirtioNet) * virtio_net_count +
         @sizeOf(VhostNet) * vhost_net_count;
 
@@ -95,7 +89,7 @@ pub fn main() !void {
     const uart_device_info = mmio.allocate();
     const rtc_device_info = mmio.allocate();
 
-    const virtio_device_infos_num = config.drives.drives.items.len + config.networks.networks.items.len;
+    const virtio_device_infos_num = config.drives.drives.len + config.networks.networks.len;
     var virtio_device_infos = try tmp_alloc.alloc(Mmio.MmioDeviceInfo, virtio_device_infos_num);
     for (0..virtio_device_infos_num) |i| {
         virtio_device_infos[i] = mmio.allocate();
@@ -104,9 +98,9 @@ pub fn main() !void {
     var uart = try Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new();
 
-    const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, config.drives.drives.items.len);
-    const vb_infos = virtio_device_infos[0..config.drives.drives.items.len];
-    for (virtio_blocks, config.drives.drives.items, vb_infos) |*block, *drive, mmio_info| {
+    const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, config.drives.drives.len);
+    const vb_infos = virtio_device_infos[0..config.drives.drives.len];
+    for (virtio_blocks, config.drives.drives.slice(), vb_infos) |*block, *drive, mmio_info| {
         block.* = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
     }
 
@@ -115,8 +109,8 @@ pub fn main() !void {
 
     var virtio_net_index: u8 = 0;
     var vhost_net_index: u8 = 0;
-    const net_infos = virtio_device_infos[config.drives.drives.items.len..];
-    for (config.networks.networks.items, net_infos) |*net_config, mmio_info| {
+    const net_infos = virtio_device_infos[config.drives.drives.len..];
+    for (config.networks.networks.slice(), net_infos) |*net_config, mmio_info| {
         if (net_config.vhost) {
             vhost_nets[vhost_net_index] = try VhostNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
             vhost_net_index += 1;
@@ -182,9 +176,8 @@ pub fn main() !void {
     // start vcpu threads
     const vcpu_threads = try permanent_alloc.alloc(std.Thread, config.machine.vcpus);
 
-    // free temporary memory
-    log.info(@src(), "temporary memory used: {} bytes", .{tmp_memory.used_capacity()});
-    tmp_memory.deinit();
+    // free config memory
+    config_parse_result.deinit();
 
     std.log.info("starting vcpu threads", .{});
     var barrier: std.Thread.ResetEvent = .{};
