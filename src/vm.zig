@@ -13,6 +13,7 @@ const nix = nix: {
 };
 
 fd: nix.fd_t,
+num_slots: u32,
 
 const Self = @This();
 
@@ -33,23 +34,14 @@ pub fn new(kvm: *const Kvm) !Self {
     );
     return Self{
         .fd = fd,
+        .num_slots = 0,
     };
 }
 
-pub fn set_memory(self: *const Self, memory: *const Memory) !void {
-    const memory_region: nix.kvm_userspace_memory_region = .{
-        .slot = 0,
-        .flags = 0,
-        .guest_phys_addr = memory.guest_addr,
-        .memory_size = @as(u64, memory.mem.len),
-        .userspace_addr = @intFromPtr(memory.mem.ptr),
-    };
-
-    log.debug(@src(), "set_memory slot: {}", .{memory_region.slot});
-    log.debug(@src(), "set_memory flags: {}", .{memory_region.flags});
-    log.debug(@src(), "set_memory guest_phys_addr: 0x{x}", .{memory_region.guest_phys_addr});
-    log.debug(@src(), "set_memory memory_size: 0x{x}", .{memory_region.memory_size});
-    log.debug(@src(), "set_memory userspace_addr: 0x{x}", .{memory_region.userspace_addr});
+pub fn set_memory(self: *Self, memory: nix.kvm_userspace_memory_region) !void {
+    var memory_region = memory;
+    memory_region.slot = self.num_slots;
+    self.num_slots += 1;
 
     _ = try nix.checked_ioctl(
         @src(),

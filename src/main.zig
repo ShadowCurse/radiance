@@ -68,8 +68,12 @@ pub fn main() !void {
     const kvm = try Kvm.new();
 
     // create vm
-    const vm = try Vm.new(&kvm);
-    try vm.set_memory(&memory);
+    var vm = try Vm.new(&kvm);
+    try vm.set_memory(.{
+        .guest_phys_addr = memory.guest_addr,
+        .memory_size = memory.mem.len,
+        .userspace_addr = @intFromPtr(memory.mem.ptr),
+    });
 
     const kvi = try vm.get_preferred_target();
 
@@ -88,11 +92,12 @@ pub fn main() !void {
     var mmio = Mmio.new();
     const uart_device_info = mmio.allocate();
     const rtc_device_info = mmio.allocate();
+    mmio.start_mmio_opt();
 
     const virtio_device_infos_num = config.drives.drives.len + config.networks.networks.len;
     var virtio_device_infos = try tmp_alloc.alloc(Mmio.MmioDeviceInfo, virtio_device_infos_num);
     for (0..virtio_device_infos_num) |i| {
-        virtio_device_infos[i] = mmio.allocate();
+        virtio_device_infos[i] = mmio.allocate_virtio();
     }
 
     var uart = try Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
@@ -123,13 +128,13 @@ pub fn main() !void {
     mmio.add_device(.{ .ptr = &uart, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
     mmio.add_device(.{ .ptr = &rtc, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
     for (virtio_blocks) |*virtio_block| {
-        mmio.add_device(.{ .ptr = virtio_block, .read_ptr = @ptrCast(&VirtioBlock.read), .write_ptr = @ptrCast(&VirtioBlock.write) });
+        mmio.add_device_virtio(.{ .ptr = virtio_block, .read_ptr = @ptrCast(&VirtioBlock.read), .write_ptr = @ptrCast(&VirtioBlock.write) });
     }
     for (virtio_nets) |*virtio_net| {
-        mmio.add_device(.{ .ptr = virtio_net, .read_ptr = @ptrCast(&VirtioNet.read), .write_ptr = @ptrCast(&VirtioNet.write) });
+        mmio.add_device_virtio(.{ .ptr = virtio_net, .read_ptr = @ptrCast(&VirtioNet.read), .write_ptr = @ptrCast(&VirtioNet.write) });
     }
     for (vhost_nets) |*vhost_net| {
-        mmio.add_device(.{ .ptr = vhost_net, .read_ptr = @ptrCast(&VhostNet.read), .write_ptr = @ptrCast(&VhostNet.write) });
+        mmio.add_device_virtio(.{ .ptr = vhost_net, .read_ptr = @ptrCast(&VhostNet.read), .write_ptr = @ptrCast(&VhostNet.write) });
     }
 
     // create kernel cmdline

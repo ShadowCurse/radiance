@@ -1,6 +1,8 @@
 const std = @import("std");
 const nix = @import("nix.zig");
 
+const HOST_PAGE_SIZE = @import("memory.zig").HOST_PAGE_SIZE;
+
 const Allocator = std.mem.Allocator;
 const SplitIterator = std.mem.SplitIterator;
 
@@ -87,7 +89,7 @@ pub const Config = struct {
 
 pub const ParseResult = struct {
     config: Config = .{},
-    file_mem: []align(std.mem.page_size) const u8 = undefined,
+    file_mem: []align(HOST_PAGE_SIZE) const u8 = undefined,
 
     const Self = @This();
 

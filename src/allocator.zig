@@ -9,7 +9,7 @@ pub const GuestMemory = struct {
     const Self = @This();
 
     pub fn init(memory: *const Memory, kernel_size: u64) Self {
-        const start = ((kernel_size / std.mem.page_size) + 1) * std.mem.page_size;
+        const start = ((kernel_size / Memory.HOST_PAGE_SIZE) + 1) * Memory.HOST_PAGE_SIZE;
         return .{
             .inner = std.heap.FixedBufferAllocator.init(memory.mem[start..]),
         };

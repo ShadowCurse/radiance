@@ -32,7 +32,7 @@ pub const VirtioBlock = struct {
     const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_BLOCK, Config);
 
     pub fn new(
-        vm: *const Vm,
+        vm: *Vm,
         file_path: []const u8,
         read_only: bool,
         memory: *Memory,
@@ -98,6 +98,8 @@ pub const VirtioBlock = struct {
         switch (self.virtio_context.write(offset, data)) {
             VirtioAction.NoAction => {},
             VirtioAction.ActivateDevice => {
+                try self.virtio_context.set_memory();
+
                 // Only VIRTIO_MMIO_INT_VRING notification type is supported.
                 if (self.virtio_context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
                     for (&self.virtio_context.queues) |*q| {
