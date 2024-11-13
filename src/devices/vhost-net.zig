@@ -42,7 +42,7 @@ pub const VhostNet = struct {
     const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
 
     pub fn new(
-        vm: *const Vm,
+        vm: *Vm,
         tap_name: []const u8,
         mac: ?[6]u8,
         memory: *Memory,
@@ -119,6 +119,8 @@ pub const VhostNet = struct {
     }
 
     pub fn activate(self: *Self) !void {
+        try self.virtio_context.set_memory();
+
         // TUN_F_CSUM - L4 packet checksum offload
         // TUN_F_TSO4 - TCP Segmentation Offload - TSO for IPv4 packets
         // TUN_F_TSO6 - TSO for IPv6 packets

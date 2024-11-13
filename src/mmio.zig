@@ -8,12 +8,11 @@ const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
 const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
+const VIRTIO_INTERRUPT_STATUS_OFFSET = @import("virtio/context.zig").INTERRUPT_STATUS_OFFSET;
+
 pub const MMIO_MEM_START: u64 = Memory.MMIO_START;
-/// The size of the memory area reserved for MMIO devices.
 pub const MMIO_MEM_SIZE: u64 = Memory.DRAM_START - Memory.MMIO_START;
-/// Size of memory reserved for each mmio device.
-/// Needs to be bigger than 0x100.
-pub const MMIO_LEN: u64 = 0x1000;
+pub const MMIO_DEVICE_SIZE: u64 = Memory.GUEST_PAGE_SIZE;
 
 pub const MmioDevice = struct {
     ptr: *anyopaque,
@@ -34,10 +33,15 @@ pub const MmioDeviceInfo = struct {
     irq: u32,
 };
 
-last_irq: u32,
+last_irq: u16,
 last_address: u64,
-num_devices: usize,
-devices: [10]MmioDevice,
+virtio_address_start: u64,
+
+num_devices: u8,
+devices: [2]MmioDevice,
+
+virtio_num_devices: u8,
+virtio_devices: [8]MmioDevice,
 
 const Self = @This();
 
@@ -45,19 +49,55 @@ pub fn new() Self {
     return Self{
         .last_irq = Gicv2.IRQ_BASE,
         .last_address = MMIO_MEM_START,
+        .virtio_address_start = MMIO_MEM_START,
         .num_devices = 0,
         .devices = undefined,
+        .virtio_num_devices = 0,
+        .virtio_devices = undefined,
     };
 }
 
+pub fn start_mmio_opt(self: *Self) void {
+    self.virtio_address_start = self.last_address;
+}
+
+// MMIO devices should be allocated before VIRTIO devices.
+// Devices are allocated one after another each taking
+// MMIO_DEVICE_SIZE space in the MMIO region.
 pub fn allocate(self: *Self) MmioDeviceInfo {
     const addr = self.last_address;
-    self.last_address += MMIO_LEN;
+    self.last_address += MMIO_DEVICE_SIZE;
     const irq = self.last_irq;
     self.last_irq += 1;
+    log.debug(
+        @src(),
+        "allocate mmio region: addr: 0x{x}, len: 0x{x}, irq: {}",
+        .{ addr, MMIO_DEVICE_SIZE, irq },
+    );
     return MmioDeviceInfo{
         .addr = addr,
-        .len = MMIO_LEN,
+        .len = MMIO_DEVICE_SIZE,
+        .irq = irq,
+    };
+}
+
+// VIRTIO devices should be allocated after all MMIO devices
+// are allocated. VIRTIO MMIO space will be offset from the
+// beginning of the page by (MMIO_DEVICE_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET) and thus
+// will be split between 2 guest physical pages.
+pub fn allocate_virtio(self: *Self) MmioDeviceInfo {
+    const addr = self.last_address + MMIO_DEVICE_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET;
+    self.last_address += MMIO_DEVICE_SIZE;
+    const irq = self.last_irq;
+    self.last_irq += 1;
+    log.debug(
+        @src(),
+        "allocate mmio opt region: addr: 0x{x}, len: 0x{x}, irq: {}",
+        .{ addr, MMIO_DEVICE_SIZE, irq },
+    );
+    return MmioDeviceInfo{
+        .addr = addr,
+        .len = MMIO_DEVICE_SIZE,
         .irq = irq,
     };
 }
@@ -67,16 +107,39 @@ pub fn add_device(self: *Self, device: MmioDevice) void {
     self.num_devices += 1;
 }
 
+pub fn add_device_virtio(self: *Self, device: MmioDevice) void {
+    self.virtio_devices[self.virtio_num_devices] = device;
+    self.virtio_num_devices += 1;
+}
+
 pub fn write(self: *Self, addr: u64, data: []u8) !void {
-    const index = (addr - MMIO_MEM_START) / MMIO_LEN;
-    const offset = (addr - MMIO_MEM_START) - MMIO_LEN * index;
-    const device = self.devices[index];
-    try device.write(offset, data);
+    if (addr < self.virtio_address_start) {
+        const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_SIZE;
+        const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_SIZE * index;
+        const device = self.devices[index];
+        try device.write(offset, data);
+    } else {
+        const index = (addr - self.virtio_address_start) / MMIO_DEVICE_SIZE / 2;
+        const offset = (addr - self.virtio_address_start) -
+            (MMIO_DEVICE_SIZE * index * 2) -
+            (MMIO_DEVICE_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
+        const device = self.virtio_devices[index];
+        try device.write(offset, data);
+    }
 }
 
 pub fn read(self: *Self, addr: u64, data: []u8) !void {
-    const index = (addr - MMIO_MEM_START) / MMIO_LEN;
-    const offset = (addr - MMIO_MEM_START) - MMIO_LEN * index;
-    const device = self.devices[index];
-    try device.read(offset, data);
+    if (addr < self.virtio_address_start) {
+        const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_SIZE;
+        const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_SIZE * index;
+        const device = self.devices[index];
+        try device.read(offset, data);
+    } else {
+        const index = (addr - self.virtio_address_start) / MMIO_DEVICE_SIZE / 2;
+        const offset = (addr - self.virtio_address_start) -
+            (MMIO_DEVICE_SIZE * index * 2) -
+            (MMIO_DEVICE_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
+        const device = self.virtio_devices[index];
+        try device.read(offset, data);
+    }
 }

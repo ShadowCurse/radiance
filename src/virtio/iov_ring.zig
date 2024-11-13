@@ -2,7 +2,9 @@ const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
-pub const MAX_IOVECS = std.mem.page_size / @sizeOf(nix.iovec);
+const HOST_PAGE_SIZE = @import("../memory.zig").HOST_PAGE_SIZE;
+
+pub const MAX_IOVECS = HOST_PAGE_SIZE / @sizeOf(nix.iovec);
 
 const Self = @This();
 iovecs: [*]nix.iovec,
@@ -12,10 +14,10 @@ capacity: u32,
 
 pub fn init() !Self {
     const memfd = try nix.memfd_create("iov_ring", nix.FD_CLOEXEC);
-    try nix.ftruncate(memfd, std.mem.page_size);
+    try nix.ftruncate(memfd, HOST_PAGE_SIZE);
     const mem = try nix.mmap(
         null,
-        std.mem.page_size * 2,
+        HOST_PAGE_SIZE * 2,
         nix.PROT.NONE,
         nix.MAP{
             .TYPE = .PRIVATE,
@@ -26,7 +28,7 @@ pub fn init() !Self {
     );
     _ = try nix.mmap(
         mem.ptr,
-        std.mem.page_size,
+        HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,
         nix.MAP{
             .TYPE = .SHARED,
@@ -36,8 +38,8 @@ pub fn init() !Self {
         0,
     );
     _ = try nix.mmap(
-        mem.ptr + std.mem.page_size,
-        std.mem.page_size,
+        mem.ptr + HOST_PAGE_SIZE,
+        HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,
         nix.MAP{
             .TYPE = .SHARED,

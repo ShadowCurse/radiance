@@ -2,7 +2,8 @@ const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 
-const FdtBuilder = @import("fdt.zig").FdtBuilder;
+pub const GUEST_PAGE_SIZE = 0x1000;
+pub const HOST_PAGE_SIZE = std.mem.page_size;
 
 /// Start of RAM on 64 bit ARM.
 pub const DRAM_START: u64 = 0x8000_0000; // 2 GB.
@@ -27,7 +28,7 @@ const arm64_image_header = packed struct {
 };
 
 guest_addr: u64,
-mem: []align(std.mem.page_size) u8,
+mem: []align(HOST_PAGE_SIZE) u8,
 
 const Self = @This();
 

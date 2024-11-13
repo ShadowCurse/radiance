@@ -6,6 +6,33 @@ const Vm = @import("../vm.zig");
 const EventFd = @import("../eventfd.zig");
 const Queue = @import("queue.zig").Queue;
 
+const MMIO_LEN = @import("../mmio.zig").MMIO_DEVICE_SIZE;
+
+// The VIRTIO space allocation strategy is:
+//            Page without memory backing                       Page with memory backing
+//     --------------------------------------------====================================================
+//     |            |++++++++++++++++++++++++++++++|#####################|              |
+//     --------------------------------------------====================================================
+//   MMIO_START   VIRTIO_REGION_START          MMIO_START       VIRTIO_REGION_END   MMIO_START
+//                                                 +                                    +
+//                                             PAGE_SIZE                           2 * PAGE_SIZE
+//
+//  The main idea here is to split VIRTIO space into 2 parts:
+//  - First part before INTERRUPT_STATUS_OFFSET will be placed in the guest physical page
+//    which will not have memory backing. This means all reads and writes to it by the guest
+//    will trigger KVMExit and VMM will know about them
+//  - Second part after INTERRUPT_STATUS_OFFSET will be placed in the guest physical page
+//    which will have a RW memory backing. This page will be set after the device is initialized.
+//    This means all reads and writes to it will be usual memory accesses and will not trigger
+//    KVMExits.
+//
+//  This layout ensures no KVMExits for VIRTIO devices during their normal runtime.
+//
+
+// This is the offset into the VIRTIO MMIO register layout which
+// is used to divide the MMIO space into 2 pages.
+pub const INTERRUPT_STATUS_OFFSET = 0x60;
+
 pub const INIT: u32 = 0;
 pub const ACKNOWLEDGE: u32 = 1;
 pub const DRIVER: u32 = 2;
@@ -78,10 +105,13 @@ pub fn VirtioContext(
 
         irq_evt: EventFd,
 
+        vm: *Vm,
+        addr: u64,
+
         const Self = @This();
 
         pub fn new(
-            vm: *const Vm,
+            vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
             irq: u32,
             addr: u64,
@@ -98,6 +128,8 @@ pub fn VirtioContext(
                 .queues = queues,
                 .queue_events = queue_events,
                 .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
+                .vm = vm,
+                .addr = addr,
             };
 
             const kvm_irqfd: nix.kvm_irqfd = .{
@@ -129,6 +161,31 @@ pub fn VirtioContext(
                 );
             }
             return self;
+        }
+
+        pub fn set_memory(self: *Self) !void {
+            const prot = nix.PROT.READ | nix.PROT.WRITE;
+            const flags = nix.MAP{
+                .TYPE = .PRIVATE,
+                .ANONYMOUS = true,
+                .NORESERVE = true,
+            };
+            const mem = try nix.mmap(null, MMIO_LEN, prot, flags, -1, 0);
+            // Memory will be at the offset INTERRUPT_STATUS_OFFSET in VIRTIO region
+            // Set Interrupt status to always be 1
+            mem[0] = 1;
+
+            const guest_phys_addr = self.addr + INTERRUPT_STATUS_OFFSET;
+            log.debug(
+                @src(),
+                "setting mmio opt memory for device: {} guest_phys_addr: 0x{x}, memory_size: 0x{x}, userspace_addr: {*}",
+                .{ self.device_type, guest_phys_addr, mem.len, mem.ptr },
+            );
+            try self.vm.set_memory(.{
+                .guest_phys_addr = guest_phys_addr,
+                .memory_size = mem.len,
+                .userspace_addr = @intFromPtr(mem.ptr),
+            });
         }
 
         fn update_device_status(self: *Self, status: u8) VirtioAction {
