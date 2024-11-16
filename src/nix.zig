@@ -359,9 +359,10 @@ pub const readv = std.posix.readv;
 pub const write = std.posix.write;
 pub const writev = std.posix.writev;
 pub const accept = std.posix.accept;
-pub const lseek_SET = std.posix.lseek_SET;
-pub const fsync = std.posix.fsync;
 pub const errno = std.posix.errno;
+
+pub const MSF = std.posix.MSF;
+pub const msync = std.posix.msync;
 
 pub const Statx = std.os.linux.Statx;
 pub fn statx(fd: fd_t) !Statx {

@@ -5,7 +5,10 @@ const log = @import("../log.zig");
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
+
 const Memory = @import("../memory.zig");
+const HOST_PAGE_SIZE = Memory.HOST_PAGE_SIZE;
+
 const VIRTIO = @import("../virtio/context.zig");
 const VirtioContext = VIRTIO.VirtioContext;
 const VirtioAction = VIRTIO.VirtioAction;
@@ -25,7 +28,7 @@ pub const VirtioBlock = struct {
     read_only: bool,
     memory: *Memory,
     virtio_context: VIRTIO_CONTEXT,
-    fd: nix.fd_t,
+    file_mem: []align(HOST_PAGE_SIZE) u8,
     block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
     const Self = @This();
@@ -40,13 +43,22 @@ pub const VirtioBlock = struct {
     ) !Self {
         const fd = try nix.open(
             file_path,
-            .{
-                .CLOEXEC = true,
-                .ACCMODE = if (read_only) .RDONLY else .RDWR,
-            },
+            .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
             0,
         );
+        defer nix.close(fd);
+
         const statx = try nix.statx(fd);
+
+        const file_mem = try nix.mmap(
+            null,
+            statx.size,
+            if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
+            .{ .TYPE = .PRIVATE },
+            fd,
+            0,
+        );
+
         const nsectors = statx.size >> SECTOR_SHIFT;
 
         var block_id = [_]u8{0} ** nix.VIRTIO_BLK_ID_BYTES;
@@ -81,7 +93,7 @@ pub const VirtioBlock = struct {
             .read_only = read_only,
             .memory = memory,
             .virtio_context = virtio_context,
-            .fd = fd,
+            .file_mem = file_mem,
             .block_id = block_id,
         };
     }
@@ -141,17 +153,16 @@ pub const VirtioBlock = struct {
                 var data_transfered: usize = 0;
                 switch (header.type) {
                     nix.VIRTIO_BLK_T_IN => {
-                        try nix.lseek_SET(self.fd, offset);
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        data_transfered = try nix.read(self.fd, @volatileCast(buffer));
+                        @memcpy(buffer, self.file_mem[offset .. offset + buffer.len]);
                     },
                     nix.VIRTIO_BLK_T_OUT => {
-                        try nix.lseek_SET(self.fd, offset);
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        data_transfered = try nix.write(self.fd, @volatileCast(buffer));
+                        @memcpy(self.file_mem[offset .. offset + buffer.len], buffer);
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
-                        try nix.fsync(self.fd);
+                        // TODO maybe add a msync with SYNC call at the end of VM lifetime
+                        try nix.msync(self.file_mem, nix.MSF.ASYNC);
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
@@ -167,7 +178,9 @@ pub const VirtioBlock = struct {
                 self.virtio_context.queues[self.virtio_context.selected_queue]
                     .add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
             } else {
-                try nix.fsync(self.fd);
+                if (!self.read_only) {
+                    try nix.msync(self.file_mem, nix.MSF.ASYNC);
+                }
 
                 const status_ptr = self.memory.get_ptr(u32, second_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
