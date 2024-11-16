@@ -87,7 +87,7 @@ pub fn allocate(self: *Self) MmioDeviceInfo {
 // will be split between 2 guest physical pages.
 pub fn allocate_virtio(self: *Self) MmioDeviceInfo {
     const addr = self.last_address + MMIO_DEVICE_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET;
-    self.last_address += MMIO_DEVICE_SIZE;
+    self.last_address += 2 * MMIO_DEVICE_SIZE;
     const irq = self.last_irq;
     self.last_irq += 1;
     log.debug(
