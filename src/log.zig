@@ -1,5 +1,15 @@
 const std = @import("std");
 
+pub fn comptime_err(
+    comptime src: std.builtin.SourceLocation,
+    comptime format: []const u8,
+    comptime args: anytype,
+) void {
+    const T = make_struct(@TypeOf(args));
+    const t = fill_struct(T, src, args);
+    @compileError(std.fmt.comptimePrint("[{s}:{s}:{}:{}] " ++ format, t));
+}
+
 pub fn assert(
     src: std.builtin.SourceLocation,
     ok: bool,
@@ -7,8 +17,10 @@ pub fn assert(
     args: anytype,
 ) void {
     if (!ok) {
-        err(src, format, args);
-        unreachable;
+        @setCold(true);
+        const T = make_struct(@TypeOf(args));
+        const t = fill_struct(T, src, args);
+        std.debug.panic("[{s}:{s}:{}:{}] " ++ format, t);
     }
 }
 

@@ -40,24 +40,24 @@ pub const VirtioBlock = struct {
         read_only: bool,
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
-    ) !Self {
-        const fd = try nix.open(
+    ) Self {
+        const fd = nix.assert(@src(), nix.open, .{
             file_path,
             .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
             0,
-        );
+        });
         defer nix.close(fd);
 
-        const statx = try nix.statx(fd);
+        const statx = nix.assert(@src(), nix.statx, .{fd});
 
-        const file_mem = try nix.mmap(
+        const file_mem = nix.assert(@src(), nix.mmap, .{
             null,
             statx.size,
             if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
             .{ .TYPE = .PRIVATE },
             fd,
             0,
-        );
+        });
 
         const nsectors = statx.size >> SECTOR_SHIFT;
 
@@ -72,9 +72,11 @@ pub const VirtioBlock = struct {
         rdev_major = rdev_major << 16;
         const rdev = statx.rdev_minor | rdev_major;
 
-        _ = try std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, statx.ino });
+        _ = std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, statx.ino }) catch |e| {
+            log.assert(@src(), false, "block id formatting error: {}", .{e});
+        };
 
-        var virtio_context = try VIRTIO_CONTEXT.new(
+        var virtio_context = VIRTIO_CONTEXT.new(
             vm,
             QueueSizes,
             mmio_info.irq,
@@ -106,11 +108,11 @@ pub const VirtioBlock = struct {
         }
     }
 
-    pub fn write(self: *Self, offset: u64, data: []u8) !void {
+    pub fn write(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.write(offset, data)) {
             VirtioAction.NoAction => {},
             VirtioAction.ActivateDevice => {
-                try self.virtio_context.set_memory();
+                self.virtio_context.set_memory();
 
                 // Only VIRTIO_MMIO_INT_VRING notification type is supported.
                 if (self.virtio_context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
@@ -125,7 +127,7 @@ pub const VirtioBlock = struct {
         }
     }
 
-    pub fn read(self: *Self, offset: u64, data: []u8) !void {
+    pub fn read(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.read(offset, data)) {
             VirtioAction.NoAction => {},
             else => |action| {
@@ -134,8 +136,8 @@ pub const VirtioBlock = struct {
         }
     }
 
-    pub fn process_queue(self: *Self) !void {
-        _ = try self.virtio_context.queue_events[self.virtio_context.selected_queue].read();
+    pub fn process_queue(self: *Self) void {
+        _ = self.virtio_context.queue_events[self.virtio_context.selected_queue].read();
 
         while (self.virtio_context.queues[self.virtio_context.selected_queue].pop_desc_chain(self.memory)) |dc| {
             var desc_chain = dc;
@@ -162,7 +164,7 @@ pub const VirtioBlock = struct {
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
                         // TODO maybe add a msync with SYNC call at the end of VM lifetime
-                        try nix.msync(self.file_mem, nix.MSF.ASYNC);
+                        nix.assert(@src(), nix.msync, .{ self.file_mem, nix.MSF.ASYNC });
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
                         const buffer = self.memory.get_slice(u8, data_len, data_addr);
@@ -179,7 +181,7 @@ pub const VirtioBlock = struct {
                     .add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
             } else {
                 if (!self.read_only) {
-                    try nix.msync(self.file_mem, nix.MSF.ASYNC);
+                    nix.assert(@src(), nix.msync, .{ self.file_mem, nix.MSF.ASYNC });
                 }
 
                 const status_ptr = self.memory.get_ptr(u32, second_desc.addr);
@@ -190,7 +192,7 @@ pub const VirtioBlock = struct {
         if (self.virtio_context.queues[self.virtio_context.selected_queue]
             .send_notification(self.memory))
         {
-            try self.virtio_context.irq_evt.write(1);
+            self.virtio_context.irq_evt.write(1);
         }
     }
 };

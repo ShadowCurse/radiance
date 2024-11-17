@@ -32,14 +32,21 @@ mem: []align(HOST_PAGE_SIZE) u8,
 
 const Self = @This();
 
-pub fn init(size: usize) !Self {
+pub fn init(size: usize) Self {
     const prot = nix.PROT.READ | nix.PROT.WRITE;
     const flags = nix.MAP{
         .TYPE = .PRIVATE,
         .ANONYMOUS = true,
         .NORESERVE = true,
     };
-    const mem = try nix.mmap(null, size, prot, flags, -1, 0);
+    const mem = nix.assert(@src(), nix.mmap, .{
+        null,
+        size,
+        prot,
+        flags,
+        -1,
+        0,
+    });
 
     log.debug(@src(), "mem size: 0x{x}", .{size});
     log.debug(@src(), "guest_addr: 0x{x}", .{DRAM_START});
@@ -74,16 +81,16 @@ pub fn last_addr(self: *const Self) u64 {
 /// Returns the guest memory address where
 /// the executable code starts and a size of the kernel.
 /// https://github.com/torvalds/linux/blob/master/Documentation/arch/arm64/booting.rst
-pub fn load_linux_kernel(self: *Self, path: []const u8) !struct { u64, u64 } {
-    const fd = try nix.open(
+pub fn load_linux_kernel(self: *Self, path: []const u8) struct { u64, u64 } {
+    const fd = nix.assert(@src(), nix.open, .{
         path,
         .{
             .CLOEXEC = true,
             .ACCMODE = .RDONLY,
         },
         0,
-    );
-    const meta = try nix.statx(fd);
+    });
+    const meta = nix.assert(@src(), nix.statx, .{fd});
 
     const prot = nix.PROT.READ | nix.PROT.WRITE;
     const flags = nix.MAP{
@@ -91,14 +98,14 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) !struct { u64, u64 } {
         .FIXED = true,
         .NORESERVE = true,
     };
-    const file_mem = try nix.mmap(
+    const file_mem = nix.assert(@src(), nix.mmap, .{
         self.mem.ptr,
         meta.size,
         prot,
         flags,
         fd,
         0,
-    );
+    });
 
     const arm64_header: *arm64_image_header = @ptrCast(file_mem.ptr);
     std.debug.assert(arm64_header.magic == 0x644d_5241);

@@ -54,10 +54,6 @@ pub const MMIO_MAGIC_VALUE: u32 = 0x7472_6976;
 // current version specified by the mmio standard (legacy devices used 1 here)
 pub const MMIO_VERSION: u32 = 2;
 
-pub const VirtioContextError = error{
-    New,
-};
-
 pub const VirtioActionTag = enum {
     NoAction,
     ActivateDevice,
@@ -115,10 +111,10 @@ pub fn VirtioContext(
             queue_sizes: [NUM_QUEUES]u16,
             irq: u32,
             addr: u64,
-        ) !Self {
+        ) Self {
             var queue_events: [NUM_QUEUES]EventFd = undefined;
             for (&queue_events) |*qe| {
-                qe.* = try EventFd.new(0, nix.EFD_NONBLOCK);
+                qe.* = EventFd.new(0, nix.EFD_NONBLOCK);
             }
             var queues: [NUM_QUEUES]Queue = undefined;
             for (&queues, queue_sizes) |*q, size| {
@@ -127,7 +123,7 @@ pub fn VirtioContext(
             const self = Self{
                 .queues = queues,
                 .queue_events = queue_events,
-                .irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK),
+                .irq_evt = EventFd.new(0, nix.EFD_NONBLOCK),
                 .vm = vm,
                 .addr = addr,
             };
@@ -136,13 +132,11 @@ pub fn VirtioContext(
                 .fd = @intCast(self.irq_evt.fd),
                 .gsi = irq,
             };
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioContextError.New,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 vm.fd,
                 nix.KVM_IRQFD,
-                &kvm_irqfd,
-            );
+                @intFromPtr(&kvm_irqfd),
+            });
 
             for (&self.queue_events, 0..) |*queue_event, i| {
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{
@@ -152,25 +146,27 @@ pub fn VirtioContext(
                     .fd = queue_event.fd,
                     .flags = nix.KVM_IOEVENTFD_FLAG_NR_DATAMATCH,
                 };
-                _ = try nix.checked_ioctl(
-                    @src(),
-                    VirtioContextError.New,
+                _ = nix.assert(@src(), nix.ioctl, .{
                     vm.fd,
                     nix.KVM_IOEVENTFD,
-                    &kvm_ioeventfd,
-                );
+                    @intFromPtr(&kvm_ioeventfd),
+                });
             }
             return self;
         }
 
-        pub fn set_memory(self: *Self) !void {
+        pub fn set_memory(self: *Self) void {
             const prot = nix.PROT.READ | nix.PROT.WRITE;
             const flags = nix.MAP{
                 .TYPE = .PRIVATE,
                 .ANONYMOUS = true,
                 .NORESERVE = true,
             };
-            const mem = try nix.mmap(null, MMIO_LEN, prot, flags, -1, 0);
+            const mem = nix.assert(
+                @src(),
+                nix.mmap,
+                .{ null, MMIO_LEN, prot, flags, -1, 0 },
+            );
             // Memory will be at the offset INTERRUPT_STATUS_OFFSET in VIRTIO region
             // Set Interrupt status to always be 1
             mem[0] = 1;
@@ -181,7 +177,7 @@ pub fn VirtioContext(
                 "setting mmio opt memory for device: {} guest_phys_addr: 0x{x}, memory_size: 0x{x}, userspace_addr: {*}",
                 .{ self.device_type, guest_phys_addr, mem.len, mem.ptr },
             );
-            try self.vm.set_memory(.{
+            self.vm.set_memory(.{
                 .guest_phys_addr = guest_phys_addr,
                 .memory_size = mem.len,
                 .userspace_addr = @intFromPtr(mem.ptr),

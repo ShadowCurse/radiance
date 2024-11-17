@@ -23,14 +23,6 @@ pub const QueueSizes = .{ 256, 256 };
 const RX_INDEX = 0;
 const TX_INDEX = 1;
 
-pub const VirtioNetError = error{
-    NewTUNSETIFF,
-    NewTUNSETVNETHDRSZ,
-    NewKVM_IRQFD,
-    NewKVM_IOEVENTFD,
-    ActivateTUNSETOFFLOAD,
-};
-
 pub const VirtioNet = struct {
     memory: *Memory,
     virtio_context: VIRTIO_CONTEXT,
@@ -50,12 +42,12 @@ pub const VirtioNet = struct {
         mac: ?[6]u8,
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
-    ) !Self {
-        const tun = try nix.open(
+    ) Self {
+        const tun = nix.assert(@src(), nix.open, .{
             "/dev/net/tun",
             .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
             0,
-        );
+        });
         var ifreq = std.mem.zeroInit(nix.ifreq, .{});
         @memcpy(ifreq.ifrn.name[0..tap_name.len], tap_name);
         // IFF_TAP / IFF_TUN - select TAP or TUN
@@ -66,26 +58,22 @@ pub const VirtioNet = struct {
         // IFF_MULTI_QUEUE - Use multi queue tap, see below.
         ifreq.ifru.flags = nix.IFF_TAP | nix.IFF_NO_PI | nix.IFF_VNET_HDR;
         {
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.NewTUNSETIFF,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 tun,
                 nix.TUNSETIFF,
-                &ifreq,
-            );
+                @intFromPtr(&ifreq),
+            });
         }
         {
             const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.NewTUNSETVNETHDRSZ,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 tun,
                 nix.TUNSETVNETHDRSZ,
-                &size,
-            );
+                @intFromPtr(&size),
+            });
         }
 
-        var virtio_context = try VIRTIO_CONTEXT.new(
+        var virtio_context = VIRTIO_CONTEXT.new(
             vm,
             QueueSizes,
             mmio_info.irq,
@@ -108,7 +96,7 @@ pub const VirtioNet = struct {
             virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
         }
 
-        const rx_chains = try RxChains.init();
+        const rx_chains = RxChains.init();
         const tx_chain = TxChain.init();
 
         return Self{
@@ -120,8 +108,8 @@ pub const VirtioNet = struct {
         };
     }
 
-    pub fn activate(self: *Self) !void {
-        try self.virtio_context.set_memory();
+    pub fn activate(self: *Self) void {
+        self.virtio_context.set_memory();
 
         // TUN_F_CSUM - L4 packet checksum offload
         // TUN_F_TSO4 - TCP Segmentation Offload - TSO for IPv4 packets
@@ -143,16 +131,14 @@ pub const VirtioNet = struct {
         if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
             tun_flags |= nix.TUN_F_TSO6;
         }
-        _ = try nix.checked_ioctl(
-            @src(),
-            VirtioNetError.ActivateTUNSETOFFLOAD,
+        _ = nix.assert(@src(), nix.ioctl, .{
             self.tun,
             nix.TUNSETOFFLOAD,
             tun_flags,
-        );
+        });
     }
 
-    pub fn write(self: *Self, offset: u64, data: []u8) !void {
+    pub fn write(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.write(offset, data)) {
             VirtioAction.NoAction => {},
             VirtioAction.ActivateDevice => {
@@ -162,7 +148,7 @@ pub const VirtioNet = struct {
                         q.notification_suppression = true;
                     }
                 }
-                try self.activate();
+                self.activate();
                 self.activated = true;
             },
             else => |action| {
@@ -171,7 +157,7 @@ pub const VirtioNet = struct {
         }
     }
 
-    pub fn read(self: *Self, offset: u64, data: []u8) !void {
+    pub fn read(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.read(offset, data)) {
             VirtioAction.NoAction => {},
             else => |action| {
@@ -180,29 +166,29 @@ pub const VirtioNet = struct {
         }
     }
 
-    pub fn process_rx(self: *Self) !void {
-        _ = try self.virtio_context.queue_events[RX_INDEX].read();
-        try self.process_tap();
+    pub fn process_rx(self: *Self) void {
+        _ = self.virtio_context.queue_events[RX_INDEX].read();
+        self.process_tap();
     }
 
-    pub fn process_tx(self: *Self) !void {
-        _ = try self.virtio_context.queue_events[TX_INDEX].read();
+    pub fn process_tx(self: *Self) void {
+        _ = self.virtio_context.queue_events[TX_INDEX].read();
         const queue = &self.virtio_context.queues[TX_INDEX];
 
         while (queue.pop_desc_chain(self.memory)) |dc| {
             self.tx_chain.add_chain(self.memory, dc);
 
             const iov_slice = self.tx_chain.slice();
-            _ = try nix.writev(self.tun, iov_slice);
+            _ = nix.assert(@src(), nix.writev, .{ self.tun, iov_slice });
             self.tx_chain.finish_used(self.memory, queue);
         }
 
         if (queue.send_notification(self.memory)) {
-            try self.virtio_context.irq_evt.write(1);
+            self.virtio_context.irq_evt.write(1);
         }
     }
 
-    pub fn process_tap(self: *Self) !void {
+    pub fn process_tap(self: *Self) void {
         if (!self.activated) {
             return;
         }
@@ -233,19 +219,20 @@ pub const VirtioNet = struct {
                 self.rx_chains.first_chain_slice();
 
             const bytes = nix.readv(self.tun, iov_slice) catch |e| {
-                if (e == nix.ReadError.WouldBlock) {
-                    break;
-                } else {
-                    log.err(@src(), "virtio-net readv: {}", .{e});
-                    return e;
-                }
+                log.assert(
+                    @src(),
+                    e == nix.ReadError.WouldBlock,
+                    "readv error: {}",
+                    .{e},
+                );
+                break;
             };
 
             self.rx_chains.mark_used_bytes(self.memory, queue, @intCast(bytes));
         }
 
         if (queue.send_notification(self.memory)) {
-            try self.virtio_context.irq_evt.write(1);
+            self.virtio_context.irq_evt.write(1);
         }
     }
 };
@@ -261,10 +248,10 @@ const RxChains = struct {
     iovec_ring: IovRing,
     chain_infos: RingBuffer(ChainInfo, IovRing.MAX_IOVECS),
 
-    pub fn init() !Self {
+    pub fn init() Self {
         return .{
-            .iovec_ring = try IovRing.init(),
-            .chain_infos = try RingBuffer(ChainInfo, IovRing.MAX_IOVECS).init(),
+            .iovec_ring = IovRing.init(),
+            .chain_infos = RingBuffer(ChainInfo, IovRing.MAX_IOVECS).init(),
         };
     }
 

@@ -4,8 +4,8 @@ fd: nix.fd_t,
 
 const Self = @This();
 
-pub fn new() !Self {
+pub fn new() Self {
     return .{
-        .fd = try nix.open("/dev/kvm", .{}, 0),
+        .fd = nix.assert(@src(), nix.open, .{ "/dev/kvm", .{}, 0 }),
     };
 }

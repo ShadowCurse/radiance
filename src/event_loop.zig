@@ -2,7 +2,7 @@ const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 
-const CallbackFn = *const fn (*anyopaque) anyerror!void;
+const CallbackFn = *const fn (*anyopaque) void;
 const CallbackParam = *anyopaque;
 
 const EventCallback = struct {
@@ -31,7 +31,7 @@ pub const EventLoopError = error{
 };
 
 pub fn new() !Self {
-    const epollfd = try nix.epoll_create1(0);
+    const epollfd = nix.assert(@src(), nix.epoll_create1, .{0});
 
     return Self{
         .stop = false,
@@ -66,7 +66,11 @@ pub fn add_event(
     };
     self.events_info_num += 1;
 
-    try nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_ADD, fd, &event);
+    nix.assert(
+        @src(),
+        nix.epoll_ctl,
+        .{ self.epollfd, nix.EPOLL_CTL_ADD, fd, &event },
+    );
 }
 
 pub fn remove_event(
@@ -75,7 +79,11 @@ pub fn remove_event(
 ) !void {
     for (&self.events_info) |*ec| {
         if (ec.fd == fd) {
-            try nix.epoll_ctl(self.epollfd, nix.EPOLL_CTL_DEL, fd, null);
+            nix.assert(
+                @src(),
+                nix.epoll_ctl,
+                .{ self.epollfd, nix.EPOLL_CTL_DEL, fd, null },
+            );
             return;
         }
     }
@@ -83,7 +91,11 @@ pub fn remove_event(
 
 pub fn run(self: *Self) !void {
     while (!self.stop) {
-        const nfds = nix.epoll_wait(self.epollfd, &self.events, -1);
+        const nfds = nix.assert(
+            @src(),
+            nix.epoll_wait,
+            .{ self.epollfd, &self.events, -1 },
+        );
         if (nfds < 0) {
             return EventLoopError.Run;
         }
@@ -92,11 +104,11 @@ pub fn run(self: *Self) !void {
         for (0..n) |i| {
             const event = &self.events[i];
             const callback = self.events_info[event.data.u64].callback;
-            try callback.callback(callback.parameter);
+            callback.callback(callback.parameter);
         }
     }
 }
 
-pub fn stop(self: *Self) !void {
+pub fn stop(self: *Self) void {
     self.stop = true;
 }

@@ -16,13 +16,13 @@ pub const MMIO_DEVICE_SIZE: u64 = Memory.GUEST_PAGE_SIZE;
 
 pub const MmioDevice = struct {
     ptr: *anyopaque,
-    read_ptr: *const fn (*anyopaque, u64, []u8) anyerror!void,
-    write_ptr: *const fn (*anyopaque, u64, []u8) anyerror!void,
+    read_ptr: *const fn (*anyopaque, u64, []u8) void,
+    write_ptr: *const fn (*anyopaque, u64, []u8) void,
 
-    pub fn read(self: *const MmioDevice, addr: u64, data: []u8) anyerror!void {
+    pub fn read(self: *const MmioDevice, addr: u64, data: []u8) void {
         return self.read_ptr(self.ptr, addr, data);
     }
-    pub fn write(self: *const MmioDevice, addr: u64, data: []u8) anyerror!void {
+    pub fn write(self: *const MmioDevice, addr: u64, data: []u8) void {
         return self.write_ptr(self.ptr, addr, data);
     }
 };
@@ -112,34 +112,34 @@ pub fn add_device_virtio(self: *Self, device: MmioDevice) void {
     self.virtio_num_devices += 1;
 }
 
-pub fn write(self: *Self, addr: u64, data: []u8) !void {
+pub fn write(self: *Self, addr: u64, data: []u8) void {
     if (addr < self.virtio_address_start) {
         const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_SIZE;
         const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_SIZE * index;
         const device = self.devices[index];
-        try device.write(offset, data);
+        device.write(offset, data);
     } else {
         const index = (addr - self.virtio_address_start) / MMIO_DEVICE_SIZE / 2;
         const offset = (addr - self.virtio_address_start) -
             (MMIO_DEVICE_SIZE * index * 2) -
             (MMIO_DEVICE_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
         const device = self.virtio_devices[index];
-        try device.write(offset, data);
+        device.write(offset, data);
     }
 }
 
-pub fn read(self: *Self, addr: u64, data: []u8) !void {
+pub fn read(self: *Self, addr: u64, data: []u8) void {
     if (addr < self.virtio_address_start) {
         const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_SIZE;
         const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_SIZE * index;
         const device = self.devices[index];
-        try device.read(offset, data);
+        device.read(offset, data);
     } else {
         const index = (addr - self.virtio_address_start) / MMIO_DEVICE_SIZE / 2;
         const offset = (addr - self.virtio_address_start) -
             (MMIO_DEVICE_SIZE * index * 2) -
             (MMIO_DEVICE_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
         const device = self.virtio_devices[index];
-        try device.read(offset, data);
+        device.read(offset, data);
     }
 }

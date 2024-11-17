@@ -54,39 +54,39 @@ pub fn main() !void {
         @sizeOf(VhostNet) * vhost_net_count;
 
     log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
-    var permanent_memory = try allocator.PermanentMemory.init(permanent_memory_size);
+    var permanent_memory = allocator.PermanentMemory.init(permanent_memory_size);
     const permanent_alloc = permanent_memory.allocator();
 
-    var memory = try Memory.init(config.machine.memory_mb << 20);
-    const load_result = try memory.load_linux_kernel(config.kernel.path);
+    var memory = Memory.init(config.machine.memory_mb << 20);
+    const load_result = memory.load_linux_kernel(config.kernel.path);
     const kernel_load_address = load_result[0];
     const kernel_size = load_result[1];
 
     var guest_memory = allocator.GuestMemory.init(&memory, kernel_size);
     const tmp_alloc = guest_memory.allocator();
 
-    const kvm = try Kvm.new();
+    const kvm = Kvm.new();
 
     // create vm
-    var vm = try Vm.new(&kvm);
-    try vm.set_memory(.{
+    var vm = Vm.new(&kvm);
+    vm.set_memory(.{
         .guest_phys_addr = memory.guest_addr,
         .memory_size = memory.mem.len,
         .userspace_addr = @intFromPtr(memory.mem.ptr),
     });
 
-    const kvi = try vm.get_preferred_target();
+    const kvi = vm.get_preferred_target();
 
     // create vcpu
     var vcpus = try permanent_alloc.alloc(Vcpu, config.machine.vcpus);
 
     for (vcpus, 0..) |*vcpu, i| {
-        vcpu.* = try Vcpu.new(&kvm, &vm, i);
-        try vcpu.init(kvi);
+        vcpu.* = Vcpu.new(&kvm, &vm, i);
+        vcpu.init(kvi);
     }
 
     // create interrupt controller
-    try Gicv2.new(&vm);
+    Gicv2.new(&vm);
 
     // create mmio devices
     var mmio = Mmio.new();
@@ -100,13 +100,13 @@ pub fn main() !void {
         virtio_device_infos[i] = mmio.allocate_virtio();
     }
 
-    var uart = try Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
+    var uart = Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
     var rtc = Rtc.new();
 
     const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, config.drives.drives.len);
     const vb_infos = virtio_device_infos[0..config.drives.drives.len];
     for (virtio_blocks, config.drives.drives.slice(), vb_infos) |*block, *drive, mmio_info| {
-        block.* = try VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
+        block.* = VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
     }
 
     const virtio_nets = try permanent_alloc.alloc(VirtioNet, virtio_net_count);
@@ -117,16 +117,16 @@ pub fn main() !void {
     const net_infos = virtio_device_infos[config.drives.drives.len..];
     for (config.networks.networks.slice(), net_infos) |*net_config, mmio_info| {
         if (net_config.vhost) {
-            vhost_nets[vhost_net_index] = try VhostNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
+            vhost_nets[vhost_net_index] = VhostNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
             vhost_net_index += 1;
         } else {
-            virtio_nets[virtio_net_index] = try VirtioNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
+            virtio_nets[virtio_net_index] = VirtioNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
             virtio_net_index += 1;
         }
     }
 
     mmio.add_device(.{ .ptr = &uart, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
-    mmio.add_device(.{ .ptr = &rtc, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
+    mmio.add_device(.{ .ptr = &rtc, .read_ptr = @ptrCast(&Rtc.read), .write_ptr = @ptrCast(&Rtc.write) });
     for (virtio_blocks) |*virtio_block| {
         mmio.add_device_virtio(.{ .ptr = virtio_block, .read_ptr = @ptrCast(&VirtioBlock.read), .write_ptr = @ptrCast(&VirtioBlock.write) });
     }
@@ -153,7 +153,7 @@ pub fn main() !void {
     // create fdt
     const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
     for (mpidrs, vcpus) |*mpidr, *vcpu| {
-        mpidr.* = try vcpu.get_reg(Vcpu.MPIDR_EL1);
+        mpidr.* = vcpu.get_reg(Vcpu.MPIDR_EL1);
     }
 
     const fdt_addr = try FDT.create_fdt(
@@ -167,11 +167,11 @@ pub fn main() !void {
     );
 
     // configure vcpus
-    try vcpus[0].set_reg(u64, Vcpu.PC, kernel_load_address);
-    try vcpus[0].set_reg(u64, Vcpu.REGS0, @as(u64, fdt_addr));
+    vcpus[0].set_reg(u64, Vcpu.PC, kernel_load_address);
+    vcpus[0].set_reg(u64, Vcpu.REGS0, @as(u64, fdt_addr));
 
     for (vcpus) |*vcpu| {
-        try vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
+        vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
     }
 
     // configure terminal for uart in/out
