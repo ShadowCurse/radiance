@@ -15,22 +15,6 @@ pub const TYPE_NET: u32 = 1;
 pub const Config = [6]u8;
 pub const QueueSizes = .{ 256, 256 };
 
-pub const VirtioNetError = error{
-    NewTUNSETIFF,
-    NewTUNSETVNETHDRSZ,
-    NewKVM_IRQFD,
-    NewKVM_IOEVENTFD,
-    ActivateTUNSETOFFLOAD,
-    ActivateVHOST_SET_OWNER,
-    ActivateVHOST_SET_FEATURES,
-    ActivateVHOST_SET_MEM_TABLE,
-    ActivateVHOST_SET_VRING_CALL,
-    ActivateVHOST_SET_VRING_KICK,
-    ActivateVHOST_SET_VRING_NUM,
-    ActivateVHOST_SET_VRING_ADDR,
-    ActivateVHOST_NET_SET_BACKEND,
-};
-
 pub const VhostNet = struct {
     memory: *Memory,
     virtio_context: VIRTIO_CONTEXT,
@@ -47,12 +31,12 @@ pub const VhostNet = struct {
         mac: ?[6]u8,
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
-    ) !Self {
-        const tun = try nix.open(
+    ) Self {
+        const tun = nix.assert(@src(), nix.open, .{
             "/dev/net/tun",
             .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
             0,
-        );
+        });
         var ifreq = std.mem.zeroInit(nix.ifreq, .{});
         @memcpy(ifreq.ifrn.name[0..tap_name.len], tap_name);
         // IFF_TAP / IFF_TUN - select TAP or TUN
@@ -63,26 +47,22 @@ pub const VhostNet = struct {
         // IFF_MULTI_QUEUE - Use multi queue tap, see below.
         ifreq.ifru.flags = nix.IFF_TAP | nix.IFF_NO_PI | nix.IFF_VNET_HDR;
         {
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.NewTUNSETIFF,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 tun,
                 nix.TUNSETIFF,
-                &ifreq,
-            );
+                @intFromPtr(&ifreq),
+            });
         }
         {
             const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.NewTUNSETVNETHDRSZ,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 tun,
                 nix.TUNSETVNETHDRSZ,
-                &size,
-            );
+                @intFromPtr(&size),
+            });
         }
 
-        var virtio_context = try VIRTIO_CONTEXT.new(
+        var virtio_context = VIRTIO_CONTEXT.new(
             vm,
             QueueSizes,
             mmio_info.irq,
@@ -118,8 +98,8 @@ pub const VhostNet = struct {
         };
     }
 
-    pub fn activate(self: *Self) !void {
-        try self.virtio_context.set_memory();
+    pub fn activate(self: *Self) void {
+        self.virtio_context.set_memory();
 
         // TUN_F_CSUM - L4 packet checksum offload
         // TUN_F_TSO4 - TCP Segmentation Offload - TSO for IPv4 packets
@@ -147,15 +127,13 @@ pub const VhostNet = struct {
         if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_USO6) != 0) {
             tun_flags |= nix.TUN_F_USO6;
         }
-        _ = try nix.checked_ioctl(
-            @src(),
-            VirtioNetError.ActivateTUNSETOFFLOAD,
+        _ = nix.assert(@src(), nix.ioctl, .{
             self.tun,
             nix.TUNSETOFFLOAD,
             tun_flags,
-        );
+        });
 
-        const vhost = try nix.open(
+        const vhost = nix.assert(@src(), nix.open, .{
             "/dev/vhost-net",
             .{
                 .CLOEXEC = true,
@@ -163,27 +141,23 @@ pub const VhostNet = struct {
                 .ACCMODE = .RDWR,
             },
             0,
-        );
-        _ = try nix.checked_ioctl(
-            @src(),
-            VirtioNetError.ActivateVHOST_SET_OWNER,
+        });
+        _ = nix.assert(@src(), nix.ioctl, .{
             vhost,
             nix.VHOST_SET_OWNER,
-            .{},
-        );
+            @as(usize, 0),
+        });
 
         {
             const features: u64 = 1 << nix.VIRTIO_F_VERSION_1 |
                 1 << nix.VIRTIO_RING_F_EVENT_IDX |
                 1 << nix.VIRTIO_RING_F_INDIRECT_DESC |
                 1 << nix.VIRTIO_NET_F_MRG_RXBUF;
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.ActivateVHOST_SET_FEATURES,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 vhost,
                 nix.VHOST_SET_FEATURES,
-                &features,
-            );
+                @intFromPtr(&features),
+            });
         }
 
         {
@@ -197,13 +171,11 @@ pub const VhostNet = struct {
                 .userspace_addr = @intFromPtr(self.memory.mem.ptr),
                 .flags_padding = 0,
             };
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.ActivateVHOST_SET_MEM_TABLE,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 vhost,
                 nix.VHOST_SET_MEM_TABLE,
-                &memory,
-            );
+                @intFromPtr(&memory),
+            });
         }
 
         for (0..2) |i| {
@@ -211,13 +183,11 @@ pub const VhostNet = struct {
                 .index = @intCast(i),
                 .fd = self.virtio_context.irq_evt.fd,
             };
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.ActivateVHOST_SET_VRING_CALL,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 vhost,
                 nix.VHOST_SET_VRING_CALL,
-                &vring,
-            );
+                @intFromPtr(&vring),
+            });
         }
 
         for (&self.virtio_context.queue_events, 0..) |*queue_event, i| {
@@ -225,13 +195,11 @@ pub const VhostNet = struct {
                 .index = @intCast(i),
                 .fd = queue_event.fd,
             };
-            _ = try nix.checked_ioctl(
-                @src(),
-                VirtioNetError.ActivateVHOST_SET_VRING_KICK,
+            _ = nix.assert(@src(), nix.ioctl, .{
                 vhost,
                 nix.VHOST_SET_VRING_KICK,
-                &vring,
-            );
+                @intFromPtr(&vring),
+            });
         }
 
         for (&self.virtio_context.queues, 0..) |*queue, i| {
@@ -240,13 +208,11 @@ pub const VhostNet = struct {
                     .index = @intCast(i),
                     .num = queue.size,
                 };
-                _ = try nix.checked_ioctl(
-                    @src(),
-                    VirtioNetError.ActivateVHOST_SET_VRING_NUM,
+                _ = nix.assert(@src(), nix.ioctl, .{
                     vhost,
                     nix.VHOST_SET_VRING_NUM,
-                    &vring,
-                );
+                    @intFromPtr(&vring),
+                });
             }
 
             {
@@ -258,13 +224,11 @@ pub const VhostNet = struct {
                     .avail_user_addr = @intFromPtr(self.memory.get_ptr(u8, queue.avail_ring)),
                     .log_guest_addr = 0,
                 };
-                _ = try nix.checked_ioctl(
-                    @src(),
-                    VirtioNetError.ActivateVHOST_SET_VRING_ADDR,
+                _ = nix.assert(@src(), nix.ioctl, .{
                     vhost,
                     nix.VHOST_SET_VRING_ADDR,
-                    &vring,
-                );
+                    @intFromPtr(&vring),
+                });
             }
 
             {
@@ -272,29 +236,27 @@ pub const VhostNet = struct {
                     .index = @intCast(i),
                     .fd = self.tun,
                 };
-                _ = try nix.checked_ioctl(
-                    @src(),
-                    VirtioNetError.ActivateVHOST_NET_SET_BACKEND,
+                _ = nix.assert(@src(), nix.ioctl, .{
                     vhost,
                     nix.VHOST_NET_SET_BACKEND,
-                    &vring,
-                );
+                    @intFromPtr(&vring),
+                });
             }
         }
         self.vhost = vhost;
     }
 
-    pub fn write(self: *Self, offset: u64, data: []u8) !void {
+    pub fn write(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.write(offset, data)) {
             VirtioAction.NoAction => {},
-            VirtioAction.ActivateDevice => try self.activate(),
+            VirtioAction.ActivateDevice => self.activate(),
             else => |action| {
                 log.err(@src(), "unhandled write virtio action: {}", .{action});
             },
         }
     }
 
-    pub fn read(self: *Self, offset: u64, data: []u8) !void {
+    pub fn read(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.read(offset, data)) {
             VirtioAction.NoAction => {},
             else => |action| {

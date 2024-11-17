@@ -12,10 +12,10 @@ start: u16,
 len: u16,
 capacity: u32,
 
-pub fn init() !Self {
-    const memfd = try nix.memfd_create("iov_ring", nix.FD_CLOEXEC);
-    try nix.ftruncate(memfd, HOST_PAGE_SIZE);
-    const mem = try nix.mmap(
+pub fn init() Self {
+    const memfd = nix.assert(@src(), nix.memfd_create, .{ "iov_ring", nix.FD_CLOEXEC });
+    nix.assert(@src(), nix.ftruncate, .{ memfd, HOST_PAGE_SIZE });
+    const mem = nix.assert(@src(), nix.mmap, .{
         null,
         HOST_PAGE_SIZE * 2,
         nix.PROT.NONE,
@@ -25,8 +25,8 @@ pub fn init() !Self {
         },
         -1,
         0,
-    );
-    _ = try nix.mmap(
+    });
+    _ = nix.assert(@src(), nix.mmap, .{
         mem.ptr,
         HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,
@@ -36,8 +36,8 @@ pub fn init() !Self {
         },
         memfd,
         0,
-    );
-    _ = try nix.mmap(
+    });
+    _ = nix.assert(@src(), nix.mmap, .{
         mem.ptr + HOST_PAGE_SIZE,
         HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,
@@ -47,7 +47,7 @@ pub fn init() !Self {
         },
         memfd,
         0,
-    );
+    });
     return .{
         .iovecs = @ptrCast(mem.ptr),
         .start = 0,

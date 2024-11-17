@@ -164,7 +164,7 @@ pub const Queue = struct {
 test "test_queue_pop_desc_chain" {
     const expect = std.testing.expect;
 
-    var memory = Memory.init(0x1000) catch unreachable;
+    var memory = Memory.init(0x1000);
     defer memory.deinit();
 
     memory.guest_addr = 0;
@@ -207,7 +207,7 @@ test "test_queue_pop_desc_chain" {
 test "test_queue_add_used_desc" {
     const expect = std.testing.expect;
 
-    var memory = Memory.init(0x1000) catch unreachable;
+    var memory = Memory.init(0x1000);
     defer memory.deinit();
 
     memory.guest_addr = 0;

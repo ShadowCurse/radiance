@@ -68,14 +68,14 @@ fn signal_handler(s: c_int) callconv(.C) void {
     Self.self_ref.?.kvm_run.immediate_exit = 1;
 }
 
-fn set_thread_handler() !void {
+fn set_thread_handler() void {
     const sigact = nix.Sigaction{
         .handler = .{ .handler = signal_handler },
         .flags = 4,
         .mask = std.mem.zeroes(nix.sigset_t),
         .restorer = null,
     };
-    try nix.sigaction(VCPU_SIGNAL, &sigact, null);
+    nix.assert(@src(), nix.sigaction, .{ VCPU_SIGNAL, &sigact, null });
 }
 
 pub fn kick_threads() void {
@@ -87,37 +87,33 @@ pub fn new(
     kvm: *const Kvm,
     vm: *const Vm,
     index: u64,
-) !Self {
-    const fd = try nix.checked_ioctl(
-        @src(),
-        VcpuError.New,
+) Self {
+    const fd = nix.assert(@src(), nix.ioctl, .{
         vm.fd,
         nix.KVM_CREATE_VCPU,
         index,
-    );
-    const vcpu_mmap_size = try nix.checked_ioctl(
-        @src(),
-        VcpuError.New,
+    });
+    const vcpu_mmap_size = nix.assert(@src(), nix.ioctl, .{
         kvm.fd,
         nix.KVM_GET_VCPU_MMAP_SIZE,
         @as(u32, 0),
-    );
+    });
 
     const size: usize = @intCast(vcpu_mmap_size);
     const prot = nix.PROT.READ | nix.PROT.WRITE;
     const flags = nix.MAP{
         .TYPE = .SHARED,
     };
-    const kvm_run = try nix.mmap(
+    const kvm_run = nix.assert(@src(), nix.mmap, .{
         null,
         size,
         prot,
         flags,
         fd,
         @as(u64, 0),
-    );
+    });
 
-    const exit_event = try EventFd.new(0, nix.EFD_NONBLOCK);
+    const exit_event = EventFd.new(0, nix.EFD_NONBLOCK);
 
     return Self{
         .fd = fd,
@@ -127,20 +123,18 @@ pub fn new(
     };
 }
 
-pub fn init(self: *const Self, preferred_target: nix.kvm_vcpu_init) !void {
+pub fn init(self: *const Self, preferred_target: nix.kvm_vcpu_init) void {
     var kvi = preferred_target;
     kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_PSCI_0_2;
     // All vcpus are powered off except first one
     if (0 < self.index) {
         kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
     }
-    _ = try nix.checked_ioctl(
-        @src(),
-        VcpuError.Init,
+    _ = nix.assert(@src(), nix.ioctl, .{
         self.fd,
         nix.KVM_ARM_VCPU_INIT,
         @intFromPtr(&kvi),
-    );
+    });
 }
 
 pub fn set_reg(
@@ -148,33 +142,29 @@ pub fn set_reg(
     comptime t: type,
     reg_id: u64,
     value: t,
-) !void {
+) void {
     log.debug(@src(), "setting reg: 0x{x} to 0x{x}", .{ reg_id, value });
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-    _ = try nix.checked_ioctl(
-        @src(),
-        VcpuError.SetReg,
+    _ = nix.assert(@src(), nix.ioctl, .{
         self.fd,
         nix.KVM_SET_ONE_REG,
         @intFromPtr(&kor),
-    );
+    });
 }
 
-pub fn get_reg(self: *const Self, reg_id: u64) !u64 {
+pub fn get_reg(self: *const Self, reg_id: u64) u64 {
     var value: u64 = undefined;
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-    _ = try nix.checked_ioctl(
-        @src(),
-        VcpuError.GetReg,
+    _ = nix.assert(@src(), nix.ioctl, .{
         self.fd,
         nix.KVM_GET_ONE_REG,
         @intFromPtr(&kor),
-    );
+    });
     log.debug(@src(), "vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
     return value;
 }
 
-pub fn run(self: *Self, mmio: *Mmio) !bool {
+pub fn run(self: *Self, mmio: *Mmio) bool {
     const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
     if (r < 0) {
         const e = std.posix.errno(r);
@@ -182,7 +172,7 @@ pub fn run(self: *Self, mmio: *Mmio) !bool {
             .INTR => return false,
             else => {
                 log.err(@src(), "ioctl call error: {}:{}", .{ r, std.posix.errno(r) });
-                try self.exit_event.write(1);
+                self.exit_event.write(1);
             },
         }
     }
@@ -194,17 +184,17 @@ pub fn run(self: *Self, mmio: *Mmio) !bool {
             switch (self.kvm_run.kvm_exit_info.system_event.type) {
                 nix.KVM_SYSTEM_EVENT_SHUTDOWN => {
                     log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN", .{});
-                    try self.exit_event.write(1);
+                    self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_RESET => {
                     log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_RESET", .{});
-                    try self.exit_event.write(1);
+                    self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_CRASH => {
                     log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_CRASH", .{});
-                    try self.exit_event.write(1);
+                    self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_WAKEUP => {
@@ -220,12 +210,12 @@ pub fn run(self: *Self, mmio: *Mmio) !bool {
         },
         nix.KVM_EXIT_MMIO => {
             if (self.kvm_run.kvm_exit_info.mmio.is_write == 1) {
-                try mmio.write(
+                mmio.write(
                     self.kvm_run.kvm_exit_info.mmio.phys_addr,
                     self.kvm_run.kvm_exit_info.mmio.data[0..self.kvm_run.kvm_exit_info.mmio.len],
                 );
             } else {
-                try mmio.read(
+                mmio.read(
                     self.kvm_run.kvm_exit_info.mmio.phys_addr,
                     self.kvm_run.kvm_exit_info.mmio.data[0..self.kvm_run.kvm_exit_info.mmio.len],
                 );
@@ -241,12 +231,11 @@ pub fn run_threaded(
     barrier: *std.Thread.ResetEvent,
     mmio: *Mmio,
     start_time: *const std.time.Instant,
-) !void {
+) void {
+    const now = std.time.Instant.now() catch unreachable;
+    log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / std.time.ns_per_us});
     self_ref = self;
-    const now = try std.time.Instant.now();
-    log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / 1000});
-    try Self.set_thread_handler();
-
+    Self.set_thread_handler();
     barrier.wait();
-    while (self.run(mmio) catch false) {}
+    while (self.run(mmio)) {}
 }

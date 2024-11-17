@@ -361,6 +361,8 @@ pub const writev = std.posix.writev;
 pub const accept = std.posix.accept;
 pub const errno = std.posix.errno;
 
+pub const ioctl = std.os.linux.ioctl;
+
 pub const MSF = std.posix.MSF;
 pub const msync = std.posix.msync;
 
@@ -390,30 +392,58 @@ pub const FD_CLOEXEC = std.posix.FD_CLOEXEC;
 pub const memfd_create = std.posix.memfd_create;
 pub const ftruncate = std.posix.ftruncate;
 
-pub const ioctl = std.os.linux.ioctl;
-pub fn checked_ioctl(
+fn clean_return_type(
     comptime src: std.builtin.SourceLocation,
-    comptime err: anyerror,
-    fd: fd_t,
-    request: u32,
-    arg: anytype,
-) !i32 {
-    const type_info = @typeInfo(@TypeOf(arg));
-    const r = switch (@sizeOf(@TypeOf(arg))) {
-        0 => ioctl(fd, request, 0),
-        4 => ioctl(fd, request, @as(u32, @bitCast(arg))),
-        8 => if (type_info == .Pointer)
-            ioctl(fd, request, @intFromPtr(arg))
-        else
-            ioctl(fd, request, @bitCast(arg)),
-        else => unreachable,
-    };
-    switch (std.posix.errno(r)) {
-        .SUCCESS => return @intCast(r),
-        else => {
-            log.err(src, "ioctl call error: {}:{}", .{ r, std.posix.errno(r) });
-            return err;
+    comptime function: anytype,
+) type {
+    const fn_type = @typeInfo(@TypeOf(function));
+    if (fn_type.Fn.return_type) |t| {
+        const return_type = @typeInfo(t);
+        switch (t) {
+            usize => return i32,
+            else => switch (return_type) {
+                .ErrorUnion => return return_type.ErrorUnion.payload,
+                else => {},
+            },
+        }
+    }
+    comptime log.comptime_err(
+        src,
+        "Invalid type: {s} Note: nix.assert can only be called with functions returning usize or error union",
+        .{
+            @typeName(fn_type.Fn.return_type),
         },
+    );
+}
+
+pub inline fn assert(
+    comptime src: std.builtin.SourceLocation,
+    comptime function: anytype,
+    args: std.meta.ArgsTuple(@TypeOf(function)),
+) clean_return_type(src, function) {
+    const fn_type = @typeInfo(@TypeOf(function));
+    const t = if (fn_type.Fn.return_type) |tt| tt else void;
+    const return_type = @typeInfo(t);
+    switch (return_type) {
+        .ErrorUnion => {
+            return @call(.always_inline, function, args) catch |e| {
+                log.assert(src, false, "{}", .{e});
+                unreachable;
+            };
+        },
+        .Int => {
+            const r = @call(.always_inline, function, args);
+            log.assert(src, std.posix.errno(r) == .SUCCESS, "{}({})", .{
+                r,
+                std.posix.errno(r),
+            });
+            return @intCast(r);
+        },
+        else => comptime log.comptime_err(
+            src,
+            "assert can only be called with functions returning usize or error union",
+            .{},
+        ),
     }
 }
 

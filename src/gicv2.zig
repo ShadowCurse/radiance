@@ -23,29 +23,22 @@ pub const IRQ_MAX: u32 = 128;
 /// First usable interrupt on aarch64.
 pub const IRQ_BASE: u32 = 32;
 
-pub const Gicv2Error = error{
-    New,
-    SetAttributes,
-};
-
-pub fn new(vm: *const Vm) !void {
+pub fn new(vm: *const Vm) void {
     var device: nix.kvm_create_device = .{
         .type = nix.KVM_DEV_TYPE_ARM_VGIC_V2,
         .fd = 0,
         .flags = 0,
     };
-    _ = try nix.checked_ioctl(
-        @src(),
-        Gicv2Error.New,
+    _ = nix.assert(@src(), nix.ioctl, .{
         vm.fd,
         nix.KVM_CREATE_DEVICE,
         @intFromPtr(&device),
-    );
+    });
 
     const fd: nix.fd_t = @intCast(device.fd);
 
     log.debug(@src(), "gic dist_addr: 0x{x}", .{DISTRIBUTOR_ADDRESS});
-    try set_attributes(
+    set_attributes(
         fd,
         0,
         nix.KVM_DEV_ARM_VGIC_GRP_ADDR,
@@ -54,7 +47,7 @@ pub fn new(vm: *const Vm) !void {
     );
 
     log.debug(@src(), "gic cpu_addr: 0x{x}", .{CPU_ADDRESS});
-    try set_attributes(
+    set_attributes(
         fd,
         0,
         nix.KVM_DEV_ARM_VGIC_GRP_ADDR,
@@ -64,7 +57,7 @@ pub fn new(vm: *const Vm) !void {
 
     // KVM_DEV_ARM_VGIC_GRP_NR_IRQS sets the highest SPI interrupt number.
     // Total number of available interrupts is: IRQ_MAX - IRQ_BASE
-    try set_attributes(
+    set_attributes(
         fd,
         0,
         nix.KVM_DEV_ARM_VGIC_GRP_NR_IRQS,
@@ -72,7 +65,7 @@ pub fn new(vm: *const Vm) !void {
         @intFromPtr(&IRQ_MAX),
     );
 
-    try set_attributes(
+    set_attributes(
         fd,
         0,
         nix.KVM_DEV_ARM_VGIC_GRP_CTRL,
@@ -87,7 +80,7 @@ fn set_attributes(
     group: u32,
     attr: u64,
     addr: u64,
-) !void {
+) void {
     const kda = nix.kvm_device_attr{
         .flags = flags,
         .group = group,
@@ -95,11 +88,9 @@ fn set_attributes(
         .addr = addr,
     };
     log.debug(@src(), "setting gic attributes: {any}", .{kda});
-    _ = try nix.checked_ioctl(
-        @src(),
-        Gicv2Error.SetAttributes,
+    _ = nix.assert(@src(), nix.ioctl, .{
         fd,
         nix.KVM_SET_DEVICE_ATTR,
         @intFromPtr(&kda),
-    );
+    });
 }

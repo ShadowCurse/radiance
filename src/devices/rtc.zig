@@ -44,12 +44,12 @@ pub fn new() Self {
     };
 }
 
-fn now() !u32 {
-    const n = try std.time.Instant.now();
+fn now() u32 {
+    const n = std.time.Instant.now() catch unreachable;
     return @intCast(n.timestamp.tv_sec);
 }
 
-pub fn write(self: *Self, offset: u64, data: []u8) !void {
+pub fn write(self: *Self, offset: u64, data: []u8) void {
     const val: *u32 = @alignCast(@ptrCast(data.ptr));
 
     switch (offset) {
@@ -60,7 +60,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) !void {
             // offset as the difference between the LR value and the host time.
             // This offset is later used to calculate the RTC value.
             self.lr = val.*;
-            self.offset = self.lr - try now();
+            self.offset = self.lr - now();
         },
         RTCCR => {
             if (val.* == 1) {
@@ -73,16 +73,16 @@ pub fn write(self: *Self, offset: u64, data: []u8) !void {
             self.ris &= ~val.*;
         },
         else => {
-            log.err(@src(), "invalid rtc write: offset: {x} data: {}", .{ offset, val.* });
+            log.assert(@src(), false, "invalid rtc write: offset: {x} data: {}", .{ offset, val.* });
         },
     }
 }
 
-pub fn read(self: *Self, offset: u64, data: []u8) !void {
+pub fn read(self: *Self, offset: u64, data: []u8) void {
     const v = switch (offset) {
         // The RTC value is the time + offset as per:
         // https://developer.arm.com/documentation/ddi0224/c/Functional-overview/RTC-functional-description/Update-block
-        RTCDR => try now() + self.offset,
+        RTCDR => now() + self.offset,
         RTCMR => self.mr,
         RTCLR => self.lr,
         RTCCR => @as(u32, 1), // RTC is always enabled.
@@ -98,8 +98,8 @@ pub fn read(self: *Self, offset: u64, data: []u8) !void {
         0xFF8 => @as(u32, 0x05),
         0xFFC => @as(u32, 0xB1),
         else => {
-            log.err(@src(), "invalid rtc read: offset: {x}", .{offset});
-            return true;
+            log.assert(@src(), false, "invalid rtc read: offset: {x}", .{offset});
+            unreachable;
         },
     };
 

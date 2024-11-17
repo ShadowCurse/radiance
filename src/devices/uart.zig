@@ -83,10 +83,6 @@ const MSR_DCD_MASK: u8 = 1 << 7;
 const DEFAULT_BAUD_DIVISOR_HIGH: u8 = 0x00;
 const DEFAULT_BAUD_DIVISOR_LOW: u8 = 0x0C;
 
-pub const UartError = error{
-    New,
-};
-
 in: nix.fd_t,
 out: nix.fd_t,
 
@@ -110,20 +106,18 @@ irq_evt: EventFd,
 
 const Self = @This();
 
-pub fn new(vm: *const Vm, in: nix.fd_t, out: nix.fd_t, mmio_info: MmioDeviceInfo) !Self {
-    const irq_evt = try EventFd.new(0, nix.EFD_NONBLOCK);
+pub fn new(vm: *const Vm, in: nix.fd_t, out: nix.fd_t, mmio_info: MmioDeviceInfo) Self {
+    const irq_evt = EventFd.new(0, nix.EFD_NONBLOCK);
     const kvm_irqfd: nix.kvm_irqfd = .{
         .fd = @intCast(irq_evt.fd),
         .gsi = mmio_info.irq,
     };
 
-    _ = try nix.checked_ioctl(
-        @src(),
-        UartError.New,
+    _ = nix.assert(@src(), nix.ioctl, .{
         vm.fd,
         nix.KVM_IRQFD,
-        &kvm_irqfd,
-    );
+        @intFromPtr(&kvm_irqfd),
+    });
 
     return Self{
         .in = in,
@@ -155,16 +149,16 @@ pub fn add_to_cmdline(cmdline: *CmdLine, mmio_info: MmioDeviceInfo) !void {
     try cmdline.append(cmd);
 }
 
-pub fn read_input(self: *Self) !void {
+pub fn read_input(self: *Self) void {
     var buff: [8]u8 = undefined;
-    const n = try nix.read(self.in, &buff);
+    const n = nix.assert(@src(), nix.read, .{ self.in, &buff });
     if (n <= 0) {
         return;
     }
     if (n <= self.fifo.writableLength() and !self.in_loop_mode()) {
-        try self.fifo.write(buff[0..n]);
+        self.fifo.write(buff[0..n]) catch unreachable;
         self.LSR |= LSR_DATA_READY_MASK;
-        try self.received_data_interrupt();
+        self.received_data_interrupt();
     }
 }
 
@@ -204,29 +198,29 @@ fn remove_interrupt(self: *Self, interrupt_bits: u8) void {
     }
 }
 
-fn thr_empty_interrupt(self: *Self) !void {
+fn thr_empty_interrupt(self: *Self) void {
     if (self.thr_interrupt_enabled()) {
         // Trigger the interrupt only if the identification bit wasn't
         // set or acknowledged.
         if ((self.IIR & IIR_THR_EMPTY_MASK) == 0) {
             self.add_interrupt(IIR_THR_EMPTY_MASK);
-            try self.irq_evt.write(1);
+            self.irq_evt.write(1);
         }
     }
 }
 
-fn received_data_interrupt(self: *Self) !void {
+fn received_data_interrupt(self: *Self) void {
     if (self.rda_interrupt_enabled()) {
         // Trigger the interrupt only if the identification bit wasn't
         // set or acknowledged.
         if (self.IIR & IIR_RDA_MASK == 0) {
             self.add_interrupt(IIR_RDA_MASK);
-            try self.irq_evt.write(1);
+            self.irq_evt.write(1);
         }
     }
 }
 
-pub fn write(self: *Self, offset: u64, data: []u8) !void {
+pub fn write(self: *Self, offset: u64, data: []u8) void {
     const value = data[0];
     switch (offset) {
         0 => {
@@ -242,14 +236,14 @@ pub fn write(self: *Self, offset: u64, data: []u8) !void {
                     // corresponding interrupt.
                     if (self.fifo.writeItem(value)) |_| {
                         self.LSR |= LSR_DATA_READY_MASK;
-                        try self.received_data_interrupt();
+                        self.received_data_interrupt();
                     } else |_| {}
                 } else {
-                    _ = try nix.write(self.out, data);
+                    _ = nix.assert(@src(), nix.write, .{ self.out, data });
 
                     // Because we cannot block the driver, the THRE interrupt is sent
                     // irrespective of whether we are able to write the byte or not
-                    try self.thr_empty_interrupt();
+                    self.thr_empty_interrupt();
                 }
             }
         },
@@ -268,7 +262,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) !void {
     }
 }
 
-pub fn read(self: *Self, offset: u64, data: []u8) !void {
+pub fn read(self: *Self, offset: u64, data: []u8) void {
     data[0] = switch (offset) {
         0 => blk: {
             if (self.dlab_set()) {
