@@ -93,7 +93,7 @@ pub fn slice(self: *Self) []nix.iovec {
 }
 
 test "test_iov_ring_push_back" {
-    var ir = try Self.init();
+    var ir = Self.init();
     try std.testing.expectEqual(ir.start, 0);
     try std.testing.expectEqual(ir.len, 0);
     try std.testing.expectEqual(ir.capacity, 0);
@@ -110,7 +110,7 @@ test "test_iov_ring_push_back" {
 }
 
 test "test_iov_ring_pop_front_n" {
-    var ir = try Self.init();
+    var ir = Self.init();
 
     for (0..256) |_| {
         ir.push_back(.{ .base = undefined, .len = 1 });
@@ -128,7 +128,7 @@ test "test_iov_ring_pop_front_n" {
 }
 
 test "test_iov_ring_slice" {
-    var ir = try Self.init();
+    var ir = Self.init();
 
     for (0..128) |_| {
         ir.push_back(.{ .base = undefined, .len = 1 });
