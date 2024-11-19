@@ -1,7 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const CacheDir = @import("cache.zig").CacheDir;
+const _cache = @import("cache.zig");
+const CacheDir = _cache.CacheDir;
+const CacheEntry = _cache.CacheEntry;
 const Gicv2 = @import("gicv2.zig");
 const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
 const Memory = @import("memory.zig");
@@ -270,23 +272,47 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
 
     const cache_dir = try CacheDir.new();
     const cache_entries = try cache_dir.get_caches();
+
+    var l1d_cache: ?CacheEntry = null;
+    var l1i_cache: ?CacheEntry = null;
+    var l2_cache: ?CacheEntry = null;
+    var l3_cache: ?CacheEntry = null;
+
+    for (cache_entries) |entry| {
+        const cache = entry orelse continue;
+        std.log.info("cache level: {}", .{cache.level});
+        switch (cache.level) {
+            1 => {
+                switch (cache.cache_type) {
+                    .Data => l1d_cache = cache,
+                    .Instruction => l1i_cache = cache,
+                    .Unified => unreachable,
+                }
+            },
+            2 => l2_cache = cache,
+            3 => l3_cache = cache,
+            else => {},
+        }
+    }
+
     builder.begin_node("cpus");
+    defer builder.end_node();
+
     builder.add_property(u32, "#address-cells", 0x02);
     builder.add_property(u32, "#size-cells", 0x0);
 
+    var print_buff: [20]u8 = undefined;
     for (mpidrs, 0..) |mpidr, i| {
-        var print_buff: [20]u8 = undefined;
         const cpu_name = std.fmt.bufPrintZ(&print_buff, "cpu@{x}", .{i}) catch unreachable;
         builder.begin_node(cpu_name);
+        defer builder.end_node();
+
         builder.add_property([:0]const u8, "device_type", "cpu");
         builder.add_property([:0]const u8, "compatible", "arm,arm-v8");
         builder.add_property([:0]const u8, "enable-method", "psci");
         builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
-        for (cache_entries) |entry| {
-            const cache = entry orelse continue;
-            if (cache.level != 1) {
-                continue;
-            }
+
+        if (l1d_cache) |cache| {
             const cache_size: u32 = @intCast(cache.size);
             builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
 
@@ -296,53 +322,69 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
             const number_of_sets: u32 = @intCast(cache.number_of_sets);
             builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
         }
-        var prev_level: u8 = 1;
-        var in_cache_node: bool = false;
-        for (cache_entries) |entry| {
-            const cache = entry orelse continue;
-            if (cache.level == 1) {
-                continue;
-            }
-            // skip ather levels for now
-            const cache_phandle: u32 = LAST_CACHE_PHANDLE -
-                @as(u32, @intCast(mpidrs.len)) * @as(u32, cache.level - 2) +
-                @as(u32, @intCast(i)) / cache.cpus_per_unit;
-            if (prev_level != cache.level) {
-                builder.add_property(u32, "next-level-cache", cache_phandle);
-                if (prev_level > 1 and in_cache_node) {
-                    builder.end_node();
-                }
-            }
-            if (i % cache.cpus_per_unit == 0) {
-                in_cache_node = true;
-                const node_name = std.fmt.bufPrintZ(
-                    &print_buff,
-                    "l{}-{}-cache",
-                    .{ cache.level, i / cache.cpus_per_unit },
-                ) catch unreachable;
-                builder.begin_node(node_name);
-                builder.add_property(u32, "phandle", cache_phandle);
-                builder.add_property([:0]const u8, "compatible", "cache");
-                builder.add_property(u32, "cache-level", cache.level);
-                const cache_size: u32 = @intCast(cache.size);
-                builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
-                const line_size: u32 = @intCast(cache.line_size);
-                builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
-                const number_of_sets: u32 = @intCast(cache.number_of_sets);
-                builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
-                if (cache.cache_type.cache_type_str()) |s| {
-                    builder.add_property(void, s, {});
-                }
-                prev_level = cache.level;
-            }
-        }
-        if (in_cache_node) {
-            builder.end_node();
+        if (l1i_cache) |cache| {
+            const cache_size: u32 = @intCast(cache.size);
+            builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+
+            const line_size: u32 = @intCast(cache.line_size);
+            builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+
+            const number_of_sets: u32 = @intCast(cache.number_of_sets);
+            builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
         }
 
-        builder.end_node();
+        if (l2_cache) |_| {
+            const l2_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(i));
+            builder.add_property(u32, "next-level-cache", l2_cache_phandle);
+        }
     }
-    builder.end_node();
+
+    if (l2_cache) |cache| {
+        for (0..mpidrs.len) |i| {
+            const l2_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(i));
+
+            const node_name = std.fmt.bufPrintZ(&print_buff, "l2-cache-{}", .{i}) catch unreachable;
+            builder.begin_node(node_name);
+            defer builder.end_node();
+
+            builder.add_property(u32, "phandle", l2_cache_phandle);
+            builder.add_property([:0]const u8, "compatible", "cache");
+            builder.add_property(u32, "cache-level", cache.level);
+            const cache_size: u32 = @intCast(cache.size);
+            builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+            const line_size: u32 = @intCast(cache.line_size);
+            builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+            const number_of_sets: u32 = @intCast(cache.number_of_sets);
+            builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
+            if (cache.cache_type.cache_type_str()) |s| {
+                builder.add_property(void, s, {});
+            }
+            if (l3_cache) |_| {
+                const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(mpidrs.len));
+                builder.add_property(u32, "next-level-cache", l3_cache_phandle);
+            }
+        }
+    }
+
+    if (l3_cache) |cache| {
+        const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(mpidrs.len));
+
+        builder.begin_node("l3-cache");
+        defer builder.end_node();
+
+        builder.add_property(u32, "phandle", l3_cache_phandle);
+        builder.add_property([:0]const u8, "compatible", "cache");
+        builder.add_property(u32, "cache-level", cache.level);
+        const cache_size: u32 = @intCast(cache.size);
+        builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+        const line_size: u32 = @intCast(cache.line_size);
+        builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+        const number_of_sets: u32 = @intCast(cache.number_of_sets);
+        builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
+        if (cache.cache_type.cache_type_str()) |s| {
+            builder.add_property(void, s, {});
+        }
+    }
 }
 
 fn create_memory_fdt(builder: *FdtBuilder, memory: *const Memory) void {
@@ -351,9 +393,10 @@ fn create_memory_fdt(builder: *FdtBuilder, memory: *const Memory) void {
     const mem_reg_prop = [_]u64{ Memory.DRAM_START, mem_size };
 
     builder.begin_node("memory");
+    defer builder.end_node();
+
     builder.add_property([:0]const u8, "device_type", "memory");
     builder.add_property([]const u64, "reg", &mem_reg_prop);
-    builder.end_node();
 }
 
 fn create_cmdline_fdt(builder: *FdtBuilder, cmdline: [:0]const u8) void {
@@ -365,6 +408,8 @@ fn create_cmdline_fdt(builder: *FdtBuilder, cmdline: [:0]const u8) void {
 fn create_gic_fdt(builder: *FdtBuilder) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arm%2Cgic.yaml
     builder.begin_node("intc");
+    defer builder.end_node();
+
     builder.add_property([:0]const u8, "compatible", "arm,gic-400");
     builder.add_property(void, "interrupt-controller", {});
     builder.add_property(u32, "#interrupt-cells", 3);
@@ -381,18 +426,17 @@ fn create_gic_fdt(builder: *FdtBuilder) void {
     };
 
     builder.add_property([]const u32, "interrupts", &gic_intr);
-    builder.end_node();
 }
 
 fn create_clock_node(builder: *FdtBuilder) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/clock/fixed-clock.yaml
     builder.begin_node("apb-pclk");
+    defer builder.end_node();
     builder.add_property([:0]const u8, "compatible", "fixed-clock");
     builder.add_property(u32, "#clock-cells", 0x0);
     builder.add_property(u32, "clock-frequency", 24_000_000);
     builder.add_property([:0]const u8, "clock-output-names", "clk24mhz");
     builder.add_property(u32, "phandle", FdtBuilder.CLOCK_PHANDLE);
-    builder.end_node();
 }
 
 fn create_timer_node(builder: *FdtBuilder) void {
@@ -413,18 +457,20 @@ fn create_timer_node(builder: *FdtBuilder) void {
         FdtBuilder.IRQ_TYPE_LEVEL_HI,
     };
     builder.begin_node("timer");
+    defer builder.end_node();
+
     builder.add_property([:0]const u8, "compatible", "arm,armv8-timer");
     builder.add_property(void, "always-on", {});
     builder.add_property([]const u32, "interrupts", &interrupts);
-    builder.end_node();
 }
 
 fn create_psci_node(builder: *FdtBuilder) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/psci.yaml
     builder.begin_node("psci");
+    defer builder.end_node();
+
     builder.add_property([:0]const u8, "compatible", "arm,psci-0.2");
     builder.add_property([:0]const u8, "method", "hvc");
-    builder.end_node();
 }
 
 fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
@@ -432,6 +478,7 @@ fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
     var buff: [20]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{device_info.addr}) catch unreachable;
     builder.begin_node(name);
+    defer builder.end_node();
 
     builder.add_property([:0]const u8, "compatible", "ns16550a");
     builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
@@ -442,7 +489,6 @@ fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
         "interrupts",
         &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, device_info.irq, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
-    builder.end_node();
 }
 
 fn create_rtc_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
@@ -450,12 +496,12 @@ fn create_rtc_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
     var buff: [20]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "rtc@{x:.8}", .{device_info.addr}) catch unreachable;
     builder.begin_node(name);
+    defer builder.end_node();
 
     builder.add_property([:0]const u8, "compatible", "arm,pl031\u{0}arm,primecell");
     builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
     builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
     builder.add_property([:0]const u8, "clock-names", "apb_pclk");
-    builder.end_node();
 }
 
 fn create_virtio_node(
@@ -466,6 +512,7 @@ fn create_virtio_node(
     var buff: [30]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "virtio_mmio@{x:.8}", .{device_info.addr}) catch unreachable;
     builder.begin_node(name);
+    defer builder.end_node();
 
     builder.add_property([:0]const u8, "compatible", "virtio,mmio");
     builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
@@ -475,5 +522,4 @@ fn create_virtio_node(
         &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, device_info.irq, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
     builder.add_property(u32, "interrupt-parent", FdtBuilder.GIC_PHANDLE);
-    builder.end_node();
 }
