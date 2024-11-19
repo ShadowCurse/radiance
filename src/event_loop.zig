@@ -30,7 +30,7 @@ pub const EventLoopError = error{
     Run,
 };
 
-pub fn new() !Self {
+pub fn new() Self {
     const epollfd = nix.assert(@src(), nix.epoll_create1, .{0});
 
     return Self{
@@ -47,10 +47,13 @@ pub fn add_event(
     fd: nix.fd_t,
     callback: CallbackFn,
     parameter: CallbackParam,
-) !void {
-    if (self.events_info_num == MAX_EVENTS) {
-        return EventLoopError.TooMuchEvents;
-    }
+) void {
+    log.assert(
+        @src(),
+        self.events_info_num != MAX_EVENTS,
+        "too much events added. Max: {}",
+        .{@as(u32, MAX_EVENTS)},
+    );
 
     self.events_info[self.events_info_num] = .{
         .fd = fd,
@@ -76,7 +79,7 @@ pub fn add_event(
 pub fn remove_event(
     self: *Self,
     fd: nix.fd_t,
-) !void {
+) void {
     for (&self.events_info) |*ec| {
         if (ec.fd == fd) {
             nix.assert(
@@ -89,17 +92,17 @@ pub fn remove_event(
     }
 }
 
-pub fn run(self: *Self) !void {
+pub fn run(self: *Self) void {
+    log.debug(@src(), "runnning", .{});
     while (!self.stop) {
         const nfds = nix.assert(
             @src(),
             nix.epoll_wait,
             .{ self.epollfd, &self.events, -1 },
         );
-        if (nfds < 0) {
-            return EventLoopError.Run;
-        }
+        log.assert(@src(), 0 < nfds, "epoll_wait returned {}", .{nfds});
 
+        log.debug(@src(), "events: {}", .{nfds});
         const n: usize = @intCast(nfds);
         for (0..n) |i| {
             const event = &self.events[i];
@@ -107,6 +110,7 @@ pub fn run(self: *Self) !void {
             callback.callback(callback.parameter);
         }
     }
+    log.debug(@src(), "exiting", .{});
 }
 
 pub fn stop(self: *Self) void {
