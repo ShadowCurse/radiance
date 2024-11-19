@@ -184,7 +184,7 @@ pub fn main() !void {
     // free config memory
     config_parse_result.deinit();
 
-    std.log.info("starting vcpu threads", .{});
+    log.debug(@src(), "starting vcpu threads", .{});
     var barrier: std.Thread.ResetEvent = .{};
     for (vcpu_threads, vcpus) |*t, *vcpu| {
         t.* = try std.Thread.spawn(
@@ -195,34 +195,34 @@ pub fn main() !void {
     }
 
     // create event loop
-    var el = try EventLoop.new();
-    try el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
+    var el = EventLoop.new();
+    el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
     for (virtio_blocks) |*block| {
-        try el.add_event(
+        el.add_event(
             block.virtio_context.queue_events[0].fd,
             @ptrCast(&VirtioBlock.process_queue),
             block,
         );
     }
     for (virtio_nets) |*net| {
-        try el.add_event(
+        el.add_event(
             net.virtio_context.queue_events[0].fd,
             @ptrCast(&VirtioNet.process_rx),
             net,
         );
-        try el.add_event(
+        el.add_event(
             net.virtio_context.queue_events[1].fd,
             @ptrCast(&VirtioNet.process_tx),
             net,
         );
-        try el.add_event(
+        el.add_event(
             net.tun,
             @ptrCast(&VirtioNet.process_tap),
             net,
         );
     }
     for (vcpus) |*vcpu| {
-        try el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
+        el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
     }
 
     if (config.gdb.socket_path) |sp| {
@@ -236,16 +236,16 @@ pub fn main() !void {
             &mmio,
             &el,
         );
-        try el.add_event(gdb_server.connection.stream.handle, @ptrCast(&gdb.GdbServer.process_request), &gdb_server);
+        el.add_event(gdb_server.connection.stream.handle, @ptrCast(&gdb.GdbServer.process_request), &gdb_server);
 
         // start event loop
-        try el.run();
+        el.run();
     } else {
         // start vcpus
         barrier.set();
 
         // start event loop
-        try el.run();
+        el.run();
     }
 
     log.info(@src(), "Shutting down", .{});
