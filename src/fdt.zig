@@ -226,7 +226,7 @@ pub fn create_fdt(
     memory: *const Memory,
     mpidrs: []const u64,
     cmdline: [:0]const u8,
-    serial_device_info: MmioDeviceInfo,
+    uart_device_info: ?MmioDeviceInfo,
     rtc_device_info: MmioDeviceInfo,
     virtio_devices_info: []const MmioDeviceInfo,
 ) !u64 {
@@ -252,7 +252,8 @@ pub fn create_fdt(
     create_clock_node(&fdt_builder);
     create_psci_node(&fdt_builder);
 
-    create_serial_node(&fdt_builder, serial_device_info);
+    if (uart_device_info) |info|
+        create_uart_node(&fdt_builder, info);
     create_rtc_node(&fdt_builder, rtc_device_info);
 
     for (virtio_devices_info) |*info| {
@@ -280,7 +281,6 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
 
     for (cache_entries) |entry| {
         const cache = entry orelse continue;
-        std.log.info("cache level: {}", .{cache.level});
         switch (cache.level) {
             1 => {
                 switch (cache.cache_type) {
@@ -473,7 +473,7 @@ fn create_psci_node(builder: *FdtBuilder) void {
     builder.add_property([:0]const u8, "method", "hvc");
 }
 
-fn create_serial_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
+fn create_uart_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/serial/8250.yaml
     var buff: [20]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{device_info.addr}) catch unreachable;
