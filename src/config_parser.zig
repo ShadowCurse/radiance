@@ -35,6 +35,17 @@ pub const KernelConfig = struct {
     }
 };
 
+pub const UartConfig = struct {
+    enabled: bool = true,
+
+    const Self = @This();
+
+    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        const new_self = try parse_type(Self, line_iter);
+        self.* = new_self;
+    }
+};
+
 pub const DriveConfig = struct {
     read_only: bool = false,
     path: []const u8 = "",
@@ -82,6 +93,7 @@ pub const GdbConfig = struct {
 pub const Config = struct {
     machine: MachineConfig = .{},
     kernel: KernelConfig = .{},
+    uart: UartConfig = .{},
     drives: DrivesConfigs = .{},
     networks: NetConfigs = .{},
     gdb: GdbConfig = .{},

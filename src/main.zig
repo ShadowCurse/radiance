@@ -90,7 +90,7 @@ pub fn main() !void {
 
     // create mmio devices
     var mmio = Mmio.new();
-    const uart_device_info = mmio.allocate();
+    const uart_device_info = if (config.uart.enabled) mmio.allocate() else undefined;
     const rtc_device_info = mmio.allocate();
     mmio.start_mmio_opt();
 
@@ -100,7 +100,7 @@ pub fn main() !void {
         virtio_device_infos[i] = mmio.allocate_virtio();
     }
 
-    var uart = Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info);
+    var uart = if (config.uart.enabled) Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info) else undefined;
     var rtc = Rtc.new();
 
     const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, config.drives.drives.len);
@@ -125,7 +125,7 @@ pub fn main() !void {
         }
     }
 
-    mmio.add_device(.{ .ptr = &uart, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
+    if (config.uart.enabled) mmio.add_device(.{ .ptr = &uart, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
     mmio.add_device(.{ .ptr = &rtc, .read_ptr = @ptrCast(&Rtc.read), .write_ptr = @ptrCast(&Rtc.write) });
     for (virtio_blocks) |*virtio_block| {
         mmio.add_device_virtio(.{ .ptr = virtio_block, .read_ptr = @ptrCast(&VirtioBlock.read), .write_ptr = @ptrCast(&VirtioBlock.write) });
@@ -146,7 +146,7 @@ pub fn main() !void {
     } else {
         try cmdline.append(" root=/dev/vda rw");
     }
-    try Uart.add_to_cmdline(&cmdline, uart_device_info);
+    if (config.uart.enabled) try Uart.add_to_cmdline(&cmdline, uart_device_info);
 
     const cmdline_0 = try cmdline.sentinel_str();
 
@@ -161,7 +161,7 @@ pub fn main() !void {
         &memory,
         mpidrs,
         cmdline_0,
-        uart_device_info,
+        if (config.uart.enabled) uart_device_info else null,
         rtc_device_info,
         virtio_device_infos,
     );
@@ -175,8 +175,8 @@ pub fn main() !void {
     }
 
     // configure terminal for uart in/out
-    const stdin = std.io.getStdIn();
-    const state = configure_terminal(&stdin);
+    const stdin = if (config.uart.enabled) std.io.getStdIn() else undefined;
+    const state = if (config.uart.enabled) configure_terminal(&stdin) else undefined;
 
     // start vcpu threads
     const vcpu_threads = try permanent_alloc.alloc(std.Thread, config.machine.vcpus);
@@ -196,7 +196,7 @@ pub fn main() !void {
 
     // create event loop
     var el = EventLoop.new();
-    el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
+    if (config.uart.enabled) el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
     for (virtio_blocks) |*block| {
         el.add_event(
             block.virtio_context.queue_events[0].fd,
@@ -249,7 +249,7 @@ pub fn main() !void {
     }
 
     log.info(@src(), "Shutting down", .{});
-    restore_terminal(&stdin, &state);
+    if (config.uart.enabled) restore_terminal(&stdin, &state);
     return;
 }
 
