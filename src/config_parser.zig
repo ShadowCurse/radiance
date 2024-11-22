@@ -80,7 +80,7 @@ pub const NetConfigs = struct {
 };
 
 pub const GdbConfig = struct {
-    socket_path: ?[]const u8 = null,
+    socket_path: []const u8 = "",
 
     const Self = @This();
 
@@ -96,7 +96,7 @@ pub const Config = struct {
     uart: UartConfig = .{},
     drives: DrivesConfigs = .{},
     networks: NetConfigs = .{},
-    gdb: GdbConfig = .{},
+    gdb: ?GdbConfig = null,
 };
 
 pub const ParseResult = struct {
@@ -156,7 +156,13 @@ pub fn parse(config_path: []const u8) !ParseResult {
             };
             inline for (type_fields) |field| {
                 if (std.mem.eql(u8, field.name, filed_name)) {
-                    try @field(config, field.name).update(&line_iter);
+                    const field_type = @typeInfo(field.type);
+                    if (field_type == .Optional) {
+                        @field(config, field.name) = .{};
+                        try @field(config, field.name).?.update(&line_iter);
+                    } else {
+                        try @field(config, field.name).update(&line_iter);
+                    }
                     break;
                 }
             }
@@ -217,10 +223,6 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
                         @field(t, field.name) = string;
                     },
                     []const u8 => {
-                        const string = std.mem.trim(u8, field_value, "\"");
-                        @field(t, field.name) = string;
-                    },
-                    ?[]const u8 => {
                         const string = std.mem.trim(u8, field_value, "\"");
                         @field(t, field.name) = string;
                     },
