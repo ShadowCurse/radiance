@@ -225,10 +225,10 @@ pub fn main() !void {
         el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
     }
 
-    if (config.gdb.socket_path) |sp| {
+    if (config.gdb) |gdb_config| {
         // start gdb server
         var gdb_server = try gdb.GdbServer.init(
-            sp,
+            gdb_config.socket_path,
             vcpus,
             vcpu_threads,
             &barrier,
