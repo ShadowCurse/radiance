@@ -34,7 +34,7 @@ const Args = struct {
 pub fn main() !void {
     const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
-    const config_parse_result = try config_parser.parse(args.config_path);
+    const config_parse_result = try config_parser.parse_file(args.config_path);
     const config = &config_parse_result.config;
 
     var vhost_net_count: u32 = 0;
