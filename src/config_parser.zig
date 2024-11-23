@@ -110,7 +110,7 @@ pub const ParseResult = struct {
     }
 };
 
-pub fn parse(config_path: []const u8) !ParseResult {
+pub fn parse_file(config_path: []const u8) !ParseResult {
     const fd = try nix.open(
         config_path,
         .{
@@ -120,6 +120,10 @@ pub fn parse(config_path: []const u8) !ParseResult {
     );
     defer nix.close(fd);
 
+    return parse_fd(fd);
+}
+
+pub fn parse_fd(fd: nix.fd_t) !ParseResult {
     const statx = try nix.statx(fd);
     const file_mem = try nix.mmap(
         null,
@@ -238,4 +242,225 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
         }
     }
     return t;
+}
+
+fn dump_file(config: Config, config_path: []const u8) void {
+    const fd = nix.assert(@src(), nix.open, .{
+        config_path,
+        .{
+            .CREAT = true,
+            .ACCMODE = .WRONLY,
+        },
+        0,
+    });
+    defer nix.close(fd);
+
+    dump_fd(config, fd);
+}
+
+fn dump_fd(config: Config, fd: nix.fd_t) void {
+    const type_fields = comptime @typeInfo(Config).Struct.fields;
+    inline for (type_fields) |field| {
+        if (@typeInfo(field.type) == .Optional) {
+            if (@field(config, field.name)) |v| {
+                dump_section(field.name, v, fd);
+            }
+        } else {
+            dump_section(field.name, @field(config, field.name), fd);
+            _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+        }
+    }
+}
+
+fn dump_section(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
+    if (std.mem.endsWith(u8, name, "s")) {
+        const t_type = @TypeOf(t);
+        switch (t_type) {
+            DrivesConfigs, NetConfigs => {
+                const type_fields = @typeInfo(t_type).Struct.fields;
+                const first_field = type_fields[0];
+                const items = @field(t, first_field.name).slice();
+                for (items, 0..) |item, i| {
+                    dump_type(name, item, fd);
+                    // skip new line to avoid double new line after
+                    // array section
+                    if (i != items.len - 1)
+                        _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+                }
+            },
+            else => unreachable,
+        }
+    } else {
+        dump_type(name, t, fd);
+    }
+}
+
+fn dump_type(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
+    const type_fields = @typeInfo(@TypeOf(t)).Struct.fields;
+
+    const header = if (std.mem.endsWith(u8, name, "s"))
+        std.fmt.comptimePrint("[[{s}]]\n", .{name})
+    else
+        std.fmt.comptimePrint("[{s}]\n", .{name});
+    _ = nix.assert(@src(), nix.write, .{ fd, header });
+
+    inline for (type_fields) |field| {
+        switch (field.type) {
+            ?[6]u8 => {
+                if (@field(t, field.name)) |value| {
+                    const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
+                    _ = nix.assert(@src(), nix.write, .{ fd, field_start });
+
+                    var buff: [24]u8 = undefined;
+                    const v = std.fmt.bufPrint(&buff, "[{X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}]", .{
+                        value[0],
+                        value[1],
+                        value[2],
+                        value[3],
+                        value[4],
+                        value[5],
+                    }) catch unreachable;
+                    _ = nix.assert(@src(), nix.write, .{ fd, v });
+
+                    _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+                }
+            },
+            [:0]const u8, []const u8 => {
+                const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
+                _ = nix.assert(@src(), nix.write, .{ fd, field_start });
+
+                _ = nix.assert(@src(), nix.write, .{ fd, @field(t, field.name) });
+
+                _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+            },
+            u32, bool => {
+                const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
+                _ = nix.assert(@src(), nix.write, .{ fd, field_start });
+
+                var buff: [16]u8 = undefined;
+                const v = std.fmt.bufPrint(&buff, "{}", .{@field(t, field.name)}) catch unreachable;
+                _ = nix.assert(@src(), nix.write, .{ fd, v });
+
+                _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+            },
+            else => unreachable,
+        }
+    }
+}
+
+test "dump_and_parse" {
+    const config_toml =
+        \\[machine]
+        \\vcpus = 69
+        \\memory_mb = 69
+        \\
+        \\[kernel]
+        \\path = kernel_path
+        \\
+        \\[uart]
+        \\enabled = false
+        \\
+        \\[[drives]]
+        \\read_only = false
+        \\path = drive_1_path
+        \\
+        \\[[drives]]
+        \\read_only = true
+        \\path = drive_2_path
+        \\
+        \\[[networks]]
+        \\dev_name = net_1
+        \\vhost = true
+        \\
+        \\[[networks]]
+        \\dev_name = net_2
+        \\mac = [00, 02, DE, AD, BE, EF]
+        \\vhost = false
+        \\
+        \\[gdb]
+        \\socket_path = gdb_sock
+        \\
+    ;
+
+    var drives: DrivesConfigs = .{};
+    drives.drives.append(.{
+        .path = "drive_1_path",
+        .read_only = false,
+    }) catch unreachable;
+    drives.drives.append(.{
+        .path = "drive_2_path",
+        .read_only = true,
+    }) catch unreachable;
+
+    var nets: NetConfigs = .{};
+    nets.networks.append(.{
+        .mac = null,
+        .vhost = true,
+        .dev_name = "net_1",
+    }) catch unreachable;
+    nets.networks.append(.{
+        .mac = .{ 0x0, 0x2, 0xDE, 0xAD, 0xBE, 0xEF },
+        .vhost = false,
+        .dev_name = "net_2",
+    }) catch unreachable;
+
+    const config: Config = .{
+        .machine = .{
+            .vcpus = 69,
+            .memory_mb = 69,
+        },
+        .kernel = .{
+            .path = "kernel_path",
+        },
+        .uart = .{
+            .enabled = false,
+        },
+        .drives = drives,
+        .networks = nets,
+        .gdb = .{
+            .socket_path = "gdb_sock",
+        },
+    };
+
+    const memfd = nix.assert(@src(), nix.memfd_create, .{ "test_config_parse", nix.FD_CLOEXEC });
+    dump_fd(config, memfd);
+
+    const statx = try nix.statx(memfd);
+    const file_mem = try nix.mmap(
+        null,
+        statx.size,
+        nix.PROT.READ,
+        .{
+            .TYPE = .PRIVATE,
+        },
+        memfd,
+        0,
+    );
+
+    try std.testing.expect(std.mem.eql(u8, file_mem, config_toml));
+
+    const new_config = try parse_fd(memfd);
+
+    try std.testing.expect(new_config.config.machine.vcpus == config.machine.vcpus);
+    try std.testing.expect(new_config.config.machine.memory_mb == config.machine.memory_mb);
+
+    try std.testing.expect(std.mem.eql(u8, new_config.config.kernel.path, config.kernel.path));
+
+    try std.testing.expect(new_config.config.uart.enabled == config.uart.enabled);
+
+    for (new_config.config.drives.drives.slice(), config.drives.drives.slice()) |nd, od| {
+        try std.testing.expect(std.mem.eql(u8, nd.path, od.path));
+        try std.testing.expect(nd.read_only == od.read_only);
+    }
+
+    for (new_config.config.networks.networks.slice(), config.networks.networks.slice()) |nn, on| {
+        if (nn.mac) |nm| {
+            const om = on.mac.?;
+            try std.testing.expect(std.mem.eql(u8, &nm, &om));
+        }
+        try std.testing.expect(std.mem.eql(u8, nn.dev_name, on.dev_name));
+        try std.testing.expect(nn.vhost == on.vhost);
+    }
+
+    try std.testing.expect(std.mem.eql(u8, new_config.config.gdb.?.socket_path, config.gdb.?.socket_path));
 }
