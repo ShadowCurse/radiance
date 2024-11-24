@@ -1,0 +1,6 @@
+[Unit]
+After=sshd.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/local/bin/net_setup.sh

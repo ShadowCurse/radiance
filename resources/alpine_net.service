@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+
+depend() {
+  need sshd
+}
+
+start() {
+  ebegin "Setting up net"
+  exec /usr/local/bin/net_setup.sh
+  eend $?
+}
