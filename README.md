@@ -8,23 +8,23 @@ Defining characteristics:
 - no memory allocations after the VM start
 - minimal memory overhead over requested VM memory size
 
-Build:
+### Build:
 ```bash
     $ zig build -Doptimize=ReleaseFast -j4
 ```
 
-Usage:
+### Usage:
 ```bash
 Usage:
         --config_path: type []const u8
 ```
 
-Example:
+#### Example:
 ```bash
 radiance --config_path config.toml
 ```
 
-Example config file:
+### Example config file:
 ```toml
 [machine]
 vcpus = 2
@@ -39,8 +39,23 @@ path = "ubuntu-22.04.ext4"
 
 ```
 
-Linux kernel:
-To compile kernel use:
+### Rootfs:
+#### Ubuntu:
+```bash
+    $ sudo bash mk_ubuntu.sh 300
+```
+This will produce `ubuntu.ext4` rootfs file and
+ssh keys `ubuntu.id_rsa` and `ubuntu.id_rsa.pub`.
+
+#### Alpine:
+```bash
+    $ sudo bash mk_alpine.sh 100
+```
+This will produce `alpine.ext4` rootfs file and
+ssh keys `alpine.id_rsa` and `alpine.id_rsa.pub`.
+
+### Linux kernel:
+To compile small kernel for VM use `resources/kernel_config`.
 ```bash
 make -Image -j
 ```
