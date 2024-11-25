@@ -13,7 +13,7 @@ then
   echo "[CONTAINER] installing packages"
   export DEBIAN_FRONTEND=noninteractive
   apt update
-  apt install -y --no-install-recommends udev systemd-sysv iproute2 openssh-server #iputils-ping iperf3 fio
+  apt install -y --no-install-recommends udev systemd-sysv iproute2 openssh-server iputils-ping iperf3 fio
   apt autoremove
 
   echo "[CONTAINER] resetting root password"
