@@ -5,6 +5,6 @@ zig-out/
 /build/
 /build-*/
 /docgen_tmp/
-/release/*.ext4
-/release/*.id_rsa
-/release/*.id_rsa.pub
+/resources/*.ext4
+/resources/*.id_rsa
+/resources/*.id_rsa.pub
