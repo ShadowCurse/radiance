@@ -1,0 +1,145 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const KernelPath = "./vmlinux-6.12";
+pub const RootFsPath = "./resources/ubuntu.ext4";
+pub const DummyFilePath = "./dummy";
+
+pub const RadianceBin = "./zig-out/bin/radiance";
+pub const RadianceBootTimeDelay = 2 * std.time.ns_per_s;
+
+pub fn RadianceCmd(comptime config_path: []const u8) [4][]const u8 {
+    return [_][]const u8{
+        "sudo",
+        RadianceBin,
+        "--config_path",
+        config_path,
+    };
+}
+
+pub const RootfsSshKeyPath = "./resources/ubuntu.id_rsa";
+pub const RootfsSshCreds = "root@172.16.0.2";
+pub const SshCmd = [_][]const u8{
+    "ssh",
+    "-o",
+    "ConnectTimeout=10",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "PreferredAuthentications=publickey",
+    "-i",
+    RootfsSshKeyPath,
+    RootfsSshCreds,
+};
+
+pub fn ScpCmd(comptime from: []const u8, comptime to: []const u8) [13][]const u8 {
+    return [_][]const u8{
+        "scp",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "PreferredAuthentications=publickey",
+        "-i",
+        RootfsSshKeyPath,
+        RootfsSshCreds ++ ":" ++ from,
+        to,
+    };
+}
+
+pub fn FioCmd(comptime t: []const u8) [11][]const u8 {
+    return [_][]const u8{
+        "fio",
+        "--name=a",
+        "--filename=/dev/vdb",
+        "--ioengine=libaio",
+        "--bs=4096",
+        "--time_base=1",
+        "--runtime=10",
+        "--direct=1",
+        "--output-format=json",
+        "--output=fio.json",
+        "--rw=" ++ t,
+    };
+}
+
+pub fn IperfCmd(comptime arg: []const u8) [8][]const u8 {
+    return [_][]const u8{
+        "iperf3",
+        "-c",
+        "172.16.0.1",
+        "--time=10",
+        "--json",
+        "--logfile",
+        "iperf.json",
+        arg,
+    };
+}
+
+pub const Process = struct {
+    name: []const u8,
+    child: std.process.Child,
+
+    pub fn run(argv: []const []const u8, allocator: std.mem.Allocator) !void {
+        std.log.info("Running:", .{});
+
+        for (argv) |arg| {
+            std.debug.print("{s} ", .{arg});
+        }
+        std.debug.print("\n", .{});
+
+        var p = std.process.Child.init(argv, allocator);
+        _ = try p.spawn();
+        return;
+    }
+
+    pub fn start(name: []const u8, argv: []const []const u8, allocator: std.mem.Allocator) !Process {
+        std.log.info("Starting {s}", .{name});
+        for (argv) |arg| {
+            std.debug.print("{s} ", .{arg});
+        }
+        std.debug.print("\n", .{});
+        var child = std.process.Child.init(argv, allocator);
+        child.request_resource_usage_statistics = true;
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Pipe;
+        try child.spawn();
+        return .{
+            .name = name,
+            .child = child,
+        };
+    }
+
+    pub fn end(self: *Process, allocator: std.mem.Allocator) !void {
+        std.log.info("Ending {s}", .{self.name});
+        var stdout = std.ArrayList(u8).init(allocator);
+        defer stdout.deinit();
+        var stderr = std.ArrayList(u8).init(allocator);
+        defer stderr.deinit();
+        try self.child.collectOutput(&stdout, &stderr, std.math.maxInt(usize));
+
+        const exit = try self.child.wait();
+        std.log.info("{s} exit: {any}", .{ self.name, exit });
+        std.log.info("{s} stdout: {s}", .{ self.name, stdout.items });
+        std.log.info("{s} stderr: {s}", .{ self.name, stderr.items });
+        // std.log.info("{s} stats: {any}", .{ self.name, self.child.resource_usage_statistics });
+    }
+};
+
+pub fn vmtouch_files(comptime config_path: []const u8, alloc: Allocator) !void {
+    std.log.info("using vmtouch on all files", .{});
+    try Process.run(&.{ "vmtouch", "-L", "-d", KernelPath }, alloc);
+    try Process.run(&.{ "vmtouch", "-L", "-d", RootFsPath }, alloc);
+    try Process.run(&.{ "vmtouch", "-L", "-d", config_path }, alloc);
+}
+
+pub fn vmtouch_free(alloc: Allocator) void {
+    std.log.info("killing vmtouch", .{});
+    Process.run(&.{ "killall", "vmtouch" }, alloc) catch unreachable;
+}

@@ -1,0 +1,21 @@
+[machine]
+vcpus = 2
+memory_mb = 128
+
+[uart]
+enabled = false
+
+[kernel]
+path = "resources/vmlinux-6.12"
+
+[[drives]]
+read_only = false
+path = "resources/ubuntu.ext4"
+
+[[drives]]
+read_only = false
+path = "dummy"
+
+[[networks]]
+dev_name = "tap0"
+mac = [06, 00, AC, 10, 00, 02]
