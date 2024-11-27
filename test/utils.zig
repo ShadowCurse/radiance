@@ -52,6 +52,7 @@ pub fn ScpCmd(comptime from: []const u8, comptime to: []const u8) [13][]const u8
     };
 }
 
+pub const FioResult = "/tmp/fio.json";
 pub fn FioCmd(comptime t: []const u8) [11][]const u8 {
     return [_][]const u8{
         "fio",
@@ -63,11 +64,12 @@ pub fn FioCmd(comptime t: []const u8) [11][]const u8 {
         "--runtime=10",
         "--direct=1",
         "--output-format=json",
-        "--output=fio.json",
+        "--output=" ++ FioResult,
         "--rw=" ++ t,
     };
 }
 
+pub const IperfResult = "/tmp/iperf.json";
 pub fn IperfCmd(comptime arg: []const u8) [8][]const u8 {
     return [_][]const u8{
         "iperf3",
@@ -76,7 +78,7 @@ pub fn IperfCmd(comptime arg: []const u8) [8][]const u8 {
         "--time=10",
         "--json",
         "--logfile",
-        "iperf.json",
+        IperfResult,
         arg,
     };
 }
