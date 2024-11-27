@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const utils = @import("utils.zig");
 
+const Iterations = 10;
 const ResultsPath = "perf_results/boottime";
 const ConfigPath = "test/boottime_config.toml";
 
@@ -23,29 +24,36 @@ pub fn main() !void {
     std.log.info("Waiting for resources to be ready", .{});
     std.time.sleep(utils.RadianceBootTimeDelay);
 
-    var radinace_process = try utils.Process.start("radiance", &utils.RadianceCmd(ConfigPath), alloc);
+    for (0..Iterations) |i| {
+        var radinace_process = try utils.Process.start("radiance", &utils.RadianceCmd(ConfigPath), alloc);
 
-    std.log.info("Waiting for radiance to boot", .{});
-    std.time.sleep(utils.RadianceBootTimeDelay);
+        std.log.info("Waiting for radiance to boot", .{});
+        std.time.sleep(utils.RadianceBootTimeDelay);
 
-    var boottime_ssh_process = try utils.Process.start(
-        "boottime_ssh",
-        &(utils.SshCmd ++ .{ "systemd-analyze", ">>", "boottime.txt" }),
-        alloc,
-    );
-    try boottime_ssh_process.end(alloc);
+        var boottime_ssh_process = try utils.Process.start(
+            "boottime_ssh",
+            &(utils.SshCmd ++ .{ "systemd-analyze", ">", "boottime.txt" }),
+            alloc,
+        );
+        try boottime_ssh_process.end(alloc);
 
-    var boottime_scp_process = try utils.Process.start(
-        "boottime_scp",
-        &utils.ScpCmd("boottime.txt", ResultsPath ++ "/boottime.txt"),
-        alloc,
-    );
-    try boottime_scp_process.end(alloc);
+        const scp_result_file = ResultsPath ++ "/boottime.txt";
+        const result_file = try std.fmt.allocPrint(alloc, "{s}/boottime_{}.txt", .{ ResultsPath, i });
+        defer alloc.free(result_file);
 
-    var ssh_process = try utils.Process.start("reboot_ssh", &(utils.SshCmd ++ .{"reboot"}), alloc);
+        var boottime_scp_process = try utils.Process.start(
+            "boottime_scp",
+            &utils.ScpCmd("boottime.txt", scp_result_file),
+            alloc,
+        );
+        try boottime_scp_process.end(alloc);
+        try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
 
-    try radinace_process.end(alloc);
-    try ssh_process.end(alloc);
+        var ssh_process = try utils.Process.start("reboot_ssh", &(utils.SshCmd ++ .{"reboot"}), alloc);
+
+        try radinace_process.end(alloc);
+        try ssh_process.end(alloc);
+    }
 
     std.log.info("moving results to {s}", .{results_path});
     try utils.Process.run(&.{ "mv", ResultsPath, results_path }, alloc);
