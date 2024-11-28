@@ -37,35 +37,51 @@ pub fn main() !void {
     std.log.info("Waiting for resources to be ready", .{});
     std.time.sleep(utils.RadianceBootTimeDelay);
 
-    for (0..Iterations) |i| {
-        const modes = [_][]const u8{ "randread", "randwrite", "read", "write" };
-        inline for (modes) |mode| {
-            var radinace_process = try utils.Process.start("radiance", &utils.RadianceCmd(ConfigPath), alloc);
+    {
+        var system_cpu_usage = try utils.SystemCpuUsage.init(ResultsPath);
+        defer system_cpu_usage.deinit();
 
-            std.log.info("Waiting for radiance to boot", .{});
-            std.time.sleep(utils.RadianceBootTimeDelay);
+        var cpu_usage_thread_stop: bool = false;
+        const cpu_usage_thread = try std.Thread.spawn(.{}, utils.system_cpu_usage_thread, .{
+            &system_cpu_usage,
+            alloc,
+            std.time.ns_per_s,
+            &cpu_usage_thread_stop,
+        });
 
-            const fio_cmd = utils.FioCmd(mode);
-            var fio_ssh_process = try utils.Process.start("fio_ssh", &(utils.SshCmd ++ fio_cmd), alloc);
-            try fio_ssh_process.end(alloc);
+        for (0..Iterations) |i| {
+            const modes = [_][]const u8{ "randread", "randwrite", "read", "write" };
+            inline for (modes) |mode| {
+                var radinace_process = try utils.Process.start("radiance", &utils.RadianceCmd(ConfigPath), alloc);
 
-            const scp_result_file = ResultsPath ++ "/fio_" ++ mode ++ ".json";
-            const result_file = try std.fmt.allocPrint(alloc, "{s}/fio_{s}_{}.json", .{ ResultsPath, mode, i });
-            defer alloc.free(result_file);
+                std.log.info("Waiting for radiance to boot", .{});
+                std.time.sleep(utils.RadianceBootTimeDelay);
 
-            var fio_scp_process = try utils.Process.start(
-                "fio_scp",
-                &utils.ScpCmd(utils.FioResult, scp_result_file),
-                alloc,
-            );
-            try fio_scp_process.end(alloc);
-            try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
+                const fio_cmd = utils.FioCmd(mode);
+                var fio_ssh_process = try utils.Process.start("fio_ssh", &(utils.SshCmd ++ fio_cmd), alloc);
+                try fio_ssh_process.end(alloc);
 
-            var ssh_process = try utils.Process.start("reboot_ssh", &(utils.SshCmd ++ .{"reboot"}), alloc);
+                const scp_result_file = ResultsPath ++ "/fio_" ++ mode ++ ".json";
+                const result_file = try std.fmt.allocPrint(alloc, "{s}/fio_{s}_{}.json", .{ ResultsPath, mode, i });
+                defer alloc.free(result_file);
 
-            try radinace_process.end(alloc);
-            try ssh_process.end(alloc);
+                var fio_scp_process = try utils.Process.start(
+                    "fio_scp",
+                    &utils.ScpCmd(utils.FioResult, scp_result_file),
+                    alloc,
+                );
+                try fio_scp_process.end(alloc);
+                try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
+
+                var ssh_process = try utils.Process.start("reboot_ssh", &(utils.SshCmd ++ .{"reboot"}), alloc);
+
+                try radinace_process.end(alloc);
+                try ssh_process.end(alloc);
+            }
         }
+
+        cpu_usage_thread_stop = true;
+        cpu_usage_thread.join();
     }
 
     std.log.info("moving results to {s}", .{results_path});
