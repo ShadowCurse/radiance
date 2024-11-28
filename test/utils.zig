@@ -145,3 +145,45 @@ pub fn vmtouch_free(alloc: Allocator) void {
     std.log.info("killing vmtouch", .{});
     Process.run(&.{ "killall", "vmtouch" }, alloc) catch unreachable;
 }
+
+pub const SystemCpuUsage = struct {
+    file: std.fs.File,
+
+    const Self = @This();
+
+    pub fn init(comptime result_path: []const u8) !Self {
+        const usage_path = result_path ++ "/cpu_usage.txt";
+        std.log.info("{s}", .{usage_path});
+        const file = try std.fs.cwd().createFile(usage_path, .{});
+        return .{
+            .file = file,
+        };
+    }
+
+    pub fn deinit(self: *const Self) void {
+        self.file.close();
+    }
+
+    pub fn update(self: *Self, alloc: Allocator) !void {
+        const cpustat = try std.fs.openFileAbsolute("/proc/stat", .{ .mode = .read_only });
+        defer cpustat.close();
+
+        const text = try cpustat.readToEndAlloc(alloc, std.math.maxInt(usize));
+        defer alloc.free(text);
+
+        var iter = std.mem.splitScalar(u8, text, '\n');
+        while (iter.next()) |line| {
+            if (std.mem.startsWith(u8, line, "cpu")) {
+                _ = try self.file.write(line);
+                _ = try self.file.write("\n");
+            }
+        }
+    }
+};
+
+pub fn system_cpu_usage_thread(system_cpu_usage: *SystemCpuUsage, alloc: Allocator, delta: u64, stop: *bool) !void {
+    while (!stop.*) {
+        try system_cpu_usage.update(alloc);
+        std.time.sleep(delta);
+    }
+}
