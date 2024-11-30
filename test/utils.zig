@@ -96,7 +96,7 @@ pub const Process = struct {
         std.debug.print("\n", .{});
 
         var p = std.process.Child.init(argv, allocator);
-        _ = try p.spawn();
+        _ = try p.spawnAndWait();
         return;
     }
 

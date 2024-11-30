@@ -21,9 +21,6 @@ pub fn main() !void {
     std.log.info("creating results directory", .{});
     try utils.Process.run(&.{ "mkdir", "-p", ResultsPath }, alloc);
 
-    std.log.info("Waiting for resources to be ready", .{});
-    std.time.sleep(utils.RadianceBootTimeDelay);
-
     {
         var system_cpu_usage = try utils.SystemCpuUsage.init(ResultsPath);
         defer system_cpu_usage.deinit();
@@ -51,30 +48,22 @@ pub fn main() !void {
                 std.time.sleep(utils.RadianceBootTimeDelay);
 
                 const iperf_cmd = utils.IperfCmd(mode[0]);
-                var iperf_ssh_process = try utils.Process.start("iperf_ssh", &(utils.SshCmd ++ iperf_cmd), alloc);
-                try iperf_ssh_process.end(alloc);
+                try utils.Process.run(&(utils.SshCmd ++ iperf_cmd), alloc);
 
                 const scp_result_file = ResultsPath ++ "/iperf_" ++ mode[1] ++ ".json";
                 const result_file = try std.fmt.allocPrint(alloc, "{s}/iperf_{s}_{}.json", .{ ResultsPath, mode[1], i });
                 defer alloc.free(result_file);
 
-                var iperf_scp_process = try utils.Process.start(
-                    "iperf_scp",
-                    &utils.ScpCmd(utils.IperfResult, scp_result_file),
-                    alloc,
-                );
-                try iperf_scp_process.end(alloc);
+                try utils.Process.run(&utils.ScpCmd(utils.IperfResult, scp_result_file), alloc);
                 try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
 
-                var ssh_process = try utils.Process.start("reboot_ssh", &(utils.SshCmd ++ .{"reboot"}), alloc);
-
+                try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
                 try radinace_process.end(alloc);
-                try ssh_process.end(alloc);
             }
-
-            cpu_usage_thread_stop = true;
-            cpu_usage_thread.join();
         }
+
+        cpu_usage_thread_stop = true;
+        cpu_usage_thread.join();
     }
 
     std.log.info("moving results to {s}", .{results_path});
