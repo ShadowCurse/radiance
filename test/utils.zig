@@ -134,6 +134,49 @@ pub const Process = struct {
     }
 };
 
+pub const ProcessResourceUsage = struct {
+    file: std.fs.File,
+
+    const Self = @This();
+
+    pub fn init(comptime result_path: []const u8) !Self {
+        const usage_path = result_path ++ "/resource_usage.txt";
+        std.log.info("{s}", .{usage_path});
+        const file = try std.fs.cwd().createFile(usage_path, .{});
+        return .{
+            .file = file,
+        };
+    }
+
+    pub fn deinit(self: *const Self) void {
+        self.file.close();
+    }
+
+    pub fn update(self: *Self, process: *const Process, allocator: Allocator) !void {
+        const rusage = process.child.resource_usage_statistics.rusage.?;
+        const t = @TypeOf(rusage);
+        const fields = @typeInfo(t).Struct.fields;
+        inline for (fields) |field| {
+            switch (field.type) {
+                isize => {
+                    const s = try std.fmt.allocPrint(allocator, "{s} {}\n", .{ field.name, @field(rusage, field.name) });
+                    defer allocator.free(s);
+
+                    _ = try self.file.write(s);
+                },
+                std.os.linux.timeval => {
+                    const f = @field(rusage, field.name);
+                    const s = try std.fmt.allocPrint(allocator, "{s} {} {}\n", .{ field.name, f.tv_sec, f.tv_usec });
+                    defer allocator.free(s);
+
+                    _ = try self.file.write(s);
+                },
+                else => {},
+            }
+        }
+    }
+};
+
 pub fn vmtouch_files(comptime config_path: []const u8, alloc: Allocator) !void {
     std.log.info("using vmtouch on all files", .{});
     try Process.run(&.{ "vmtouch", "-L", "-d", KernelPath }, alloc);

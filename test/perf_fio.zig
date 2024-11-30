@@ -33,6 +33,9 @@ pub fn main() !void {
         var system_cpu_usage = try utils.SystemCpuUsage.init(ResultsPath);
         defer system_cpu_usage.deinit();
 
+        var process_resource_usage = try utils.ProcessResourceUsage.init(ResultsPath);
+        defer process_resource_usage.deinit();
+
         var cpu_usage_thread_stop: bool = false;
         const cpu_usage_thread = try std.Thread.spawn(.{}, utils.system_cpu_usage_thread, .{
             &system_cpu_usage,
@@ -61,6 +64,8 @@ pub fn main() !void {
 
                 try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
                 try radinace_process.end(alloc);
+
+                try process_resource_usage.update(&radinace_process, alloc);
             }
         }
 
