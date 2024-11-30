@@ -14,6 +14,9 @@ for d in os.listdir(RESULTS_DIS):
 
     run_data = []
     for path in os.listdir(f"{RESULTS_DIS}/{d}"):
+        if "boottime" not in path:
+            continue
+
         file_path = f"{RESULTS_DIS}/{d}/{path}"
         with open(file_path, "r") as file:
             line = file.readlines()[0]
