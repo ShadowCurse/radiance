@@ -6,16 +6,6 @@ const Iterations = 10;
 const ResultsPath = "perf_results/fio";
 const ConfigPath = "test/fio_config.toml";
 
-fn create_dummy_block(alloc: Allocator) !void {
-    std.log.info("creating dummy block", .{});
-    try utils.Process.run(&.{ "dd", "if=/dev/zero", "of=dummy", "bs=4096B", "count=65536" }, alloc);
-}
-
-fn remove_dummy_block(alloc: Allocator) void {
-    std.log.info("deleting dummy block", .{});
-    utils.Process.run(&.{ "rm", "dummy" }, alloc) catch unreachable;
-}
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -31,11 +21,13 @@ pub fn main() !void {
     std.log.info("creating results directory", .{});
     try utils.Process.run(&.{ "mkdir", "-p", ResultsPath }, alloc);
 
-    try create_dummy_block(alloc);
-    defer remove_dummy_block(alloc);
+    std.log.info("creating dummy block", .{});
+    try utils.Process.run(&.{ "dd", "if=/dev/zero", "of=dummy", "bs=4096B", "count=65536" }, alloc);
 
-    std.log.info("Waiting for resources to be ready", .{});
-    std.time.sleep(utils.RadianceBootTimeDelay);
+    defer {
+        std.log.info("deleting dummy block", .{});
+        utils.Process.run(&.{ "rm", "dummy" }, alloc) catch unreachable;
+    }
 
     {
         var system_cpu_usage = try utils.SystemCpuUsage.init(ResultsPath);
@@ -58,25 +50,17 @@ pub fn main() !void {
                 std.time.sleep(utils.RadianceBootTimeDelay);
 
                 const fio_cmd = utils.FioCmd(mode);
-                var fio_ssh_process = try utils.Process.start("fio_ssh", &(utils.SshCmd ++ fio_cmd), alloc);
-                try fio_ssh_process.end(alloc);
+                try utils.Process.run(&(utils.SshCmd ++ fio_cmd), alloc);
 
                 const scp_result_file = ResultsPath ++ "/fio_" ++ mode ++ ".json";
                 const result_file = try std.fmt.allocPrint(alloc, "{s}/fio_{s}_{}.json", .{ ResultsPath, mode, i });
                 defer alloc.free(result_file);
 
-                var fio_scp_process = try utils.Process.start(
-                    "fio_scp",
-                    &utils.ScpCmd(utils.FioResult, scp_result_file),
-                    alloc,
-                );
-                try fio_scp_process.end(alloc);
+                try utils.Process.run(&utils.ScpCmd(utils.FioResult, scp_result_file), alloc);
                 try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
 
-                var ssh_process = try utils.Process.start("reboot_ssh", &(utils.SshCmd ++ .{"reboot"}), alloc);
-
+                try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
                 try radinace_process.end(alloc);
-                try ssh_process.end(alloc);
             }
         }
 
