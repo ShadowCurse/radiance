@@ -28,16 +28,18 @@ for d in os.listdir(RESULTS_DIS):
 
 width = 0.25 / len(data.keys())
 multiplier = 0
-fig, ax = plt.subplots()
+fig, ax = plt.subplots(figsize=(16, 12))
 for run_name, run_data in data.items():
     offset = width * multiplier
     multiplier += 1
     mean = run_data["mean"]
     std = run_data["std"]
+    print(f"name: {run_name} mean: {mean} std: {std}")
     bar = ax.bar(offset, mean, yerr=std, width=width, label=run_name, ecolor="white")
     ax.bar_label(bar, labels=[f"{mean:.2f}/{std:.2f}"])
 
 ax.set_ylabel("mean time/std: ms")
 ax.legend(loc="upper left", ncols=len(data.keys()))
 ax.set_xticks([0 + (width / 2) * (len(data.keys()) - 1)], ["boottime"])
+plt.savefig("boottime.png")
 plt.show()

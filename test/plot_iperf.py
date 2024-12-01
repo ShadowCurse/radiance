@@ -44,7 +44,7 @@ width = 0.25 / len(data.keys())
 multiplier = 0
 label_loc = np.arange(2)
 xticks = ["h2g", "g2h"]
-fig, ax = plt.subplots()
+fig, ax = plt.subplots(figsize=(16, 14))
 for run_name, run_data in data.items():
     offset = width * multiplier
     multiplier += 1
@@ -52,6 +52,7 @@ for run_name, run_data in data.items():
     mean = run_data["mean"]
     std = run_data["std"]
 
+    print(f"name: {run_name} mean: {mean} std: {std}")
     bar = ax.bar(
         label_loc + offset, mean, yerr=std, width=width, label=run_name, ecolor="white"
     )
@@ -61,4 +62,5 @@ for run_name, run_data in data.items():
 ax.set_ylabel("mean/std: MBps")
 ax.legend(loc="upper left", ncols=len(data.keys()))
 ax.set_xticks(label_loc + (width / 2) * (len(data.keys()) - 1), xticks)
+plt.savefig("iperf.png")
 plt.show()
