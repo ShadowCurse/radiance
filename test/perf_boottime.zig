@@ -28,6 +28,9 @@ pub fn main() !void {
         var process_resource_usage = try utils.ProcessResourceUsage.init(ResultsPath);
         defer process_resource_usage.deinit();
 
+        var process_startup_time = try utils.ProcessStartupTime.init(ResultsPath);
+        defer process_startup_time.deinit();
+
         var cpu_usage_thread_stop: bool = false;
         const cpu_usage_thread = try std.Thread.spawn(.{}, utils.system_cpu_usage_thread, .{
             &system_cpu_usage,
@@ -55,9 +58,11 @@ pub fn main() !void {
             try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
 
             try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
-            try radinace_process.end(alloc);
+            const output = try radinace_process.end(alloc);
+            defer output.deinit();
 
             try process_resource_usage.update(&radinace_process, alloc);
+            try process_startup_time.update(&output);
         }
 
         cpu_usage_thread_stop = true;
