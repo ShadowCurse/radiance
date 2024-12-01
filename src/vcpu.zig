@@ -232,10 +232,10 @@ pub fn run_threaded(
     mmio: *Mmio,
     start_time: *const std.time.Instant,
 ) void {
-    const now = std.time.Instant.now() catch unreachable;
-    log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / std.time.ns_per_us});
     self_ref = self;
     Self.set_thread_handler();
     barrier.wait();
+    const now = std.time.Instant.now() catch unreachable;
+    log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / std.time.ns_per_us});
     while (self.run(mmio)) {}
 }
