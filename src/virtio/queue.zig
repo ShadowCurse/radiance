@@ -111,8 +111,6 @@ pub const Queue = struct {
 
     /// Pop the first available descriptor chain from the avail ring.
     pub fn pop_desc_chain(self: *Self, memory: *const Memory) ?DescriptorChain {
-        @fence(.acquire);
-
         if (self.notification_suppression) {
             // used_ring is only written by the device
             const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
@@ -125,6 +123,8 @@ pub const Queue = struct {
         if (self.next_avail == avail_ring.idx) {
             return null;
         }
+
+        @fence(.acquire);
 
         const next_avail = self.next_avail % self.size;
         const desc_index = avail_ring.ring()[next_avail];
