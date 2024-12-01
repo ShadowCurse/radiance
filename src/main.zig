@@ -140,7 +140,7 @@ pub fn main() !void {
     // create kernel cmdline
     var cmdline = try CmdLine.new(tmp_alloc, 50);
 
-    try cmdline.append("console=ttyS0 reboot=k panic=1 pci=off");
+    try cmdline.append("reboot=k panic=1 pci=off");
     if (virtio_blocks[0].read_only) {
         try cmdline.append(" root=/dev/vda ro");
     } else {

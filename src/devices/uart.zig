@@ -145,7 +145,7 @@ pub fn new(vm: *const Vm, in: nix.fd_t, out: nix.fd_t, mmio_info: MmioDeviceInfo
 
 pub fn add_to_cmdline(cmdline: *CmdLine, mmio_info: MmioDeviceInfo) !void {
     var buff: [50]u8 = undefined;
-    const cmd = try std.fmt.bufPrint(&buff, " earlycon=uart,mmio,0x{x:.8}", .{mmio_info.addr});
+    const cmd = try std.fmt.bufPrint(&buff, " console=ttyS0 earlycon=uart,mmio,0x{x:.8}", .{mmio_info.addr});
     try cmdline.append(cmd);
 }
 
