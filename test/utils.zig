@@ -87,6 +87,16 @@ pub const Process = struct {
     name: []const u8,
     child: std.process.Child,
 
+    pub const Output = struct {
+        stdout: std.ArrayList(u8),
+        stderr: std.ArrayList(u8),
+
+        pub fn deinit(self: *const Output) void {
+            self.stdout.deinit();
+            self.stderr.deinit();
+        }
+    };
+
     pub fn run(argv: []const []const u8, allocator: std.mem.Allocator) !void {
         std.log.info("Running:", .{});
 
@@ -118,19 +128,21 @@ pub const Process = struct {
         };
     }
 
-    pub fn end(self: *Process, allocator: std.mem.Allocator) !void {
+    pub fn end(self: *Process, allocator: std.mem.Allocator) !Output {
         std.log.info("Ending {s}", .{self.name});
         var stdout = std.ArrayList(u8).init(allocator);
-        defer stdout.deinit();
         var stderr = std.ArrayList(u8).init(allocator);
-        defer stderr.deinit();
         try self.child.collectOutput(&stdout, &stderr, std.math.maxInt(usize));
 
         const exit = try self.child.wait();
         std.log.info("{s} exit: {any}", .{ self.name, exit });
         std.log.info("{s} stdout: {s}", .{ self.name, stdout.items });
         std.log.info("{s} stderr: {s}", .{ self.name, stderr.items });
-        // std.log.info("{s} stats: {any}", .{ self.name, self.child.resource_usage_statistics });
+
+        return .{
+            .stdout = stdout,
+            .stderr = stderr,
+        };
     }
 };
 
@@ -172,6 +184,35 @@ pub const ProcessResourceUsage = struct {
                     _ = try self.file.write(s);
                 },
                 else => {},
+            }
+        }
+    }
+};
+
+pub const ProcessStartupTime = struct {
+    file: std.fs.File,
+
+    const Self = @This();
+
+    pub fn init(comptime result_path: []const u8) !Self {
+        const usage_path = result_path ++ "/startup_time.txt";
+        std.log.info("{s}", .{usage_path});
+        const file = try std.fs.cwd().createFile(usage_path, .{});
+        return .{
+            .file = file,
+        };
+    }
+
+    pub fn deinit(self: *const Self) void {
+        self.file.close();
+    }
+
+    pub fn update(self: *Self, output: *const Process.Output) !void {
+        var iter = std.mem.splitScalar(u8, output.stderr.items, '\n');
+        while (iter.next()) |line| {
+            if (std.mem.indexOf(u8, line, "startup time")) |_| {
+                _ = try self.file.write(line);
+                _ = try self.file.write("\n");
             }
         }
     }
