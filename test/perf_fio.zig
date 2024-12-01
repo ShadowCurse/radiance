@@ -2,6 +2,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const utils = @import("utils.zig");
 
+pub const std_options = std.Options{
+    .log_level = .info,
+};
+
 const Iterations = 10;
 const ResultsPath = "perf_results/fio";
 const ConfigPath = "test/fio_config.toml";
