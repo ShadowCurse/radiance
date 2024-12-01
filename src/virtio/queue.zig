@@ -128,6 +128,12 @@ pub const Queue = struct {
 
         const next_avail = self.next_avail % self.size;
         const desc_index = avail_ring.ring()[next_avail];
+        log.assert(
+            @src(),
+            desc_index < self.size,
+            "Descriptor index {} outside queue size {}",
+            .{ desc_index, self.size },
+        );
 
         self.next_avail = self.next_avail +% 1;
 
