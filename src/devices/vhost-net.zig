@@ -161,7 +161,9 @@ pub const VhostNet = struct {
         }
 
         {
-            const size: usize = (@sizeOf(nix.vhost_memory) + @sizeOf(nix.vhost_memory_region)) / @sizeOf(nix.vhost_memory);
+            const size: usize = (@sizeOf(nix.vhost_memory) +
+                @sizeOf(nix.vhost_memory_region)) /
+                @sizeOf(nix.vhost_memory);
             var memory: [size]nix.vhost_memory = undefined;
             memory[0].nregions = 1;
             memory[0].padding = 0;

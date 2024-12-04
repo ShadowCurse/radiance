@@ -73,7 +73,12 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
             self.ris &= ~val.*;
         },
         else => {
-            log.assert(@src(), false, "invalid rtc write: offset: {x} data: {}", .{ offset, val.* });
+            log.assert(
+                @src(),
+                false,
+                "invalid rtc write: offset: {x} data: {}",
+                .{ offset, val.* },
+            );
         },
     }
 }

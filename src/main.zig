@@ -100,7 +100,12 @@ pub fn main() !void {
         virtio_device_infos[i] = mmio.allocate_virtio();
     }
 
-    var uart = if (config.uart.enabled) Uart.new(&vm, nix.STDIN_FILENO, nix.STDOUT_FILENO, uart_device_info) else undefined;
+    var uart = if (config.uart.enabled) Uart.new(
+        &vm,
+        nix.STDIN_FILENO,
+        nix.STDOUT_FILENO,
+        uart_device_info,
+    ) else undefined;
     var rtc = Rtc.new();
 
     const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, config.drives.drives.len);
@@ -117,24 +122,56 @@ pub fn main() !void {
     const net_infos = virtio_device_infos[config.drives.drives.len..];
     for (config.networks.networks.slice(), net_infos) |*net_config, mmio_info| {
         if (net_config.vhost) {
-            vhost_nets[vhost_net_index] = VhostNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
+            vhost_nets[vhost_net_index] = VhostNet.new(
+                &vm,
+                net_config.dev_name,
+                net_config.mac,
+                &memory,
+                mmio_info,
+            );
             vhost_net_index += 1;
         } else {
-            virtio_nets[virtio_net_index] = VirtioNet.new(&vm, net_config.dev_name, net_config.mac, &memory, mmio_info);
+            virtio_nets[virtio_net_index] = VirtioNet.new(
+                &vm,
+                net_config.dev_name,
+                net_config.mac,
+                &memory,
+                mmio_info,
+            );
             virtio_net_index += 1;
         }
     }
 
-    if (config.uart.enabled) mmio.add_device(.{ .ptr = &uart, .read_ptr = @ptrCast(&Uart.read), .write_ptr = @ptrCast(&Uart.write) });
-    mmio.add_device(.{ .ptr = &rtc, .read_ptr = @ptrCast(&Rtc.read), .write_ptr = @ptrCast(&Rtc.write) });
+    if (config.uart.enabled) mmio.add_device(.{
+        .ptr = &uart,
+        .read_ptr = @ptrCast(&Uart.read),
+        .write_ptr = @ptrCast(&Uart.write),
+    });
+    mmio.add_device(.{
+        .ptr = &rtc,
+        .read_ptr = @ptrCast(&Rtc.read),
+        .write_ptr = @ptrCast(&Rtc.write),
+    });
     for (virtio_blocks) |*virtio_block| {
-        mmio.add_device_virtio(.{ .ptr = virtio_block, .read_ptr = @ptrCast(&VirtioBlock.read), .write_ptr = @ptrCast(&VirtioBlock.write) });
+        mmio.add_device_virtio(.{
+            .ptr = virtio_block,
+            .read_ptr = @ptrCast(&VirtioBlock.read),
+            .write_ptr = @ptrCast(&VirtioBlock.write),
+        });
     }
     for (virtio_nets) |*virtio_net| {
-        mmio.add_device_virtio(.{ .ptr = virtio_net, .read_ptr = @ptrCast(&VirtioNet.read), .write_ptr = @ptrCast(&VirtioNet.write) });
+        mmio.add_device_virtio(.{
+            .ptr = virtio_net,
+            .read_ptr = @ptrCast(&VirtioNet.read),
+            .write_ptr = @ptrCast(&VirtioNet.write),
+        });
     }
     for (vhost_nets) |*vhost_net| {
-        mmio.add_device_virtio(.{ .ptr = vhost_net, .read_ptr = @ptrCast(&VhostNet.read), .write_ptr = @ptrCast(&VhostNet.write) });
+        mmio.add_device_virtio(.{
+            .ptr = vhost_net,
+            .read_ptr = @ptrCast(&VhostNet.read),
+            .write_ptr = @ptrCast(&VhostNet.write),
+        });
     }
 
     // create kernel cmdline
@@ -236,7 +273,11 @@ pub fn main() !void {
             &mmio,
             &el,
         );
-        el.add_event(gdb_server.connection.stream.handle, @ptrCast(&gdb.GdbServer.process_request), &gdb_server);
+        el.add_event(
+            gdb_server.connection.stream.handle,
+            @ptrCast(&gdb.GdbServer.process_request),
+            &gdb_server,
+        );
 
         // start event loop
         el.run();

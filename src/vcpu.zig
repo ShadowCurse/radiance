@@ -183,25 +183,45 @@ pub fn run(self: *Self, mmio: *Mmio) bool {
         nix.KVM_EXIT_SYSTEM_EVENT => {
             switch (self.kvm_run.kvm_exit_info.system_event.type) {
                 nix.KVM_SYSTEM_EVENT_SHUTDOWN => {
-                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN", .{});
+                    log.info(
+                        @src(),
+                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN",
+                        .{},
+                    );
                     self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_RESET => {
-                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_RESET", .{});
+                    log.info(
+                        @src(),
+                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_RESET",
+                        .{},
+                    );
                     self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_CRASH => {
-                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_CRASH", .{});
+                    log.info(
+                        @src(),
+                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_CRASH",
+                        .{},
+                    );
                     self.exit_event.write(1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_WAKEUP => {
-                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_WAKEUP", .{});
+                    log.info(
+                        @src(),
+                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_WAKEUP",
+                        .{},
+                    );
                 },
                 nix.KVM_SYSTEM_EVENT_SUSPEND => {
-                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SUSPEND", .{});
+                    log.info(
+                        @src(),
+                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SUSPEND",
+                        .{},
+                    );
                 },
                 else => |x| {
                     log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with unknown type: {}", .{x});

@@ -213,7 +213,8 @@ pub const VirtioNet = struct {
                 break;
             }
 
-            const iov_slice = if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_MRG_RXBUF) != 0)
+            const iov_slice = if (self.virtio_context.acked_features &
+                (1 << nix.VIRTIO_NET_F_MRG_RXBUF) != 0)
                 self.rx_chains.all_chains_slice()
             else
                 self.rx_chains.first_chain_slice();
@@ -292,7 +293,8 @@ const RxChains = struct {
             "Buffer size too smal for virtio_net_hdr_v1: {} <= {}",
             .{ @as(usize, @sizeOf(nix.virtio_net_hdr_v1)), self.iovec_ring.slice()[0].len },
         );
-        var net_hdr_v1: *volatile nix.virtio_net_hdr_v1 = @alignCast(@ptrCast(self.iovec_ring.slice()[0].base));
+        var net_hdr_v1: *volatile nix.virtio_net_hdr_v1 =
+            @alignCast(@ptrCast(self.iovec_ring.slice()[0].base));
 
         const used_ring = memory.get_ptr(nix.vring_used, queue.used_ring);
         const used_ring_ring = used_ring.ring();
