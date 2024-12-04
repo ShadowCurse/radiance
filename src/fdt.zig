@@ -35,7 +35,8 @@ const FdtData = struct {
             self.append(u64, entry.address);
             self.append(u64, entry.size);
         }
-        // The list of reserved blocks shall be terminated with an entry where both address and size are equal to 0
+        // The list of reserved blocks shall be terminated with an entry
+        // where both address and size are equal to 0
         self.append(u64, @as(u64, 0));
         self.append(u64, @as(u64, 0));
     }
@@ -97,7 +98,8 @@ pub const FdtBuilder = struct {
     strings_map: std.StringHashMap(usize),
     stored_strings: std.ArrayList(u8),
 
-    /// Maximum size of the device tree blob as specified in https://www.kernel.org/doc/Documentation/arm64/booting.txt.
+    /// Maximum size of the device tree blob as specified in
+    /// https://www.kernel.org/doc/Documentation/arm64/booting.txt.
     const FDT_MAX_SIZE: usize = 0x20_0000;
     const FDT_VERSION: u32 = 17;
     const FDT_LAST_COMP_VERSION: u32 = 16;
@@ -205,7 +207,9 @@ pub const FdtBuilder = struct {
         const header_ptr: *FdtHeader = @ptrCast(@alignCast(self.data.mem.ptr));
         // All values in the FDT should be in big endian format.
         header_ptr.magic = @byteSwap(FDT_MAGIC);
-        header_ptr.totalsize = @byteSwap(@as(u32, @intCast(self.data.len + self.stored_strings.items.len)));
+        header_ptr.totalsize = @byteSwap(
+            @as(u32, @intCast(self.data.len + self.stored_strings.items.len)),
+        );
         // Already set.
         // header_ptr.off_dt_struct: u32,
         header_ptr.off_dt_strings = @byteSwap(@as(u32, @intCast(self.data.len)));
@@ -215,7 +219,9 @@ pub const FdtBuilder = struct {
         header_ptr.last_comp_version = @byteSwap(FDT_LAST_COMP_VERSION);
         header_ptr.boot_cpuid_phys = 0;
         header_ptr.size_dt_strings = @byteSwap(@as(u32, @intCast(self.stored_strings.items.len)));
-        header_ptr.size_dt_struct = @byteSwap(@as(u32, @intCast(self.data.len)) - @byteSwap(header_ptr.off_dt_struct));
+        header_ptr.size_dt_struct = @byteSwap(
+            @as(u32, @intCast(self.data.len)) - @byteSwap(header_ptr.off_dt_struct),
+        );
 
         self.data.append([]const u8, self.stored_strings.items);
     }

@@ -18,8 +18,16 @@ pub const _IOC_NONE = 0;
 pub const _IOC_WRITE = 1;
 pub const _IOC_READ = 2;
 
-pub inline fn _IOC(comptime dir: u32, comptime @"type": u32, comptime nr: u32, comptime size: u32) u32 {
-    return (((dir << _IOC_DIRSHIFT) | (@"type" << _IOC_TYPESHIFT)) | (nr << _IOC_NRSHIFT)) | (size << _IOC_SIZESHIFT);
+pub inline fn _IOC(
+    comptime dir: u32,
+    comptime @"type": u32,
+    comptime nr: u32,
+    comptime size: u32,
+) u32 {
+    return (((dir << _IOC_DIRSHIFT) |
+        (@"type" << _IOC_TYPESHIFT)) |
+        (nr << _IOC_NRSHIFT)) |
+        (size << _IOC_SIZESHIFT);
 }
 pub inline fn _IO(comptime @"type": u32, comptime nr: u32) u32 {
     return _IOC(_IOC_NONE, @"type", nr, 0);
@@ -549,18 +557,42 @@ test "test_bindings" {
     try std.testing.expectEqual(KVM_SYSTEM_EVENT_WAKEUP, C.KVM_SYSTEM_EVENT_WAKEUP);
     try std.testing.expectEqual(KVM_SYSTEM_EVENT_SUSPEND, C.KVM_SYSTEM_EVENT_SUSPEND);
 
-    try std.testing.expectEqual(KVM_IOEVENTFD_FLAG_NR_DATAMATCH, 1 << C.kvm_ioeventfd_flag_nr_datamatch);
+    try std.testing.expectEqual(
+        KVM_IOEVENTFD_FLAG_NR_DATAMATCH,
+        1 << C.kvm_ioeventfd_flag_nr_datamatch,
+    );
 
-    try std.testing.expectEqual(TypeCheck.init(kvm_vcpu_init), TypeCheck.init(C.struct_kvm_vcpu_init));
-    try std.testing.expectEqual(TypeCheck.init(kvm_userspace_memory_region), TypeCheck.init(C.struct_kvm_userspace_memory_region));
-    try std.testing.expectEqual(TypeCheck.init(kvm_create_device), TypeCheck.init(C.struct_kvm_create_device));
+    try std.testing.expectEqual(
+        TypeCheck.init(kvm_vcpu_init),
+        TypeCheck.init(C.struct_kvm_vcpu_init),
+    );
+    try std.testing.expectEqual(
+        TypeCheck.init(kvm_userspace_memory_region),
+        TypeCheck.init(C.struct_kvm_userspace_memory_region),
+    );
+    try std.testing.expectEqual(
+        TypeCheck.init(kvm_create_device),
+        TypeCheck.init(C.struct_kvm_create_device),
+    );
     try std.testing.expectEqual(TypeCheck.init(kvm_irqfd), TypeCheck.init(C.struct_kvm_irqfd));
-    try std.testing.expectEqual(TypeCheck.init(kvm_ioeventfd), TypeCheck.init(C.struct_kvm_ioeventfd));
-    try std.testing.expectEqual(TypeCheck.init(kvm_device_attr), TypeCheck.init(C.struct_kvm_device_attr));
+    try std.testing.expectEqual(
+        TypeCheck.init(kvm_ioeventfd),
+        TypeCheck.init(C.struct_kvm_ioeventfd),
+    );
+    try std.testing.expectEqual(
+        TypeCheck.init(kvm_device_attr),
+        TypeCheck.init(C.struct_kvm_device_attr),
+    );
     try std.testing.expectEqual(TypeCheck.init(kvm_run), TypeCheck.init(C.struct_kvm_run));
     try std.testing.expectEqual(TypeCheck.init(kvm_one_reg), TypeCheck.init(C.struct_kvm_one_reg));
-    try std.testing.expectEqual(TypeCheck.init(user_pt_regs), TypeCheck.init(C.struct_user_pt_regs));
-    try std.testing.expectEqual(TypeCheck.init(user_fpsimd_state), TypeCheck.init(C.struct_user_fpsimd_state));
+    try std.testing.expectEqual(
+        TypeCheck.init(user_pt_regs),
+        TypeCheck.init(C.struct_user_pt_regs),
+    );
+    try std.testing.expectEqual(
+        TypeCheck.init(user_fpsimd_state),
+        TypeCheck.init(C.struct_user_fpsimd_state),
+    );
     try std.testing.expectEqual(TypeCheck.init(kvm_regs), TypeCheck.init(C.struct_kvm_regs));
 
     try std.testing.expectEqual(VIRTIO_MMIO_INT_VRING, C.VIRTIO_MMIO_INT_VRING);
@@ -577,7 +609,10 @@ test "test_bindings" {
     try std.testing.expectEqual(VIRTIO_BLK_T_GET_ID, C.VIRTIO_BLK_T_GET_ID);
     try std.testing.expectEqual(VIRTIO_BLK_ID_BYTES, C.VIRTIO_BLK_ID_BYTES);
 
-    try std.testing.expectEqual(TypeCheck.init(virtio_blk_outhdr), TypeCheck.init(C.struct_virtio_blk_outhdr));
+    try std.testing.expectEqual(
+        TypeCheck.init(virtio_blk_outhdr),
+        TypeCheck.init(C.struct_virtio_blk_outhdr),
+    );
 
     try std.testing.expectEqual(IFF_TAP, C.IFF_TAP);
     try std.testing.expectEqual(IFF_NO_PI, C.IFF_NO_PI);
@@ -605,7 +640,10 @@ test "test_bindings" {
     try std.testing.expectEqual(VIRTIO_NET_F_MRG_RXBUF, C.VIRTIO_NET_F_MRG_RXBUF);
     try std.testing.expectEqual(VIRTIO_NET_F_MAC, C.VIRTIO_NET_F_MAC);
 
-    try std.testing.expectEqual(TypeCheck.init(virtio_net_hdr_v1), TypeCheck.init(C.struct_virtio_net_hdr_v1));
+    try std.testing.expectEqual(
+        TypeCheck.init(virtio_net_hdr_v1),
+        TypeCheck.init(C.struct_virtio_net_hdr_v1),
+    );
 
     try std.testing.expectEqual(EPOLLIN, C.EPOLLIN);
     try std.testing.expectEqual(EPOLL_CTL_ADD, C.EPOLL_CTL_ADD);
@@ -615,7 +653,10 @@ test "test_bindings" {
 
     try std.testing.expectEqual(TypeCheck.init(vring_desc), TypeCheck.init(C.struct_vring_desc));
     try std.testing.expectEqual(TypeCheck.init(vring_avail), TypeCheck.init(C.struct_vring_avail));
-    try std.testing.expectEqual(TypeCheck.init(vring_used_elem), TypeCheck.init(C.struct_vring_used_elem));
+    try std.testing.expectEqual(
+        TypeCheck.init(vring_used_elem),
+        TypeCheck.init(C.struct_vring_used_elem),
+    );
     try std.testing.expectEqual(TypeCheck.init(vring_used), TypeCheck.init(C.struct_vring_used));
 
     try std.testing.expectEqual(VHOST_VIRTIO, C.VHOST_VIRTIO);
@@ -628,11 +669,26 @@ test "test_bindings" {
     try std.testing.expectEqual(VHOST_SET_VRING_ADDR, C.VHOST_SET_VRING_ADDR);
     try std.testing.expectEqual(VHOST_NET_SET_BACKEND, C.VHOST_NET_SET_BACKEND);
 
-    try std.testing.expectEqual(TypeCheck.init(vhost_memory_region), TypeCheck.init(C.struct_vhost_memory_region));
-    try std.testing.expectEqual(TypeCheck.init(vhost_memory), TypeCheck.init(C.struct_vhost_memory));
-    try std.testing.expectEqual(TypeCheck.init(vhost_vring_state), TypeCheck.init(C.struct_vhost_vring_state));
-    try std.testing.expectEqual(TypeCheck.init(vhost_vring_file), TypeCheck.init(C.struct_vhost_vring_file));
-    try std.testing.expectEqual(TypeCheck.init(vhost_vring_addr), TypeCheck.init(C.struct_vhost_vring_addr));
+    try std.testing.expectEqual(
+        TypeCheck.init(vhost_memory_region),
+        TypeCheck.init(C.struct_vhost_memory_region),
+    );
+    try std.testing.expectEqual(
+        TypeCheck.init(vhost_memory),
+        TypeCheck.init(C.struct_vhost_memory),
+    );
+    try std.testing.expectEqual(
+        TypeCheck.init(vhost_vring_state),
+        TypeCheck.init(C.struct_vhost_vring_state),
+    );
+    try std.testing.expectEqual(
+        TypeCheck.init(vhost_vring_file),
+        TypeCheck.init(C.struct_vhost_vring_file),
+    );
+    try std.testing.expectEqual(
+        TypeCheck.init(vhost_vring_addr),
+        TypeCheck.init(C.struct_vhost_vring_addr),
+    );
 
     try std.testing.expectEqual(EFD_NONBLOCK, C.EFD_NONBLOCK);
 }

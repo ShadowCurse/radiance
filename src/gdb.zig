@@ -627,27 +627,42 @@ pub const GdbServer = struct {
                     switch (paylod_type) {
                         .Acknowledgment => {},
                         .Retransmission => {
-                            // log.info(@src(), "sending Retransmission: {s}", .{self.last_response});
+                            // log.info(
+                            //     @src(),
+                            //     "sending Retransmission: {s}",
+                            //     .{self.last_response},
+                            // );
                             // _ = try self.connection.stream.write(self.last_response);
                         },
                         .Interrupt => |*inner_payload| {
-                            self.last_response = try inner_payload.response(&self.write_buffer, self);
+                            self.last_response =
+                                try inner_payload.response(&self.write_buffer, self);
                             log.info(@src(), "sending Interrupt ack: {s}", .{self.last_response});
                             _ = try self.connection.stream.write(self.last_response);
                         },
                         .qSupported => |*inner_payload| {
-                            self.last_response = try inner_payload.response(&self.write_buffer);
+                            self.last_response =
+                                try inner_payload.response(&self.write_buffer);
                             log.info(@src(), "sending qSupported ack: {s}", .{self.last_response});
                             _ = try self.connection.stream.write(self.last_response);
                         },
                         .qfThreadInfo => |*inner_payload| {
-                            self.last_response = try inner_payload.response(&self.write_buffer, self);
-                            log.info(@src(), "sending qfThreadInfo ack: {s}", .{self.last_response});
+                            self.last_response =
+                                try inner_payload.response(&self.write_buffer, self);
+                            log.info(
+                                @src(),
+                                "sending qfThreadInfo ack: {s}",
+                                .{self.last_response},
+                            );
                             _ = try self.connection.stream.write(self.last_response);
                         },
                         .qsThreadInfo => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer);
-                            log.info(@src(), "sending qsThreadInfo ack: {s}", .{self.last_response});
+                            log.info(
+                                @src(),
+                                "sending qsThreadInfo ack: {s}",
+                                .{self.last_response},
+                            );
                             _ = try self.connection.stream.write(self.last_response);
                         },
                         .qAttached => |*inner_payload| {
@@ -656,7 +671,8 @@ pub const GdbServer = struct {
                             _ = try self.connection.stream.write(self.last_response);
                         },
                         .vCont => |*inner_payload| {
-                            self.last_response = try inner_payload.response(&self.write_buffer, self);
+                            self.last_response =
+                                try inner_payload.response(&self.write_buffer, self);
                             log.info(@src(), "sending vCont ack: {s}", .{self.last_response});
                             _ = try self.connection.stream.write(self.last_response);
                         },
@@ -681,13 +697,18 @@ pub const GdbServer = struct {
                             _ = try self.connection.stream.write(self.last_response);
                         },
                         .c => |*inner_payload| {
-                            self.last_response = try inner_payload.response(&self.write_buffer, self);
+                            self.last_response =
+                                try inner_payload.response(&self.write_buffer, self);
                             log.info(@src(), "sending c ack: {s}", .{self.last_response});
                             _ = try self.connection.stream.write(self.last_response);
                         },
                         .QuestionMark => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer);
-                            log.info(@src(), "sending QuestionMark ack: {s}", .{self.last_response});
+                            log.info(
+                                @src(),
+                                "sending QuestionMark ack: {s}",
+                                .{self.last_response},
+                            );
                             _ = try self.connection.stream.write(self.last_response);
                         },
                         .Unknown => |*inner_payload| {

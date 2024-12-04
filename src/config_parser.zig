@@ -312,14 +312,11 @@ fn dump_type(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
                     _ = nix.assert(@src(), nix.write, .{ fd, field_start });
 
                     var buff: [24]u8 = undefined;
-                    const v = std.fmt.bufPrint(&buff, "[{X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}]", .{
-                        value[0],
-                        value[1],
-                        value[2],
-                        value[3],
-                        value[4],
-                        value[5],
-                    }) catch unreachable;
+                    const v = std.fmt.bufPrint(
+                        &buff,
+                        "[{X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}]",
+                        .{ value[0], value[1], value[2], value[3], value[4], value[5] },
+                    ) catch unreachable;
                     _ = nix.assert(@src(), nix.write, .{ fd, v });
 
                     _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
@@ -462,5 +459,7 @@ test "dump_and_parse" {
         try std.testing.expect(nn.vhost == on.vhost);
     }
 
-    try std.testing.expect(std.mem.eql(u8, new_config.config.gdb.?.socket_path, config.gdb.?.socket_path));
+    try std.testing.expect(
+        std.mem.eql(u8, new_config.config.gdb.?.socket_path, config.gdb.?.socket_path),
+    );
 }

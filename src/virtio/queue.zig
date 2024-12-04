@@ -204,7 +204,8 @@ test "test_queue_pop_desc_chain" {
         const dc = queue.pop_desc_chain(&memory);
         try expect(dc != null);
         try expect(dc.?.index == @as(u16, @intCast(i)));
-        try expect(@intFromPtr(dc.?.desc_table.ptr) == @intFromPtr(memory.mem.ptr) + desc_table_offset);
+        try expect(@intFromPtr(dc.?.desc_table.ptr) ==
+            @intFromPtr(memory.mem.ptr) + desc_table_offset);
         try expect(dc.?.desc_table.len == queue.size);
         try expect(queue.next_avail == i + 1);
     }

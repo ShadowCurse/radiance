@@ -139,13 +139,20 @@ pub fn new(vm: *const Vm, in: nix.fd_t, out: nix.fd_t, mmio_info: MmioDeviceInfo
         .MSR = MSR_DSR_MASK | MSR_CTS_MASK | MSR_DCD_MASK,
         .SCR = 0,
         .irq_evt = irq_evt,
-        .fifo = std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = FIFO_SIZE }).init(),
+        .fifo = std.fifo.LinearFifo(
+            u8,
+            std.fifo.LinearFifoBufferType{ .Static = FIFO_SIZE },
+        ).init(),
     };
 }
 
 pub fn add_to_cmdline(cmdline: *CmdLine, mmio_info: MmioDeviceInfo) !void {
     var buff: [50]u8 = undefined;
-    const cmd = try std.fmt.bufPrint(&buff, " console=ttyS0 earlycon=uart,mmio,0x{x:.8}", .{mmio_info.addr});
+    const cmd = try std.fmt.bufPrint(
+        &buff,
+        " console=ttyS0 earlycon=uart,mmio,0x{x:.8}",
+        .{mmio_info.addr},
+    );
     try cmdline.append(cmd);
 }
 

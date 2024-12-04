@@ -136,7 +136,12 @@ pub const CacheDir = struct {
         return entries;
     }
 
-    fn read_info(self: *const Self, comptime index: u32, comptime name: []const u8, read_buff: []u8) !usize {
+    fn read_info(
+        self: *const Self,
+        comptime index: u32,
+        comptime name: []const u8,
+        read_buff: []u8,
+    ) !usize {
         const path = std.fmt.comptimePrint("index{d}/{s}", .{ index, name });
         log.debug(@src(), "reading path: {s}", .{path});
         const file = try self.dir.openFile(path, .{});

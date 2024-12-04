@@ -82,7 +82,8 @@ pub const VirtioBlock = struct {
             mmio_info.irq,
             mmio_info.addr,
         );
-        virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1) | (1 << nix.VIRTIO_RING_F_EVENT_IDX);
+        virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1) |
+            (1 << nix.VIRTIO_RING_F_EVENT_IDX);
         if (read_only) {
             virtio_context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
         }
@@ -139,7 +140,8 @@ pub const VirtioBlock = struct {
     pub fn process_queue(self: *Self) void {
         _ = self.virtio_context.queue_events[self.virtio_context.selected_queue].read();
 
-        while (self.virtio_context.queues[self.virtio_context.selected_queue].pop_desc_chain(self.memory)) |dc| {
+        const queue = &self.virtio_context.queues[self.virtio_context.selected_queue];
+        while (queue.pop_desc_chain(self.memory)) |dc| {
             var desc_chain = dc;
             const first_desc_index = desc_chain.index.?;
             const first_desc = desc_chain.next().?;
