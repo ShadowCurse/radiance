@@ -18,8 +18,15 @@ pub const TYPE_BLOCK: u32 = 2;
 
 pub const Config = extern struct {
     capacity: u64,
+    size_max: u32,
+    seg_max: u32,
 };
-pub const QueueSizes = .{ 256, 256 };
+pub const QUEUE_SIZE = 256;
+// Request can take the whole queue of descriptors
+// but it needs to have 1 descriptor for header
+// and 1 for the ack location.
+pub const MAX_SEGMENTS = QUEUE_SIZE - 2;
+pub const QUEUE_SIZES = .{ QUEUE_SIZE, QUEUE_SIZE };
 
 pub const VirtioBlock = struct {
     read_only: bool,
@@ -29,7 +36,7 @@ pub const VirtioBlock = struct {
     block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
     const Self = @This();
-    const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_BLOCK, Config);
+    const VIRTIO_CONTEXT = VirtioContext(QUEUE_SIZES.len, TYPE_BLOCK, Config);
 
     pub fn new(
         vm: *Vm,
@@ -75,16 +82,18 @@ pub const VirtioBlock = struct {
 
         var virtio_context = VIRTIO_CONTEXT.new(
             vm,
-            QueueSizes,
+            QUEUE_SIZES,
             mmio_info.irq,
             mmio_info.addr,
         );
         virtio_context.avail_features = (1 << nix.VIRTIO_F_VERSION_1) |
-            (1 << nix.VIRTIO_RING_F_EVENT_IDX);
+            (1 << nix.VIRTIO_RING_F_EVENT_IDX) |
+            (1 << nix.VIRTIO_BLK_F_SEG_MAX);
         if (read_only) {
             virtio_context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
         }
         virtio_context.config.capacity = nsectors;
+        virtio_context.config.seg_max = MAX_SEGMENTS;
 
         return Self{
             .read_only = read_only,
@@ -134,54 +143,80 @@ pub const VirtioBlock = struct {
     pub fn process_queue(self: *Self) void {
         _ = self.virtio_context.queue_events[self.virtio_context.selected_queue].read();
 
+        var segments: [MAX_SEGMENTS][]volatile u8 = undefined;
+        var segments_n: u32 = 0;
+        var total_segments_len: u32 = 0;
+
         const queue = &self.virtio_context.queues[self.virtio_context.selected_queue];
         while (queue.pop_desc_chain(self.memory)) |dc| {
-            var desc_chain = dc;
-            const first_desc_index = desc_chain.index.?;
-            const first_desc = desc_chain.next().?;
-            const header = self.memory.get_ptr(nix.virtio_blk_outhdr, first_desc.addr);
-            const offset = header.sector << SECTOR_SHIFT;
+            segments_n = 0;
+            total_segments_len = 0;
 
-            const second_desc = desc_chain.next().?;
-            const data_addr = second_desc.addr;
-            const data_len = second_desc.len;
-            // if has next
-            if ((second_desc.flags & nix.VRING_DESC_F_NEXT) != 0) {
-                const third_desc = desc_chain.next().?;
-                var data_transfered: usize = 0;
+            var desc_chain = dc;
+            const header_desc_index = desc_chain.index.?;
+            const header_desc = desc_chain.next().?;
+            const header = self.memory.get_ptr(nix.virtio_blk_outhdr, header_desc.addr);
+            var offset = header.sector << SECTOR_SHIFT;
+
+            var data_desc = desc_chain.next().?;
+
+            while ((data_desc.flags & nix.VRING_DESC_F_NEXT) != 0) {
+                log.assert(
+                    @src(),
+                    segments_n <= MAX_SEGMENTS,
+                    "Got descriptor chain with more data segments than MAX_SEGMENTS({d})",
+                    .{@as(u32, MAX_SEGMENTS)},
+                );
+                segments[segments_n] = self.memory.get_slice(u8, data_desc.len, data_desc.addr);
+                total_segments_len += data_desc.len;
+                segments_n += 1;
+                data_desc = desc_chain.next().?;
+            }
+            const status_desc = data_desc;
+
+            if (segments_n == 0) {
+                if (!self.read_only) {
+                    nix.assert(@src(), nix.msync, .{ self.file_mem, nix.MSF.ASYNC });
+                }
+
+                const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
+                status_ptr.* = nix.VIRTIO_BLK_S_OK;
+            } else {
                 switch (header.type) {
                     nix.VIRTIO_BLK_T_IN => {
-                        const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        @memcpy(buffer, self.file_mem[offset .. offset + buffer.len]);
+                        for (segments[0..segments_n]) |segment| {
+                            @memcpy(segment, self.file_mem[offset .. offset + segment.len]);
+                            offset += segment.len;
+                        }
                     },
                     nix.VIRTIO_BLK_T_OUT => {
-                        const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        @memcpy(self.file_mem[offset .. offset + buffer.len], buffer);
+                        for (segments[0..segments_n]) |segment| {
+                            @memcpy(self.file_mem[offset .. offset + segment.len], segment);
+                            offset += segment.len;
+                        }
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
                         // TODO maybe add a msync with SYNC call at the end of VM lifetime
                         nix.assert(@src(), nix.msync, .{ self.file_mem, nix.MSF.ASYNC });
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
-                        const buffer = self.memory.get_slice(u8, data_len, data_addr);
-                        @memcpy(buffer, &self.block_id);
-                        data_transfered = nix.VIRTIO_BLK_ID_BYTES;
+                        log.assert(
+                            @src(),
+                            segments_n == 1,
+                            "Descriptor chain has more than 1 data descriptor for VIRTIO_BLK_T_GET_ID request",
+                            .{},
+                        );
+                        const segment = segments[0];
+                        @memcpy(segment, &self.block_id);
+                        total_segments_len = nix.VIRTIO_BLK_ID_BYTES;
                     },
                     else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
                 }
-
-                const status_ptr = self.memory.get_ptr(u32, third_desc.addr);
+                const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
 
                 self.virtio_context.queues[self.virtio_context.selected_queue]
-                    .add_used_desc(self.memory, first_desc_index, @intCast(data_transfered + 1));
-            } else {
-                if (!self.read_only) {
-                    nix.assert(@src(), nix.msync, .{ self.file_mem, nix.MSF.ASYNC });
-                }
-
-                const status_ptr = self.memory.get_ptr(u32, second_desc.addr);
-                status_ptr.* = nix.VIRTIO_BLK_S_OK;
+                    .add_used_desc(self.memory, header_desc_index, total_segments_len);
             }
         }
 
