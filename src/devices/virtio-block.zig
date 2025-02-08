@@ -13,16 +13,13 @@ const VIRTIO = @import("../virtio/context.zig");
 const VirtioContext = VIRTIO.VirtioContext;
 const VirtioAction = VIRTIO.VirtioAction;
 
-pub const CONFIG_SPACE_SIZE: usize = 8;
 pub const SECTOR_SHIFT: u8 = 9;
 pub const TYPE_BLOCK: u32 = 2;
 
-pub const Config = [CONFIG_SPACE_SIZE]u8;
-pub const QueueSizes = .{ 256, 256 };
-
-pub const VirtioBlockError = error{
-    New,
+pub const Config = extern struct {
+    capacity: u64,
 };
+pub const QueueSizes = .{ 256, 256 };
 
 pub const VirtioBlock = struct {
     read_only: bool,
@@ -87,10 +84,7 @@ pub const VirtioBlock = struct {
         if (read_only) {
             virtio_context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
         }
-
-        const nsectors_slice = std.mem.asBytes(&nsectors);
-        const config_slice = std.mem.asBytes(&virtio_context.config_blob);
-        @memcpy(config_slice, nsectors_slice);
+        virtio_context.config.capacity = nsectors;
 
         return Self{
             .read_only = read_only,
