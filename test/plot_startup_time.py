@@ -24,7 +24,16 @@ for d in os.listdir(RESULTS_DIS):
                 run_data.append(int(time))
 
     run_data = np.array(run_data)
-    data[d] = {"mean": np.mean(run_data), "std": np.std(run_data)}
+    p50 = np.percentile(run_data, 50)
+    p90 = np.percentile(run_data, 90)
+    p99 = np.percentile(run_data, 99)
+    data[d] = {
+        "mean": np.mean(run_data),
+        "std": np.std(run_data),
+        "p50": p50,
+        "p90": p90,
+        "p99": p99,
+    }
 
 
 width = 0.25 / len(data.keys())
@@ -35,7 +44,12 @@ for run_name, run_data in data.items():
     multiplier += 1
     mean = run_data["mean"]
     std = run_data["std"]
-    print(f"name: {run_name} mean: {mean} std: {std}")
+    p50 = run_data["p50"]
+    p90 = run_data["p90"]
+    p99 = run_data["p99"]
+    print(
+        f"name: {run_name} mean: {mean} std: {std}, p50: {p50}, p90: {p90}, p99: {p99}"
+    )
     bar = ax.bar(offset, mean, yerr=std, width=width, label=run_name, ecolor="white")
     ax.bar_label(bar, labels=[f"{mean:.2f}/{std:.2f}"])
 
