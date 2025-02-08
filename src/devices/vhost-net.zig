@@ -12,7 +12,9 @@ const VirtioAction = VIRTIO.VirtioAction;
 
 pub const TYPE_NET: u32 = 1;
 
-pub const Config = [6]u8;
+pub const Config = extern struct {
+    mac: [6]u8,
+};
 pub const QueueSizes = .{ 256, 256 };
 
 pub const VhostNet = struct {
@@ -86,7 +88,7 @@ pub const VhostNet = struct {
             1 << nix.VIRTIO_NET_F_HOST_USO |
             1 << nix.VIRTIO_NET_F_MRG_RXBUF;
         if (mac) |m| {
-            virtio_context.config_blob = m;
+            virtio_context.config.mac = m;
             virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
         }
 
