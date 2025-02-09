@@ -6,9 +6,11 @@ pub const std_options = std.Options{
     .log_level = .info,
 };
 
-const Iterations = 10;
-const ResultsPath = "perf_results/fio";
-const ConfigPath = "test/fio_config.toml";
+const ITERATIONS = 10;
+const RESULTS_PATH = "perf_results/fio";
+const CONFIG_PATH = "test/fio_config.toml";
+const MODES = [_][]const u8{ "randread", "randwrite", "read", "write" };
+const BLOCK_SIZES = [_][]const u8{ "4K", "8K", "16K" };
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -16,28 +18,23 @@ pub fn main() !void {
     const alloc = gpa.allocator();
 
     const timestamp = std.time.timestamp();
-    const results_path = try std.fmt.allocPrint(alloc, "{s}_{}", .{ ResultsPath, timestamp });
+    const results_path = try std.fmt.allocPrint(alloc, "{s}_{}", .{ RESULTS_PATH, timestamp });
     defer alloc.free(results_path);
 
-    try utils.vmtouch_files(ConfigPath, alloc);
+    std.log.info("creating results directory", .{});
+    try utils.Process.run(&.{ "mkdir", "-p", RESULTS_PATH }, alloc);
+
+    try utils.dummy_block_create(alloc, 256, 4096);
+    defer utils.dummy_block_delete(alloc) catch unreachable;
+
+    try utils.vmtouch_files(alloc, CONFIG_PATH, &.{utils.DummyFilePath});
     defer utils.vmtouch_free(alloc);
 
-    std.log.info("creating results directory", .{});
-    try utils.Process.run(&.{ "mkdir", "-p", ResultsPath }, alloc);
-
-    std.log.info("creating dummy block", .{});
-    try utils.Process.run(&.{ "dd", "if=/dev/zero", "of=dummy", "bs=4096B", "count=65536" }, alloc);
-
-    defer {
-        std.log.info("deleting dummy block", .{});
-        utils.Process.run(&.{ "rm", "dummy" }, alloc) catch unreachable;
-    }
-
     {
-        var system_cpu_usage = try utils.SystemCpuUsage.init(ResultsPath);
+        var system_cpu_usage = try utils.SystemCpuUsage.init(RESULTS_PATH);
         defer system_cpu_usage.deinit();
 
-        var process_resource_usage = try utils.ProcessResourceUsage.init(ResultsPath);
+        var process_resource_usage = try utils.ProcessResourceUsage.init(RESULTS_PATH);
         defer process_resource_usage.deinit();
 
         var cpu_usage_thread_stop: bool = false;
@@ -48,29 +45,42 @@ pub fn main() !void {
             &cpu_usage_thread_stop,
         });
 
-        for (0..Iterations) |i| {
-            const modes = [_][]const u8{ "randread", "randwrite", "read", "write" };
-            inline for (modes) |mode| {
-                var radinace_process = try utils.Process.start("radiance", &utils.RadianceCmd(ConfigPath), alloc);
+        for (0..ITERATIONS) |i| {
+            inline for (MODES) |mode| {
+                inline for (BLOCK_SIZES) |bs| {
+                    std.log.info(
+                        "Running iteration: {d}, mode: {s}, block_size: {s}",
+                        .{ i, mode, bs },
+                    );
 
-                std.log.info("Waiting for radiance to boot", .{});
-                std.time.sleep(utils.RadianceBootTimeDelay);
+                    var radinace_process = try utils.Process.start(
+                        "radiance",
+                        &utils.RadianceCmd(CONFIG_PATH),
+                        alloc,
+                    );
+                    std.log.info("Waiting for radiance to boot", .{});
+                    std.time.sleep(utils.RadianceBootTimeDelay);
 
-                const fio_cmd = utils.FioCmd(mode);
-                try utils.Process.run(&(utils.SshCmd ++ fio_cmd), alloc);
+                    const fio_cmd = utils.FioCmd(bs, mode);
+                    try utils.Process.run(&(utils.SshCmd ++ fio_cmd), alloc);
 
-                const scp_result_file = ResultsPath ++ "/fio_" ++ mode ++ ".json";
-                const result_file = try std.fmt.allocPrint(alloc, "{s}/fio_{s}_{}.json", .{ ResultsPath, mode, i });
-                defer alloc.free(result_file);
+                    const scp_result_file = RESULTS_PATH ++ "/fio_" ++ mode ++ "_" ++ bs ++ ".json";
+                    const result_file = try std.fmt.allocPrint(
+                        alloc,
+                        "{s}/fio_{s}_{s}_{d}.json",
+                        .{ RESULTS_PATH, mode, bs, i },
+                    );
+                    defer alloc.free(result_file);
 
-                try utils.Process.run(&utils.ScpCmd(utils.FioResult, scp_result_file), alloc);
-                try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
+                    try utils.Process.run(&utils.ScpCmd(utils.FioResult, scp_result_file), alloc);
+                    try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
 
-                try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
-                const output = try radinace_process.end(alloc);
-                defer output.deinit();
+                    try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
+                    const output = try radinace_process.end(alloc);
+                    defer output.deinit();
 
-                try process_resource_usage.update(&radinace_process, alloc);
+                    try process_resource_usage.update(&radinace_process, alloc);
+                }
             }
         }
 
@@ -79,5 +89,5 @@ pub fn main() !void {
     }
 
     std.log.info("moving results to {s}", .{results_path});
-    try utils.Process.run(&.{ "mv", ResultsPath, results_path }, alloc);
+    try utils.Process.run(&.{ "mv", RESULTS_PATH, results_path }, alloc);
 }

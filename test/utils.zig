@@ -8,6 +8,43 @@ pub const DummyFilePath = "./dummy";
 pub const RadianceBin = "./zig-out/bin/radiance";
 pub const RadianceBootTimeDelay = 2 * std.time.ns_per_s;
 
+pub fn vmtouch_files(
+    alloc: Allocator,
+    config_path: []const u8,
+    other_paths: []const []const u8,
+) !void {
+    std.log.info("using vmtouch on all files", .{});
+    try Process.run(&.{ "vmtouch", "-L", "-d", KernelPath }, alloc);
+    try Process.run(&.{ "vmtouch", "-L", "-d", RootFsPath }, alloc);
+    try Process.run(&.{ "vmtouch", "-L", "-d", config_path }, alloc);
+    for (other_paths) |op| {
+        try Process.run(&.{ "vmtouch", "-L", "-d", op }, alloc);
+    }
+}
+
+pub fn vmtouch_free(alloc: Allocator) void {
+    std.log.info("killing vmtouch", .{});
+    Process.run(&.{ "killall", "vmtouch" }, alloc) catch unreachable;
+}
+
+pub fn dummy_block_create(alloc: Allocator, size_mb: u32, block_size: u32) !void {
+    const block_count = size_mb * 1024 / block_size;
+    const bs = try std.fmt.allocPrint(alloc, "bs={d}", .{block_size});
+    defer alloc.free(bs);
+    const count = try std.fmt.allocPrint(alloc, "count={d}", .{block_count});
+    defer alloc.free(count);
+    std.log.info(
+        "creating dummy block with size: {d}MB, block_size: {d}, blocks: {d}",
+        .{ size_mb, block_size, block_count },
+    );
+    try Process.run(&.{ "dd", "if=/dev/zero", "of=" ++ DummyFilePath, bs, count }, alloc);
+}
+
+pub fn dummy_block_delete(alloc: Allocator) !void {
+    std.log.info("deleting dummy block", .{});
+    try Process.run(&.{ "rm", "dummy" }, alloc);
+}
+
 pub fn RadianceCmd(comptime config_path: []const u8) [4][]const u8 {
     return [_][]const u8{
         "sudo",
@@ -53,19 +90,20 @@ pub fn ScpCmd(comptime from: []const u8, comptime to: []const u8) [13][]const u8
 }
 
 pub const FioResult = "/tmp/fio.json";
-pub fn FioCmd(comptime t: []const u8) [11][]const u8 {
+pub fn FioCmd(comptime block_size: []const u8, comptime mode: []const u8) [11][]const u8 {
+    const bs = std.fmt.comptimePrint("--bs={s}", .{block_size});
     return [_][]const u8{
         "fio",
         "--name=a",
         "--filename=/dev/vdb",
         "--ioengine=libaio",
-        "--bs=4096",
+        bs,
         "--time_base=1",
         "--runtime=10",
         "--direct=1",
         "--output-format=json",
         "--output=" ++ FioResult,
-        "--rw=" ++ t,
+        "--rw=" ++ mode,
     };
 }
 
@@ -217,18 +255,6 @@ pub const ProcessStartupTime = struct {
         }
     }
 };
-
-pub fn vmtouch_files(comptime config_path: []const u8, alloc: Allocator) !void {
-    std.log.info("using vmtouch on all files", .{});
-    try Process.run(&.{ "vmtouch", "-L", "-d", KernelPath }, alloc);
-    try Process.run(&.{ "vmtouch", "-L", "-d", RootFsPath }, alloc);
-    try Process.run(&.{ "vmtouch", "-L", "-d", config_path }, alloc);
-}
-
-pub fn vmtouch_free(alloc: Allocator) void {
-    std.log.info("killing vmtouch", .{});
-    Process.run(&.{ "killall", "vmtouch" }, alloc) catch unreachable;
-}
 
 pub const SystemCpuUsage = struct {
     file: std.fs.File,

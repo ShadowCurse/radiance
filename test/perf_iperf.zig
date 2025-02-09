@@ -19,7 +19,7 @@ pub fn main() !void {
     const results_path = try std.fmt.allocPrint(alloc, "{s}_{}", .{ ResultsPath, timestamp });
     defer alloc.free(results_path);
 
-    try utils.vmtouch_files(ConfigPath, alloc);
+    try utils.vmtouch_files(alloc, ConfigPath, &.{});
     defer utils.vmtouch_free(alloc);
 
     std.log.info("creating results directory", .{});
