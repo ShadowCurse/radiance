@@ -8,6 +8,8 @@ const Gicv2 = @import("gicv2.zig");
 const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
 const Memory = @import("memory.zig");
 
+const Pmem = @import("devices/pmem.zig");
+
 const FdtData = struct {
     mem: []u8,
     len: u64,
@@ -235,6 +237,7 @@ pub fn create_fdt(
     uart_device_info: ?MmioDeviceInfo,
     rtc_device_info: MmioDeviceInfo,
     virtio_devices_info: []const MmioDeviceInfo,
+    pmem_info: []const Pmem.Info,
 ) !u64 {
     // https://mjmwired.net/kernel/Documentation/devicetree/booting-without-of.txt
     const ADDRESS_CELLS: u32 = 0x2;
@@ -264,6 +267,10 @@ pub fn create_fdt(
 
     for (virtio_devices_info) |*info| {
         create_virtio_node(&fdt_builder, info);
+    }
+
+    for (pmem_info) |info| {
+        create_pmem_node(&fdt_builder, info);
     }
 
     fdt_builder.end_node();
@@ -528,4 +535,15 @@ fn create_virtio_node(
         &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, device_info.irq, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
     builder.add_property(u32, "interrupt-parent", FdtBuilder.GIC_PHANDLE);
+}
+
+fn create_pmem_node(builder: *FdtBuilder, info: Pmem.Info) void {
+    var buff: [20]u8 = undefined;
+    const name = std.fmt.bufPrintZ(&buff, "pmem@{x:.8}", .{info.start}) catch unreachable;
+    builder.begin_node(name);
+    defer builder.end_node();
+
+    builder.add_property([:0]const u8, "compatible", "pmem-region");
+    builder.add_property([]const u64, "reg", &.{ info.start, info.len });
+    builder.add_property(void, "volatile", {});
 }
