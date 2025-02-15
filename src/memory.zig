@@ -77,6 +77,14 @@ pub fn last_addr(self: *const Self) u64 {
     return self.guest_addr + self.mem.len - 1;
 }
 
+pub fn align_addr(addr: u64, align_to: u64) u64 {
+    return (addr + align_to) & ~(align_to - 1);
+}
+
+pub fn is_aligned(addr: u64, align_to: u64) bool {
+    return (addr & (align_to - 1)) == 0;
+}
+
 /// Loads the linux kernel into the memory.
 /// Returns the guest memory address where
 /// the executable code starts and a size of the kernel.

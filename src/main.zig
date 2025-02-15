@@ -7,6 +7,7 @@ const config_parser = @import("config_parser.zig");
 
 const gdb = @import("gdb.zig");
 
+const Pmem = @import("devices/pmem.zig");
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
@@ -87,6 +88,15 @@ pub fn main() !void {
 
     // create interrupt controller
     Gicv2.new(&vm);
+
+    // attach pmem
+    var last_addr = Memory.align_addr(memory.last_addr(), Pmem.ALIGNMENT);
+    const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmems.pmems.len);
+    for (config.pmems.pmems.slice(), pmem_infos) |*pmem_config, *info| {
+        info.start = last_addr;
+        info.len = Pmem.attach(&vm, pmem_config.path, pmem_config.read_only, info.start);
+        last_addr += info.len;
+    }
 
     // create mmio devices
     var mmio = Mmio.new();
@@ -201,6 +211,7 @@ pub fn main() !void {
         if (config.uart.enabled) uart_device_info else null,
         rtc_device_info,
         virtio_device_infos,
+        pmem_infos,
     );
 
     // configure vcpus

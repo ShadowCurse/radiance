@@ -12,6 +12,21 @@ const CONFIG_PATH = "test/fio_config.toml";
 const MODES = [_][]const u8{ "randread", "randwrite", "read", "write" };
 const BLOCK_SIZES = [_][]const u8{ "4K", "8K", "16K" };
 
+const Device = struct {
+    path: []const u8,
+    name: []const u8,
+};
+const DEVICES = [_]Device{
+    .{
+        .path = "/dev/vdb",
+        .name = "block",
+    },
+    .{
+        .path = "/dev/pmem0",
+        .name = "pmem",
+    },
+};
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -46,40 +61,43 @@ pub fn main() !void {
         });
 
         for (0..ITERATIONS) |i| {
-            inline for (MODES) |mode| {
-                inline for (BLOCK_SIZES) |bs| {
-                    std.log.info(
-                        "Running iteration: {d}, mode: {s}, block_size: {s}",
-                        .{ i, mode, bs },
-                    );
+            inline for (DEVICES) |device| {
+                inline for (MODES) |mode| {
+                    inline for (BLOCK_SIZES) |bs| {
+                        std.log.info(
+                            "Running iteration: {d}, mode: {s}, block_size: {s}",
+                            .{ i, mode, bs },
+                        );
 
-                    var radinace_process = try utils.Process.start(
-                        "radiance",
-                        &utils.RadianceCmd(CONFIG_PATH),
-                        alloc,
-                    );
-                    std.log.info("Waiting for radiance to boot", .{});
-                    std.time.sleep(utils.RadianceBootTimeDelay);
+                        var radinace_process = try utils.Process.start(
+                            "radiance",
+                            &utils.RadianceCmd(CONFIG_PATH),
+                            alloc,
+                        );
+                        std.log.info("Waiting for radiance to boot", .{});
+                        std.time.sleep(utils.RadianceBootTimeDelay);
 
-                    const fio_cmd = utils.FioCmd(bs, mode);
-                    try utils.Process.run(&(utils.SshCmd ++ fio_cmd), alloc);
+                        const fio_cmd = utils.FioCmd(device.path, bs, mode);
+                        try utils.Process.run(&(utils.SshCmd ++ fio_cmd), alloc);
 
-                    const scp_result_file = RESULTS_PATH ++ "/fio_" ++ mode ++ "_" ++ bs ++ ".json";
-                    const result_file = try std.fmt.allocPrint(
-                        alloc,
-                        "{s}/fio_{s}_{s}_{d}.json",
-                        .{ RESULTS_PATH, mode, bs, i },
-                    );
-                    defer alloc.free(result_file);
+                        const scp_result_file =
+                            RESULTS_PATH ++ "/fio_" ++ "_" ++ device.name ++ "_" ++ mode ++ "_" ++ bs ++ ".json";
+                        const result_file = try std.fmt.allocPrint(
+                            alloc,
+                            "{s}/fio_{s}_{s}_{s}_{d}.json",
+                            .{ RESULTS_PATH, device.name, mode, bs, i },
+                        );
+                        defer alloc.free(result_file);
 
-                    try utils.Process.run(&utils.ScpCmd(utils.FioResult, scp_result_file), alloc);
-                    try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
+                        try utils.Process.run(&utils.ScpCmd(utils.FioResult, scp_result_file), alloc);
+                        try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
 
-                    try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
-                    const output = try radinace_process.end(alloc);
-                    defer output.deinit();
+                        try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
+                        const output = try radinace_process.end(alloc);
+                        defer output.deinit();
 
-                    try process_resource_usage.update(&radinace_process, alloc);
+                        try process_resource_usage.update(&radinace_process, alloc);
+                    }
                 }
             }
         }

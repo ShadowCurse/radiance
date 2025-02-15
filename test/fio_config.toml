@@ -16,6 +16,10 @@ path = "resources/ubuntu.ext4"
 read_only = false
 path = "dummy"
 
+[[pmems]]
+read_only = false
+path = "dummy"
+
 [[networks]]
 dev_name = "tap0"
 mac = [06, 00, AC, 10, 00, 02]

@@ -79,6 +79,22 @@ pub const NetConfigs = struct {
     }
 };
 
+pub const PmemConfig = struct {
+    read_only: bool = false,
+    path: []const u8 = "",
+};
+
+pub const PmemConfigs = struct {
+    pmems: std.BoundedArray(PmemConfig, 8) = .{},
+
+    const Self = @This();
+
+    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        const new_config = try parse_type(PmemConfig, line_iter);
+        try self.pmems.append(new_config);
+    }
+};
+
 pub const GdbConfig = struct {
     socket_path: []const u8 = "",
 
@@ -96,6 +112,7 @@ pub const Config = struct {
     uart: UartConfig = .{},
     drives: DrivesConfigs = .{},
     networks: NetConfigs = .{},
+    pmems: PmemConfigs = .{},
     gdb: ?GdbConfig = null,
 };
 

@@ -28,7 +28,7 @@ pub fn vmtouch_free(alloc: Allocator) void {
 }
 
 pub fn dummy_block_create(alloc: Allocator, size_mb: u32, block_size: u32) !void {
-    const block_count = size_mb * 1024 / block_size;
+    const block_count = size_mb * 1024 * 1024 / block_size;
     const bs = try std.fmt.allocPrint(alloc, "bs={d}", .{block_size});
     defer alloc.free(bs);
     const count = try std.fmt.allocPrint(alloc, "count={d}", .{block_count});
@@ -90,12 +90,16 @@ pub fn ScpCmd(comptime from: []const u8, comptime to: []const u8) [13][]const u8
 }
 
 pub const FioResult = "/tmp/fio.json";
-pub fn FioCmd(comptime block_size: []const u8, comptime mode: []const u8) [11][]const u8 {
+pub fn FioCmd(
+    comptime device: []const u8,
+    comptime block_size: []const u8,
+    comptime mode: []const u8,
+) [11][]const u8 {
     const bs = std.fmt.comptimePrint("--bs={s}", .{block_size});
     return [_][]const u8{
         "fio",
         "--name=a",
-        "--filename=/dev/vdb",
+        "--filename=" ++ device,
         "--ioengine=libaio",
         bs,
         "--time_base=1",
