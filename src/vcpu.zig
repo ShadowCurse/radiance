@@ -241,6 +241,11 @@ pub fn run(self: *Self, mmio: *Mmio) bool {
                 );
             }
         },
+        nix.KVM_EXIT_UNKNOWNW => log.info(
+            @src(),
+            "Got KVM_EXIT_UNKNOWNW: hardware_exit_reason: 0x{x}",
+            .{self.kvm_run.kvm_exit_info.hw.hardware_exit_reason},
+        ),
         else => |exit| log.info(@src(), "Got KVM_EXIT: {}", .{exit}),
     }
     return true;
