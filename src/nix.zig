@@ -85,6 +85,7 @@ pub const KVM_REG_ARM64_SYSREG_CRM_SHIFT = 3;
 pub const KVM_REG_ARM64_SYSREG_OP2_MASK = 0x0000000000000007;
 pub const KVM_REG_ARM64_SYSREG_OP2_SHIFT = 0;
 
+pub const KVM_EXIT_UNKNOWNW = 0;
 pub const KVM_EXIT_IO = 2;
 pub const KVM_EXIT_HLT = 5;
 pub const KVM_EXIT_MMIO = 6;
@@ -151,6 +152,9 @@ pub const kvm_run = extern struct {
     cr8: u64 = 0,
     apic_base: u64 = 0,
     kvm_exit_info: extern union {
+        hw: extern struct {
+            hardware_exit_reason: u64 = 0,
+        },
         mmio: extern struct {
             phys_addr: u64 = 0,
             data: [8]u8 = 0,
