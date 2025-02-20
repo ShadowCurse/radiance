@@ -94,7 +94,7 @@ pub fn main() !void {
     const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmems.pmems.len);
     for (config.pmems.pmems.slice(), pmem_infos) |*pmem_config, *info| {
         info.start = last_addr;
-        info.len = Pmem.attach(&vm, pmem_config.path, pmem_config.read_only, info.start);
+        info.len = Pmem.attach(&vm, pmem_config.path, info.start);
         last_addr += info.len;
     }
 
