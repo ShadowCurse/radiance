@@ -80,7 +80,6 @@ pub const NetConfigs = struct {
 };
 
 pub const PmemConfig = struct {
-    read_only: bool = false,
     path: []const u8 = "",
 };
 
