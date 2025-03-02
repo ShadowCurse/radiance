@@ -15,6 +15,7 @@ pub const ConfigParseError = error{
 pub const MachineConfig = struct {
     vcpus: u32 = 0,
     memory_mb: u32 = 0,
+    cmdline: []const u8 = &.{},
 
     const Self = @This();
 
@@ -49,6 +50,7 @@ pub const UartConfig = struct {
 pub const DriveConfig = struct {
     read_only: bool = false,
     path: []const u8 = "",
+    rootfs: bool = false,
 };
 
 pub const DrivesConfigs = struct {
@@ -81,6 +83,7 @@ pub const NetConfigs = struct {
 
 pub const PmemConfig = struct {
     path: []const u8 = "",
+    rootfs: bool = false,
 };
 
 pub const PmemConfigs = struct {
