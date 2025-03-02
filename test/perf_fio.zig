@@ -42,7 +42,7 @@ pub fn main() !void {
     try utils.dummy_block_create(alloc, 256, 4096);
     defer utils.dummy_block_delete(alloc) catch unreachable;
 
-    try utils.vmtouch_files(alloc, CONFIG_PATH, &.{utils.DummyFilePath});
+    try utils.vmtouch_files(alloc, &.{ CONFIG_PATH, utils.DummyFilePath });
     defer utils.vmtouch_free(alloc);
 
     {

@@ -8,7 +8,8 @@ pub const std_options = std.Options{
 
 const Iterations = 10;
 const ResultsPath = "perf_results/boottime";
-const ConfigPath = "test/boottime_config.toml";
+const ConfigPaths = &.{ "test/boottime_config_drive.toml", "test/boottime_config_pmem.toml" };
+const ConfigName = &.{ "drive", "pmem" };
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -19,7 +20,7 @@ pub fn main() !void {
     const results_path = try std.fmt.allocPrint(alloc, "{s}_{}", .{ ResultsPath, timestamp });
     defer alloc.free(results_path);
 
-    try utils.vmtouch_files(alloc, ConfigPath, &.{});
+    try utils.vmtouch_files(alloc, ConfigPaths);
     defer utils.vmtouch_free(alloc);
 
     std.log.info("creating results directory", .{});
@@ -43,30 +44,37 @@ pub fn main() !void {
             &cpu_usage_thread_stop,
         });
 
-        for (0..Iterations) |i| {
-            var radinace_process = try utils.Process.start("radiance", &utils.RadianceCmd(ConfigPath), alloc);
+        inline for (ConfigPaths, ConfigName) |config_path, config_name| {
+            for (0..Iterations) |i| {
+                var radinace_process =
+                    try utils.Process.start("radiance", &utils.RadianceCmd(config_path), alloc);
 
-            std.log.info("Waiting for radiance to boot", .{});
-            std.time.sleep(utils.RadianceBootTimeDelay);
+                std.log.info("Waiting for radiance to boot", .{});
+                std.time.sleep(utils.RadianceBootTimeDelay);
 
-            try utils.Process.run(
-                &(utils.SshCmd ++ .{ "systemd-analyze", ">", "boottime.txt" }),
-                alloc,
-            );
+                try utils.Process.run(
+                    &(utils.SshCmd ++ .{ "systemd-analyze", ">", "boottime.txt" }),
+                    alloc,
+                );
 
-            const scp_result_file = ResultsPath ++ "/boottime.txt";
-            const result_file = try std.fmt.allocPrint(alloc, "{s}/boottime_{}.txt", .{ ResultsPath, i });
-            defer alloc.free(result_file);
+                const scp_result_file = ResultsPath ++ "/boottime.txt";
+                const result_file = try std.fmt.allocPrint(
+                    alloc,
+                    "{s}/boottime_{s}_{d}.txt",
+                    .{ ResultsPath, config_name, i },
+                );
+                defer alloc.free(result_file);
 
-            try utils.Process.run(&utils.ScpCmd("boottime.txt", scp_result_file), alloc);
-            try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
+                try utils.Process.run(&utils.ScpCmd("boottime.txt", scp_result_file), alloc);
+                try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
 
-            try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
-            const output = try radinace_process.end(alloc);
-            defer output.deinit();
+                try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
+                const output = try radinace_process.end(alloc);
+                defer output.deinit();
 
-            try process_resource_usage.update(&radinace_process, alloc);
-            try process_startup_time.update(&output);
+                try process_resource_usage.update(&radinace_process, alloc);
+                try process_startup_time.update(&output);
+            }
         }
 
         cpu_usage_thread_stop = true;

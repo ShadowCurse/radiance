@@ -9,18 +9,9 @@ enabled = false
 [kernel]
 path = "resources/vmlinux-6.12"
 
-[[drives]]
-read_only = false
+[[pmems]]
 path = "resources/ubuntu.ext4"
 rootfs = true
-
-[[drives]]
-read_only = false
-path = "dummy"
-
-[[pmems]]
-read_only = false
-path = "dummy"
 
 [[networks]]
 dev_name = "tap0"

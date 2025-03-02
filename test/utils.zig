@@ -10,13 +10,11 @@ pub const RadianceBootTimeDelay = 2 * std.time.ns_per_s;
 
 pub fn vmtouch_files(
     alloc: Allocator,
-    config_path: []const u8,
     other_paths: []const []const u8,
 ) !void {
     std.log.info("using vmtouch on all files", .{});
     try Process.run(&.{ "vmtouch", "-L", "-d", KernelPath }, alloc);
     try Process.run(&.{ "vmtouch", "-L", "-d", RootFsPath }, alloc);
-    try Process.run(&.{ "vmtouch", "-L", "-d", config_path }, alloc);
     for (other_paths) |op| {
         try Process.run(&.{ "vmtouch", "-L", "-d", op }, alloc);
     }
