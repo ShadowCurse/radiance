@@ -80,7 +80,12 @@ for device in DEVICES:
 
         print(f"name: {run_name} mean: {mean} std: {std}")
         bar = ax.bar(
-            label_loc + offset, mean, yerr=std, width=width, label=run_name, ecolor="white"
+            label_loc + offset,
+            mean,
+            yerr=std,
+            width=width,
+            label=run_name,
+            ecolor="white",
         )
         labels = [f"{m:.2f}/{s:.2f}" for m, s in zip(mean, std)]
         ax.bar_label(bar, labels=labels, rotation=90)
