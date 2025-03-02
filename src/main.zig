@@ -185,13 +185,36 @@ pub fn main() !void {
     }
 
     // create kernel cmdline
-    var cmdline = try CmdLine.new(tmp_alloc, 50);
-
-    try cmdline.append("reboot=k panic=1 pci=off");
-    if (virtio_blocks[0].read_only) {
-        try cmdline.append(" root=/dev/vda ro");
+    var cmdline = try CmdLine.new(tmp_alloc, 128);
+    try cmdline.append(config.machine.cmdline);
+    for (config.drives.drives.slice(), 0..) |*d, i| {
+        if (d.rootfs) {
+            var name_buff: [32]u8 = undefined;
+            const mod = if (d.read_only) "ro" else "rw";
+            const letter: u8 = 'a' + @as(u8, @intCast(i));
+            const name = try std.fmt.bufPrint(
+                &name_buff,
+                " root=/dev/vd{c} {s}",
+                .{ letter, mod },
+            );
+            log.info(@src(), "Using root cmd line params: {s}", .{name});
+            try cmdline.append(name);
+            break;
+        }
+    } else for (config.pmems.pmems.slice(), 0..) |*pm, i| {
+        if (pm.rootfs) {
+            var name_buff: [64]u8 = undefined;
+            const name = try std.fmt.bufPrint(
+                &name_buff,
+                " root=/dev/pmem{d} rw rootflags=dax",
+                .{i},
+            );
+            log.info(@src(), "Using root cmd line params: {s}", .{name});
+            try cmdline.append(name);
+            break;
+        }
     } else {
-        try cmdline.append(" root=/dev/vda rw");
+        @panic("No rootfs device selected");
     }
     if (config.uart.enabled) try Uart.add_to_cmdline(&cmdline, uart_device_info);
 
