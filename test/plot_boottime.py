@@ -12,7 +12,7 @@ for d in os.listdir(RESULTS_DIS):
     if "boottime" not in d:
         continue
 
-    run_data = []
+    run_data = {"drive": [], "pmem": []}
     for path in os.listdir(f"{RESULTS_DIS}/{d}"):
         if "boottime" not in path:
             continue
@@ -21,10 +21,17 @@ for d in os.listdir(RESULTS_DIS):
         with open(file_path, "r") as file:
             line = file.readlines()[0]
             total_time = line.split("=")[1]
-            run_data.append(float(total_time.strip()[:-2]))
+            if "drive" in file_path:
+                run_data["drive"].append(float(total_time.strip()[:-2]))
+            if "pmem" in file_path:
+                run_data["pmem"].append(float(total_time.strip()[:-2]))
 
-    run_data = np.array(run_data)
-    data[d] = {"mean": np.mean(run_data), "std": np.std(run_data)}
+    run_data = {
+        "drive": np.array(run_data["drive"]),
+        "pmem": np.array(run_data["pmem"]),
+    }
+    data[f"{d}_drive"] = {"mean": np.mean(run_data["drive"]), "std": np.std(run_data["drive"])}
+    data[f"{d}_pmem"] = {"mean": np.mean(run_data["pmem"]), "std": np.std(run_data["pmem"])}
 
 width = 0.25 / len(data.keys())
 multiplier = 0
