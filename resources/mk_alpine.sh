@@ -54,7 +54,7 @@ then
 else
   echo "[HOST] creating rootfs file"
   dd if=/dev/zero of=$ROOTFS_FILE bs=1M count=$SIZE
-  mkfs.ext4 $ROOTFS_FILE
+  mkfs.ext4 -b 4K $ROOTFS_FILE
 
   echo "[HOST] creating ssh keys"
   ssh-keygen -f id_rsa -N ""
