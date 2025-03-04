@@ -33,13 +33,15 @@ const MMIO_LEN = @import("../mmio.zig").MMIO_DEVICE_SIZE;
 // is used to divide the MMIO space into 2 pages.
 pub const INTERRUPT_STATUS_OFFSET = 0x60;
 
-pub const INIT: u32 = 0;
-pub const ACKNOWLEDGE: u32 = 1;
-pub const DRIVER: u32 = 2;
-pub const FAILED: u32 = 128;
-pub const FEATURES_OK: u32 = 8;
-pub const DRIVER_OK: u32 = 4;
-pub const DEVICE_NEEDS_RESET: u32 = 64;
+pub const DeviceStatus = packed struct(u8) {
+    acknowledge: bool = false,
+    driver: bool = false,
+    driver_ok: bool = false,
+    features_ok: bool = false,
+    _: u2 = 0,
+    need_reset: bool = false,
+    failed: bool = false,
+};
 
 pub const VENDOR_ID: u32 = 0;
 
@@ -90,7 +92,8 @@ pub fn VirtioContext(
 
         // The biggest type if 2 (TYPE_NET)
         device_type: u2 = DEVICE_TYPE,
-        device_status: u8 = 0,
+        // device_status: u8 = 0,
+        device_status: DeviceStatus = .{},
 
         config: CONFIG = undefined,
 
@@ -184,33 +187,28 @@ pub fn VirtioContext(
             });
         }
 
-        fn update_device_status(self: *Self, status: u8) VirtioAction {
-            const changed_bit = ~self.device_status & status;
-            switch (changed_bit) {
-                ACKNOWLEDGE => if (self.device_status == INIT) {
-                    self.device_status = status;
-                },
-                DRIVER => if (self.device_status == ACKNOWLEDGE) {
-                    self.device_status = status;
-                },
-                FEATURES_OK => if (self.device_status == (ACKNOWLEDGE | DRIVER)) {
-                    self.device_status = status;
-                },
-                DRIVER_OK => if (self.device_status == (ACKNOWLEDGE | DRIVER | FEATURES_OK)) {
-                    self.device_status = status;
-                    return VirtioAction.ActivateDevice;
-                },
-                DEVICE_NEEDS_RESET => {
-                    self.device_status = status;
-                    return VirtioAction.ResetDevice;
-                },
-                else => {
-                    log.warn(
-                        @src(),
-                        "invalid virtio driver status transition: 0x{x} => 0x{x}",
-                        .{ self.device_status, status },
-                    );
-                },
+        fn update_device_status(self: *Self, status: DeviceStatus) VirtioAction {
+            const current_status: u8 = @bitCast(self.device_status);
+            const new_status: u8 = @bitCast(status);
+            const diff: DeviceStatus = @bitCast(~current_status & new_status);
+            if ((diff.acknowledge) or
+                (diff.driver and
+                self.device_status.acknowledge) or
+                (diff.features_ok and
+                self.device_status.acknowledge and
+                self.device_status.driver) or
+                (diff.driver_ok and
+                self.device_status.acknowledge and
+                self.device_status.driver and
+                self.device_status.features_ok))
+            {
+                self.device_status = status;
+            } else {
+                log.warn(
+                    @src(),
+                    "invalid virtio driver status transition: {any}",
+                    .{diff},
+                );
             }
             return VirtioAction.NoAction;
         }
@@ -239,7 +237,7 @@ pub fn VirtioContext(
                     // 0x1 means status is always ready
                     data_u32.* = 0x1;
                 },
-                0x70 => data_u32.* = self.device_status,
+                0x70 => data_u32.* = @as(u8, @bitCast(self.device_status)),
                 // No generation updates
                 0xfc => data_u32.* = 0,
                 0x100...0xfff => {
@@ -280,7 +278,7 @@ pub fn VirtioContext(
                 0x64 => {
                     // There is no interrupt status to update
                 },
-                0x70 => return self.update_device_status(data[0]),
+                0x70 => return self.update_device_status(@bitCast(data[0])),
                 0x80 => self.queues[self.selected_queue].set_desc_table(false, data_u32.*),
                 0x84 => self.queues[self.selected_queue].set_desc_table(true, data_u32.*),
                 0x90 => self.queues[self.selected_queue].set_avail_ring(false, data_u32.*),
