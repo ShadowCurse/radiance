@@ -92,7 +92,6 @@ pub fn VirtioContext(
 
         // The biggest type if 2 (TYPE_NET)
         device_type: u2 = DEVICE_TYPE,
-        // device_status: u8 = 0,
         device_status: DeviceStatus = .{},
 
         config: CONFIG = undefined,
@@ -187,30 +186,34 @@ pub fn VirtioContext(
             });
         }
 
-        fn update_device_status(self: *Self, status: DeviceStatus) VirtioAction {
+        fn update_device_status(self: *Self, new_status: u8) VirtioAction {
             const current_status: u8 = @bitCast(self.device_status);
-            const new_status: u8 = @bitCast(status);
             const diff: DeviceStatus = @bitCast(~current_status & new_status);
-            if ((diff.acknowledge) or
+            if ((new_status == 0) or
+                (diff.acknowledge and
+                current_status == 0) or
                 (diff.driver and
                 self.device_status.acknowledge) or
                 (diff.features_ok and
                 self.device_status.acknowledge and
-                self.device_status.driver) or
-                (diff.driver_ok and
+                self.device_status.driver))
+            {
+                self.device_status = @bitCast(new_status);
+            } else if ((diff.driver_ok and
                 self.device_status.acknowledge and
                 self.device_status.driver and
                 self.device_status.features_ok))
             {
-                self.device_status = status;
+                self.device_status = @bitCast(new_status);
+                return .ActivateDevice;
             } else {
                 log.warn(
                     @src(),
-                    "invalid virtio driver status transition: {any}",
-                    .{diff},
+                    "invalid virtio driver status transition: {any} -> {any}: {any}",
+                    .{ self.device_status, @as(DeviceStatus, @bitCast(new_status)), diff },
                 );
             }
-            return VirtioAction.NoAction;
+            return .NoAction;
         }
 
         pub fn read(self: *Self, offset: u64, data: []u8) VirtioAction {
@@ -278,7 +281,7 @@ pub fn VirtioContext(
                 0x64 => {
                     // There is no interrupt status to update
                 },
-                0x70 => return self.update_device_status(@bitCast(data[0])),
+                0x70 => return self.update_device_status(data[0]),
                 0x80 => self.queues[self.selected_queue].set_desc_table(false, data_u32.*),
                 0x84 => self.queues[self.selected_queue].set_desc_table(true, data_u32.*),
                 0x90 => self.queues[self.selected_queue].set_avail_ring(false, data_u32.*),
