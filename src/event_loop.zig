@@ -10,7 +10,7 @@ const EventCallback = struct {
     parameter: CallbackParam,
 };
 
-stop: bool,
+exit: bool,
 epollfd: nix.fd_t,
 events: [MAX_EVENTS]nix.epoll_event,
 events_info_num: u64,
@@ -34,7 +34,7 @@ pub fn new() Self {
     const epollfd = nix.assert(@src(), nix.epoll_create1, .{0});
 
     return Self{
-        .stop = false,
+        .exit = false,
         .epollfd = epollfd,
         .events = undefined,
         .events_info_num = 0,
@@ -94,7 +94,7 @@ pub fn remove_event(
 
 pub fn run(self: *Self) void {
     log.debug(@src(), "runnning", .{});
-    while (!self.stop) {
+    while (!self.exit) {
         const nfds = nix.assert(
             @src(),
             nix.epoll_wait,
@@ -114,5 +114,5 @@ pub fn run(self: *Self) void {
 }
 
 pub fn stop(self: *Self) void {
-    self.stop = true;
+    self.exit = true;
 }

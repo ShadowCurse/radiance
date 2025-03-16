@@ -157,7 +157,7 @@ pub const kvm_run = extern struct {
         },
         mmio: extern struct {
             phys_addr: u64 = 0,
-            data: [8]u8 = 0,
+            data: [8]u8 = .{0} ** 8,
             len: u32 = 0,
             is_write: u8 = 0,
         },
@@ -196,7 +196,7 @@ pub const kvm_regs = extern struct {
     regs: user_pt_regs = .{},
     sp_el1: u64 = 0,
     elr_el1: u64 = 0,
-    spsr: [5]u64 = 0,
+    spsr: [5]u64 = .{0} ** 5,
     fp_regs: user_fpsimd_state = .{},
 };
 
@@ -221,9 +221,9 @@ pub const virtio_blk_outhdr = extern struct {
     sector: u64 = 0,
 };
 pub const ifreq = std.posix.ifreq;
-pub const IFF_TAP = 0x0002;
-pub const IFF_NO_PI = 0x1000;
-pub const IFF_VNET_HDR = 0x4000;
+pub const IFF_TAP: u16 = 0x0002;
+pub const IFF_NO_PI: u16 = 0x1000;
+pub const IFF_VNET_HDR: u16 = 0x4000;
 pub const TUN_F_CSUM = 0x01;
 pub const TUN_F_UFO = 0x10;
 pub const TUN_F_USO4 = 0x20;
@@ -356,7 +356,7 @@ pub const TCSA = std.os.linux.TCSA;
 pub const termios = std.posix.termios;
 pub const mmap = std.posix.mmap;
 pub const munmap = std.posix.munmap;
-pub const sigaction = std.posix.sigaction;
+pub const sigaction = std.os.linux.sigaction;
 pub const fd_t = std.posix.fd_t;
 pub const socklen_t = std.posix.socklen_t;
 pub const STDIN_FILENO = std.posix.STDIN_FILENO;
@@ -410,12 +410,12 @@ fn clean_return_type(
     comptime function: anytype,
 ) type {
     const fn_type = @typeInfo(@TypeOf(function));
-    if (fn_type.Fn.return_type) |t| {
+    if (fn_type.@"fn".return_type) |t| {
         const return_type = @typeInfo(t);
         switch (t) {
             usize => return i32,
             else => switch (return_type) {
-                .ErrorUnion => return return_type.ErrorUnion.payload,
+                .error_union => return return_type.error_union.payload,
                 else => {},
             },
         }
@@ -424,7 +424,7 @@ fn clean_return_type(
         src,
         "Invalid type: {s} Note: nix.assert can only be called with functions returning usize or error union",
         .{
-            @typeName(fn_type.Fn.return_type),
+            @typeName(fn_type.@"fn".return_type.?),
         },
     );
 }
@@ -435,16 +435,16 @@ pub inline fn assert(
     args: std.meta.ArgsTuple(@TypeOf(function)),
 ) clean_return_type(src, function) {
     const fn_type = @typeInfo(@TypeOf(function));
-    const t = if (fn_type.Fn.return_type) |tt| tt else void;
+    const t = if (fn_type.@"fn".return_type) |tt| tt else void;
     const return_type = @typeInfo(t);
     switch (return_type) {
-        .ErrorUnion => {
+        .error_union => {
             return @call(.always_inline, function, args) catch |e| {
                 log.assert(src, false, "{}", .{e});
                 unreachable;
             };
         },
-        .Int => {
+        .int => {
             const r = @call(.always_inline, function, args);
             log.assert(src, std.posix.errno(r) == .SUCCESS, "{}({})", .{
                 r,

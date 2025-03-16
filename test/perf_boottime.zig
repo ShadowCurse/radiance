@@ -69,8 +69,8 @@ pub fn main() !void {
                 try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
 
                 try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
-                const output = try radinace_process.end(alloc);
-                defer output.deinit();
+                var output = try radinace_process.end(alloc);
+                defer output.deinit(alloc);
 
                 try process_resource_usage.update(&radinace_process, alloc);
                 try process_startup_time.update(&output);

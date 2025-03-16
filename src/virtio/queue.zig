@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = @import("../log.zig");
 const nix = @import("../nix.zig");
+const arch = @import("../arch.zig");
 const Memory = @import("../memory.zig");
 
 /// A virtio descriptor chain.
@@ -96,7 +97,7 @@ pub const Queue = struct {
 
     pub fn send_notification(self: *Self, memory: *const Memory) bool {
         if (self.notification_suppression) {
-            @fence(.acquire);
+            arch.load_barrier();
             // avail_ring is only written by the driver
             const avail_ring = memory.get_ptr(nix.vring_avail, self.avail_ring);
             const used_event = avail_ring.used_event(self.size).*;
@@ -115,7 +116,7 @@ pub const Queue = struct {
             // used_ring is only written by the device
             const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
             used_ring.avail_event(self.size).* = self.next_avail;
-            @fence(.release);
+            arch.load_store_barrier();
         }
 
         // avail_ring is only written by the driver
@@ -124,7 +125,7 @@ pub const Queue = struct {
             return null;
         }
 
-        @fence(.acquire);
+        arch.load_barrier();
 
         const next_avail = self.next_avail % self.size;
         const desc_index = avail_ring.ring()[next_avail];
@@ -162,7 +163,7 @@ pub const Queue = struct {
         self.next_used = self.next_used +% 1;
         self.suppressed = self.suppressed +% 1;
 
-        @fence(.release);
+        arch.load_store_barrier();
         used_ring.idx = self.next_used;
     }
 };
