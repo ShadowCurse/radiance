@@ -46,7 +46,7 @@ pub fn new() Self {
 
 fn now() u32 {
     const n = std.time.Instant.now() catch unreachable;
-    return @intCast(n.timestamp.tv_sec);
+    return @intCast(n.timestamp.sec);
 }
 
 pub fn write(self: *Self, offset: u64, data: []u8) void {

@@ -17,7 +17,7 @@ pub fn assert(
     args: anytype,
 ) void {
     if (!ok) {
-        @setCold(true);
+        @branchHint(.cold);
         const T = make_struct(@TypeOf(args));
         const t = fill_struct(T, src, args);
         std.debug.panic("[{s}:{s}:{}:{}] " ++ format, t);
@@ -69,7 +69,7 @@ fn fill_struct(
     src: std.builtin.SourceLocation,
     args: anytype,
 ) T {
-    const args_fields = comptime @typeInfo(@TypeOf(args)).Struct.fields;
+    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
     var t: T = undefined;
 
     @field(t, "0") = src.file;
@@ -91,13 +91,13 @@ fn fill_struct(
 fn make_struct(
     comptime T: type,
 ) type {
-    const type_fields = comptime @typeInfo(T).Struct.fields;
+    const type_fields = comptime @typeInfo(T).@"struct".fields;
     var fields: [type_fields.len + 4]std.builtin.Type.StructField = undefined;
     // file
     fields[0] = .{
         .name = "0",
         .type = [:0]const u8,
-        .default_value = null,
+        .default_value_ptr = null,
         .is_comptime = false,
         .alignment = @alignOf([:0]const u8),
     };
@@ -105,7 +105,7 @@ fn make_struct(
     fields[1] = .{
         .name = "1",
         .type = [:0]const u8,
-        .default_value = null,
+        .default_value_ptr = null,
         .is_comptime = false,
         .alignment = @alignOf([:0]const u8),
     };
@@ -113,7 +113,7 @@ fn make_struct(
     fields[2] = .{
         .name = "2",
         .type = u32,
-        .default_value = null,
+        .default_value_ptr = null,
         .is_comptime = false,
         .alignment = @alignOf(u32),
     };
@@ -121,7 +121,7 @@ fn make_struct(
     fields[3] = .{
         .name = "3",
         .type = u32,
-        .default_value = null,
+        .default_value_ptr = null,
         .is_comptime = false,
         .alignment = @alignOf(u32),
     };
@@ -129,12 +129,12 @@ fn make_struct(
         var ff = f;
         ff.name = std.fmt.comptimePrint("{}", .{i});
         ff.is_comptime = false;
-        ff.default_value = null;
+        ff.default_value_ptr = null;
         fields[i] = ff;
     }
 
     return @Type(.{
-        .Struct = .{
+        .@"struct" = .{
             .layout = .auto,
             .fields = fields[0..],
             .decls = &[_]std.builtin.Type.Declaration{},

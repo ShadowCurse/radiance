@@ -128,12 +128,12 @@ pub const Process = struct {
     child: std.process.Child,
 
     pub const Output = struct {
-        stdout: std.ArrayList(u8),
-        stderr: std.ArrayList(u8),
+        stdout: std.ArrayListUnmanaged(u8),
+        stderr: std.ArrayListUnmanaged(u8),
 
-        pub fn deinit(self: *const Output) void {
-            self.stdout.deinit();
-            self.stderr.deinit();
+        pub fn deinit(self: *Output, allocator: Allocator) void {
+            self.stdout.deinit(allocator);
+            self.stderr.deinit(allocator);
         }
     };
 
@@ -170,9 +170,9 @@ pub const Process = struct {
 
     pub fn end(self: *Process, allocator: std.mem.Allocator) !Output {
         std.log.info("Ending {s}", .{self.name});
-        var stdout = std.ArrayList(u8).init(allocator);
-        var stderr = std.ArrayList(u8).init(allocator);
-        try self.child.collectOutput(&stdout, &stderr, std.math.maxInt(usize));
+        var stdout = std.ArrayListUnmanaged(u8).empty;
+        var stderr = std.ArrayListUnmanaged(u8).empty;
+        try self.child.collectOutput(allocator, &stdout, &stderr, std.math.maxInt(usize));
 
         const exit = try self.child.wait();
         std.log.info("{s} exit: {any}", .{ self.name, exit });
@@ -207,7 +207,7 @@ pub const ProcessResourceUsage = struct {
     pub fn update(self: *Self, process: *const Process, allocator: Allocator) !void {
         const rusage = process.child.resource_usage_statistics.rusage.?;
         const t = @TypeOf(rusage);
-        const fields = @typeInfo(t).Struct.fields;
+        const fields = @typeInfo(t).@"struct".fields;
         inline for (fields) |field| {
             switch (field.type) {
                 isize => {
@@ -218,7 +218,7 @@ pub const ProcessResourceUsage = struct {
                 },
                 std.os.linux.timeval => {
                     const f = @field(rusage, field.name);
-                    const s = try std.fmt.allocPrint(allocator, "{s} {} {}\n", .{ field.name, f.tv_sec, f.tv_usec });
+                    const s = try std.fmt.allocPrint(allocator, "{s} {} {}\n", .{ field.name, f.sec, f.usec });
                     defer allocator.free(s);
 
                     _ = try self.file.write(s);

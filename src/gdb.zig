@@ -348,7 +348,7 @@ const m = struct {
 
     fn from_bytes(bytes: []const u8) ?Self {
         return if (std.mem.startsWith(u8, bytes, "m")) blk: {
-            var iter = std.mem.split(u8, bytes[1..], ",");
+            var iter = std.mem.splitScalar(u8, bytes[1..], ',');
             const addr = std.fmt.parseInt(u64, iter.next().?, 16) catch return null;
             const length = std.fmt.parseInt(u64, iter.next().?, 16) catch return null;
             break :blk .{
@@ -612,7 +612,7 @@ pub const GdbServer = struct {
                 return err;
             };
             if (len == 0) {
-                self.event_loop.stop = true;
+                self.event_loop.exit = true;
                 log.info(@src(), "got payload of len 0. exiting", .{});
                 return;
             }

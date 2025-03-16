@@ -75,7 +75,7 @@ fn set_thread_handler() void {
         .mask = std.mem.zeroes(nix.sigset_t),
         .restorer = null,
     };
-    nix.assert(@src(), nix.sigaction, .{ VCPU_SIGNAL, &sigact, null });
+    _ = nix.assert(@src(), nix.sigaction, .{ VCPU_SIGNAL, &sigact, null });
 }
 
 pub fn kick_threads() void {

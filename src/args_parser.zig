@@ -5,7 +5,7 @@ pub const ParseError = error{
 };
 
 pub fn parse(comptime T: type) !T {
-    const type_fields = comptime @typeInfo(T).Struct.fields;
+    const type_fields = comptime @typeInfo(T).@"struct".fields;
 
     var t: T = undefined;
     inline for (type_fields) |field| {
@@ -40,7 +40,7 @@ fn find_arg(comptime field_name: []const u8) ?[]const u8 {
 }
 
 fn print_args_help(comptime T: type) !void {
-    const type_fields = comptime @typeInfo(T).Struct.fields;
+    const type_fields = comptime @typeInfo(T).@"struct".fields;
 
     const stdout = std.io.getStdOut();
     const writer = stdout.writer();

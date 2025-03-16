@@ -156,7 +156,7 @@ pub fn parse_fd(fd: nix.fd_t) !ParseResult {
     );
 
     var line_iter = std.mem.splitScalar(u8, file_mem, '\n');
-    const type_fields = comptime @typeInfo(Config).Struct.fields;
+    const type_fields = comptime @typeInfo(Config).@"struct".fields;
     var config: Config = .{};
 
     while (line_iter.next()) |line| {
@@ -180,7 +180,7 @@ pub fn parse_fd(fd: nix.fd_t) !ParseResult {
             inline for (type_fields) |field| {
                 if (std.mem.eql(u8, field.name, filed_name)) {
                     const field_type = @typeInfo(field.type);
-                    if (field_type == .Optional) {
+                    if (field_type == .optional) {
                         @field(config, field.name) = .{};
                         try @field(config, field.name).?.update(&line_iter);
                     } else {
@@ -199,7 +199,7 @@ pub fn parse_fd(fd: nix.fd_t) !ParseResult {
 }
 
 fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
-    const type_fields = comptime @typeInfo(T).Struct.fields;
+    const type_fields = comptime @typeInfo(T).@"struct".fields;
     var t: T = .{};
     while (line_iter.next()) |line| {
         if (line.len == 0 or line[0] == '[') {
@@ -278,7 +278,7 @@ fn dump_file(config: Config, config_path: []const u8) void {
 }
 
 fn dump_fd(config: Config, fd: nix.fd_t) void {
-    const type_fields = comptime @typeInfo(Config).Struct.fields;
+    const type_fields = comptime @typeInfo(Config).@"struct".fields;
     inline for (type_fields) |field| {
         if (@typeInfo(field.type) == .Optional) {
             if (@field(config, field.name)) |v| {
@@ -296,7 +296,7 @@ fn dump_section(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
         const t_type = @TypeOf(t);
         switch (t_type) {
             DrivesConfigs, NetConfigs => {
-                const type_fields = @typeInfo(t_type).Struct.fields;
+                const type_fields = @typeInfo(t_type).@"struct".fields;
                 const first_field = type_fields[0];
                 const items = @field(t, first_field.name).slice();
                 for (items, 0..) |item, i| {
@@ -315,7 +315,7 @@ fn dump_section(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
 }
 
 fn dump_type(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
-    const type_fields = @typeInfo(@TypeOf(t)).Struct.fields;
+    const type_fields = @typeInfo(@TypeOf(t)).@"struct".fields;
 
     const header = if (std.mem.endsWith(u8, name, "s"))
         std.fmt.comptimePrint("[[{s}]]\n", .{name})

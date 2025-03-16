@@ -3,7 +3,7 @@ const log = @import("log.zig");
 const nix = @import("nix.zig");
 
 pub const GUEST_PAGE_SIZE = 0x1000;
-pub const HOST_PAGE_SIZE = std.mem.page_size;
+pub const HOST_PAGE_SIZE = std.heap.page_size_min;
 
 /// Start of RAM on 64 bit ARM.
 pub const DRAM_START: u64 = 0x8000_0000; // 2 GB.

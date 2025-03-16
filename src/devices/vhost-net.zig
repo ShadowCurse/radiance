@@ -47,7 +47,7 @@ pub const VhostNet = struct {
         // IFF_TUN_EXCL - Ensures a new device is created. Returns EBUSY if the device exists
         // IFF_VNET_HDR -Prepend "struct virtio_net_hdr" before the RX and TX packets, should be followed by setsockopt(TUNSETVNETHDRSZ).
         // IFF_MULTI_QUEUE - Use multi queue tap, see below.
-        ifreq.ifru.flags = nix.IFF_TAP | nix.IFF_NO_PI | nix.IFF_VNET_HDR;
+        ifreq.ifru.flags = @bitCast(nix.IFF_TAP | nix.IFF_NO_PI | nix.IFF_VNET_HDR);
         {
             _ = nix.assert(@src(), nix.ioctl, .{
                 tun,
