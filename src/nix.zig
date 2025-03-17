@@ -220,10 +220,27 @@ pub const virtio_blk_outhdr = extern struct {
     ioprio: u32 = 0,
     sector: u64 = 0,
 };
-pub const ifreq = std.posix.ifreq;
-pub const IFF_TAP: u16 = 0x0002;
-pub const IFF_NO_PI: u16 = 0x1000;
-pub const IFF_VNET_HDR: u16 = 0x4000;
+
+pub const IFF = packed struct(u16) {
+    _0: u1 = 0,
+    // IFF_TAP / IFF_TUN - select TAP or TUN
+    TAP: bool = false, //  0x0002
+    _1: u10 = 0,
+    // IFF_NO_PI - Historically each packet on tap had a "struct tun_pi" 4 byte prefix.
+    // There are now better alternatives and this option disables this prefix.
+    NO_PI: bool = false, // 0x1000
+    _2: u1 = 0,
+    // IFF_VNET_HDR -Prepend "struct virtio_net_hdr" before the RX and TX packets,
+    // should be followed by setsockopt(TUNSETVNETHDRSZ).
+    VNET_HDR: bool = false, // 0x4000
+    _3: u1 = 0,
+};
+pub const IFNAMESIZE = 16;
+pub const ifreq = extern struct {
+    name: [IFNAMESIZE]u8 = .{0} ** IFNAMESIZE,
+    flags: IFF = .{},
+};
+
 pub const TUN_F_CSUM = 0x01;
 pub const TUN_F_UFO = 0x10;
 pub const TUN_F_USO4 = 0x20;
@@ -619,9 +636,11 @@ test "test_bindings" {
         TypeCheck.init(C.struct_virtio_blk_outhdr),
     );
 
-    try std.testing.expectEqual(IFF_TAP, C.IFF_TAP);
-    try std.testing.expectEqual(IFF_NO_PI, C.IFF_NO_PI);
-    try std.testing.expectEqual(IFF_VNET_HDR, C.IFF_VNET_HDR);
+    try std.testing.expectEqual(IFNAMESIZE, C.IFNAMSIZ);
+    try std.testing.expectEqual(@as(u16, @bitCast(IFF{ .TAP = true })), C.IFF_TAP);
+    try std.testing.expectEqual(@as(u16, @bitCast(IFF{ .NO_PI = true })), C.IFF_NO_PI);
+    try std.testing.expectEqual(@as(u16, @bitCast(IFF{ .VNET_HDR = true })), C.IFF_VNET_HDR);
+
     try std.testing.expectEqual(TUN_F_CSUM, C.TUN_F_CSUM);
     try std.testing.expectEqual(TUN_F_UFO, C.TUN_F_UFO);
     try std.testing.expectEqual(TUN_F_USO4, C.TUN_F_USO4);
