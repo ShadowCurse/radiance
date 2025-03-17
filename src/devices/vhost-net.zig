@@ -39,30 +39,27 @@ pub const VhostNet = struct {
             .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
             0,
         });
-        var ifreq = std.mem.zeroInit(nix.ifreq, .{});
-        @memcpy(ifreq.ifrn.name[0..tap_name.len], tap_name);
-        // IFF_TAP / IFF_TUN - select TAP or TUN
-        // IFF_NO_CARRIER - Holding an open tap device file descriptor sets the Ethernet interface CARRIER flag up. In some cases it might be desired to delay that until a TUNSETCARRIER call.
-        // IFF_NO_PI - Historically each packet on tap had a "struct tun_pi" 4 byte prefix. There are now better alternatives and this option disables this prefix.
-        // IFF_TUN_EXCL - Ensures a new device is created. Returns EBUSY if the device exists
-        // IFF_VNET_HDR -Prepend "struct virtio_net_hdr" before the RX and TX packets, should be followed by setsockopt(TUNSETVNETHDRSZ).
-        // IFF_MULTI_QUEUE - Use multi queue tap, see below.
-        ifreq.ifru.flags = @bitCast(nix.IFF_TAP | nix.IFF_NO_PI | nix.IFF_VNET_HDR);
-        {
-            _ = nix.assert(@src(), nix.ioctl, .{
-                tun,
-                nix.TUNSETIFF,
-                @intFromPtr(&ifreq),
-            });
-        }
-        {
-            const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
-            _ = nix.assert(@src(), nix.ioctl, .{
-                tun,
-                nix.TUNSETVNETHDRSZ,
-                @intFromPtr(&size),
-            });
-        }
+        var ifreq = nix.ifreq{
+            .flags = .{ .TAP = true, .NO_PI = true, .VNET_HDR = true },
+        };
+        log.assert(
+            @src(),
+            tap_name.len <= nix.IFNAMESIZE,
+            "VhostNet dev_name: {s} is larger than maxinum allowed size: {d}",
+            .{ tap_name, @as(u32, nix.IFNAMESIZE) },
+        );
+        @memcpy(ifreq.name[0..tap_name.len], tap_name);
+        _ = nix.assert(@src(), nix.ioctl, .{
+            tun,
+            nix.TUNSETIFF,
+            @intFromPtr(&ifreq),
+        });
+        const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
+        _ = nix.assert(@src(), nix.ioctl, .{
+            tun,
+            nix.TUNSETVNETHDRSZ,
+            @intFromPtr(&size),
+        });
 
         var virtio_context = VIRTIO_CONTEXT.new(
             vm,
