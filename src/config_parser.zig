@@ -279,38 +279,36 @@ fn dump_file(config: Config, config_path: []const u8) void {
 
 fn dump_fd(config: Config, fd: nix.fd_t) void {
     const type_fields = comptime @typeInfo(Config).@"struct".fields;
-    inline for (type_fields) |field| {
-        if (@typeInfo(field.type) == .Optional) {
+    inline for (type_fields, 0..) |field, i| {
+        const last = type_fields.len - 1 == i;
+        if (@typeInfo(field.type) == .optional) {
             if (@field(config, field.name)) |v| {
-                dump_section(field.name, v, fd);
+                dump_section(field.name, v, fd, last);
             }
         } else {
-            dump_section(field.name, @field(config, field.name), fd);
-            _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+            dump_section(field.name, @field(config, field.name), fd, last);
         }
     }
 }
 
-fn dump_section(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
-    if (std.mem.endsWith(u8, name, "s")) {
-        const t_type = @TypeOf(t);
-        switch (t_type) {
-            DrivesConfigs, NetConfigs => {
-                const type_fields = @typeInfo(t_type).@"struct".fields;
-                const first_field = type_fields[0];
-                const items = @field(t, first_field.name).slice();
-                for (items, 0..) |item, i| {
-                    dump_type(name, item, fd);
-                    // skip new line to avoid double new line after
-                    // array section
-                    if (i != items.len - 1)
-                        _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
-                }
-            },
-            else => unreachable,
-        }
-    } else {
-        dump_type(name, t, fd);
+fn dump_section(comptime name: []const u8, t: anytype, fd: nix.fd_t, comptime last: bool) void {
+    const t_type = @TypeOf(t);
+    switch (t_type) {
+        DrivesConfigs, PmemConfigs, NetConfigs => {
+            const type_fields = @typeInfo(t_type).@"struct".fields;
+            const first_field = type_fields[0];
+            const items = @field(t, first_field.name).slice();
+            for (items) |item| {
+                dump_type(name, item, fd);
+                if (!last)
+                    _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+            }
+        },
+        else => {
+            dump_type(name, t, fd);
+            if (!last)
+                _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+        },
     }
 }
 
@@ -342,12 +340,12 @@ fn dump_type(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
                 }
             },
             [:0]const u8, []const u8 => {
-                const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
-                _ = nix.assert(@src(), nix.write, .{ fd, field_start });
-
-                _ = nix.assert(@src(), nix.write, .{ fd, @field(t, field.name) });
-
-                _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+                if (@field(t, field.name).len != 0) {
+                    const field_start = std.fmt.comptimePrint("{s} = \"", .{field.name});
+                    _ = nix.assert(@src(), nix.write, .{ fd, field_start });
+                    _ = nix.assert(@src(), nix.write, .{ fd, @field(t, field.name) });
+                    _ = nix.assert(@src(), nix.write, .{ fd, "\"\n" });
+                }
             },
             u32, bool => {
                 const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
@@ -371,30 +369,32 @@ test "dump_and_parse" {
         \\memory_mb = 69
         \\
         \\[kernel]
-        \\path = kernel_path
+        \\path = "kernel_path"
         \\
         \\[uart]
         \\enabled = false
         \\
         \\[[drives]]
         \\read_only = false
-        \\path = drive_1_path
+        \\path = "drive_1_path"
+        \\rootfs = true
         \\
         \\[[drives]]
         \\read_only = true
-        \\path = drive_2_path
+        \\path = "drive_2_path"
+        \\rootfs = false
         \\
         \\[[networks]]
-        \\dev_name = net_1
+        \\dev_name = "net_1"
         \\vhost = true
         \\
         \\[[networks]]
-        \\dev_name = net_2
+        \\dev_name = "net_2"
         \\mac = [00, 02, DE, AD, BE, EF]
         \\vhost = false
         \\
         \\[gdb]
-        \\socket_path = gdb_sock
+        \\socket_path = "gdb_sock"
         \\
     ;
 
@@ -402,10 +402,12 @@ test "dump_and_parse" {
     drives.drives.append(.{
         .path = "drive_1_path",
         .read_only = false,
+        .rootfs = true,
     }) catch unreachable;
     drives.drives.append(.{
         .path = "drive_2_path",
         .read_only = true,
+        .rootfs = false,
     }) catch unreachable;
 
     var nets: NetConfigs = .{};
