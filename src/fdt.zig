@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const _cache = @import("cache.zig");
-const CacheDir = _cache.CacheDir;
+const read_host_caches = _cache.read_host_caches;
 const CacheEntry = _cache.CacheEntry;
 const Gicv2 = @import("gicv2.zig");
 const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
@@ -284,29 +284,7 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
     // In order to not overlap with other phandles start from a big offset.
     const LAST_CACHE_PHANDLE: u32 = 4000;
 
-    const cache_dir = try CacheDir.new();
-    const cache_entries = try cache_dir.get_caches();
-
-    var l1d_cache: ?CacheEntry = null;
-    var l1i_cache: ?CacheEntry = null;
-    var l2_cache: ?CacheEntry = null;
-    var l3_cache: ?CacheEntry = null;
-
-    for (cache_entries) |entry| {
-        const cache = entry orelse continue;
-        switch (cache.level) {
-            1 => {
-                switch (cache.cache_type) {
-                    .Data => l1d_cache = cache,
-                    .Instruction => l1i_cache = cache,
-                    .Unified => unreachable,
-                }
-            },
-            2 => l2_cache = cache,
-            3 => l3_cache = cache,
-            else => {},
-        }
-    }
+    const caches = try read_host_caches();
 
     builder.begin_node("cpus");
     defer builder.end_node();
@@ -325,7 +303,7 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
         builder.add_property([:0]const u8, "enable-method", "psci");
         builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
 
-        if (l1d_cache) |cache| {
+        if (caches.l1d_cache) |cache| {
             const cache_size: u32 = @intCast(cache.size);
             builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
 
@@ -335,7 +313,7 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
             const number_of_sets: u32 = @intCast(cache.number_of_sets);
             builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
         }
-        if (l1i_cache) |cache| {
+        if (caches.l1i_cache) |cache| {
             const cache_size: u32 = @intCast(cache.size);
             builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
 
@@ -346,13 +324,13 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
             builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
         }
 
-        if (l2_cache) |_| {
+        if (caches.l2_cache) |_| {
             const l2_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(i));
             builder.add_property(u32, "next-level-cache", l2_cache_phandle);
         }
     }
 
-    if (l2_cache) |cache| {
+    if (caches.l2_cache) |cache| {
         for (0..mpidrs.len) |i| {
             const l2_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(i));
 
@@ -372,14 +350,14 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
             if (cache.cache_type.cache_type_str()) |s| {
                 builder.add_property(void, s, {});
             }
-            if (l3_cache) |_| {
+            if (caches.l3_cache) |_| {
                 const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(mpidrs.len));
                 builder.add_property(u32, "next-level-cache", l3_cache_phandle);
             }
         }
     }
 
-    if (l3_cache) |cache| {
+    if (caches.l3_cache) |cache| {
         const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(mpidrs.len));
 
         builder.begin_node("l3-cache");
