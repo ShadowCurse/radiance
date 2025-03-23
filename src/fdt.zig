@@ -432,9 +432,11 @@ fn create_gic_fdt(builder: *FdtBuilder) void {
     builder.add_property(u32, "#size-cells", 2);
     builder.add_property(void, "ranges", {});
 
+    // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arm%2Cgic.yaml
+    // use number 8 as in the example
     const gic_intr = [_]u32{
         FdtBuilder.GIC_FDT_IRQ_TYPE_PPI,
-        Gicv2.ARCH_GIC_V2_MAINT_IRQ,
+        8,
         FdtBuilder.IRQ_TYPE_LEVEL_HI,
     };
 
