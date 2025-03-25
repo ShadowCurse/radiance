@@ -84,19 +84,15 @@ pub fn kick_threads() void {
 }
 
 pub fn new(
-    kvm: *const Kvm,
     vm: *const Vm,
     index: u64,
+    exit_event: EventFd,
+    vcpu_mmap_size: u32,
 ) Self {
     const fd = nix.assert(@src(), nix.ioctl, .{
         vm.fd,
         nix.KVM_CREATE_VCPU,
         index,
-    });
-    const vcpu_mmap_size = nix.assert(@src(), nix.ioctl, .{
-        kvm.fd,
-        nix.KVM_GET_VCPU_MMAP_SIZE,
-        @as(u32, 0),
     });
 
     const size: usize = @intCast(vcpu_mmap_size);
@@ -112,8 +108,6 @@ pub fn new(
         fd,
         @as(u64, 0),
     });
-
-    const exit_event = EventFd.new(0, nix.EFD_NONBLOCK);
 
     return Self{
         .fd = fd,
@@ -167,11 +161,11 @@ pub fn get_reg(self: *const Self, reg_id: u64) u64 {
 pub fn run(self: *Self, mmio: *Mmio) bool {
     const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
     if (r < 0) {
-        const e = std.posix.errno(r);
+        const e = nix.errno(r);
         switch (e) {
             .INTR => return false,
             else => {
-                log.err(@src(), "ioctl call error: {}:{}", .{ r, std.posix.errno(r) });
+                log.err(@src(), "ioctl call error: {}:{}", .{ r, nix.errno(r) });
                 self.exit_event.write(1);
             },
         }
