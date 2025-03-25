@@ -15,6 +15,7 @@ const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
 const EventLoop = @import("event_loop.zig");
+const EventFd = @import("eventfd.zig");
 const CmdLine = @import("cmdline.zig");
 const FDT = @import("fdt.zig");
 const Gicv2 = @import("gicv2.zig");
@@ -76,13 +77,14 @@ pub fn main() !void {
         .userspace_addr = @intFromPtr(memory.mem.ptr),
     });
 
-    const kvi = vm.get_preferred_target();
-
     // create vcpu
-    var vcpus = try permanent_alloc.alloc(Vcpu, config.machine.vcpus);
+    const kvi = vm.get_preferred_target();
+    const vcpu_exit_event = EventFd.new(0, nix.EFD_NONBLOCK);
+    const vcpu_mmap_size = kvm.vcpu_mmap_size();
 
+    var vcpus = try permanent_alloc.alloc(Vcpu, config.machine.vcpus);
     for (vcpus, 0..) |*vcpu, i| {
-        vcpu.* = Vcpu.new(&kvm, &vm, i);
+        vcpu.* = Vcpu.new(&vm, i, vcpu_exit_event, vcpu_mmap_size);
         vcpu.init(kvi);
     }
 
@@ -292,9 +294,7 @@ pub fn main() !void {
             net,
         );
     }
-    for (vcpus) |*vcpu| {
-        el.add_event(vcpu.exit_event.fd, @ptrCast(&EventLoop.stop), &el);
-    }
+    el.add_event(vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &el);
 
     if (config.gdb) |gdb_config| {
         // start gdb server
