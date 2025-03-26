@@ -1,4 +1,3 @@
-const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const Vm = @import("vm.zig");

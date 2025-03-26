@@ -11,7 +11,7 @@ pub const GuestMemory = struct {
     pub fn init(memory: *const Memory, kernel_size: u64) Self {
         const start = ((kernel_size / Memory.HOST_PAGE_SIZE) + 1) * Memory.HOST_PAGE_SIZE;
         return .{
-            .inner = std.heap.FixedBufferAllocator.init(memory.mem[start..]),
+            .inner = .init(memory.mem[start..]),
         };
     }
 
@@ -34,7 +34,7 @@ pub const PermanentMemory = struct {
         };
         const mem = nix.assert(@src(), nix.mmap, .{ null, size, prot, flags, -1, 0 });
         return .{
-            .inner = std.heap.FixedBufferAllocator.init(mem),
+            .inner = .init(mem),
         };
     }
 

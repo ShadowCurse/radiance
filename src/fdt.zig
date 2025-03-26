@@ -3,11 +3,9 @@ const Allocator = std.mem.Allocator;
 
 const _cache = @import("cache.zig");
 const read_host_caches = _cache.read_host_caches;
-const CacheEntry = _cache.CacheEntry;
 const Gicv2 = @import("gicv2.zig");
 const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
 const Memory = @import("memory.zig");
-
 const Pmem = @import("devices/pmem.zig");
 
 const FdtData = struct {
@@ -149,8 +147,8 @@ pub const FdtBuilder = struct {
 
         return Self{
             .data = data,
-            .strings_map = std.StringHashMap(usize).init(allocator),
-            .stored_strings = std.ArrayList(u8).init(allocator),
+            .strings_map = .init(allocator),
+            .stored_strings = .init(allocator),
         };
     }
 

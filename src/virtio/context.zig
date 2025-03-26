@@ -116,7 +116,7 @@ pub fn VirtioContext(
         ) Self {
             var queue_events: [NUM_QUEUES]EventFd = undefined;
             for (&queue_events) |*qe| {
-                qe.* = EventFd.new(0, nix.EFD_NONBLOCK);
+                qe.* = .new(0, nix.EFD_NONBLOCK);
             }
             var queues: [NUM_QUEUES]Queue = undefined;
             for (&queues, queue_sizes) |*q, size| {
@@ -125,7 +125,7 @@ pub fn VirtioContext(
             const self = Self{
                 .queues = queues,
                 .queue_events = queue_events,
-                .irq_evt = EventFd.new(0, nix.EFD_NONBLOCK),
+                .irq_evt = .new(0, nix.EFD_NONBLOCK),
                 .vm = vm,
                 .addr = addr,
             };
@@ -191,12 +191,12 @@ pub fn VirtioContext(
             const diff: DeviceStatus = @bitCast(~current_status & new_status);
             if ((new_status == 0) or
                 (diff.acknowledge and
-                current_status == 0) or
+                    current_status == 0) or
                 (diff.driver and
-                self.device_status.acknowledge) or
+                    self.device_status.acknowledge) or
                 (diff.features_ok and
-                self.device_status.acknowledge and
-                self.device_status.driver))
+                    self.device_status.acknowledge and
+                    self.device_status.driver))
             {
                 self.device_status = @bitCast(new_status);
             } else if ((diff.driver_ok and
@@ -226,11 +226,11 @@ pub fn VirtioContext(
                 0x10 => {
                     const features =
                         switch (self.device_features_word) {
-                        // Get the lower 32-bits of the features bitfield.
-                        0 => (self.avail_features & 0xFFFFFFFF),
-                        // Get the upper 32-bits of the features bitfield.
-                        1 => self.avail_features >> 32,
-                    };
+                            // Get the lower 32-bits of the features bitfield.
+                            0 => (self.avail_features & 0xFFFFFFFF),
+                            // Get the upper 32-bits of the features bitfield.
+                            1 => self.avail_features >> 32,
+                        };
                     const features_u32: u32 = @truncate(features);
                     data_u32.* = features_u32;
                 },

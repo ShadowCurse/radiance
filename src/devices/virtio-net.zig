@@ -4,15 +4,13 @@ const nix = @import("../nix.zig");
 const arch = @import("../arch.zig");
 
 const Vm = @import("../vm.zig");
-const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 const Memory = @import("../memory.zig");
-const VIRTIO = @import("../virtio/context.zig");
-const VirtioContext = VIRTIO.VirtioContext;
-const VirtioAction = VIRTIO.VirtioAction;
-const QUEUE = @import("../virtio/queue.zig");
-const Queue = QUEUE.Queue;
-const DescriptorChain = QUEUE.DescriptorChain;
+const _virtio = @import("../virtio/context.zig");
+const VirtioContext = _virtio.VirtioContext;
+const _queue = @import("../virtio/queue.zig");
+const Queue = _queue.Queue;
+const DescriptorChain = _queue.DescriptorChain;
 const IovRing = @import("../virtio/iov_ring.zig");
 const RingBuffer = @import("../ring_buffer.zig").RingBuffer;
 
@@ -140,8 +138,8 @@ pub const VirtioNet = struct {
 
     pub fn write(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.write(offset, data)) {
-            VirtioAction.NoAction => {},
-            VirtioAction.ActivateDevice => {
+            .NoAction => {},
+            .ActivateDevice => {
                 // Only VIRTIO_MMIO_INT_VRING notification type is supported.
                 if (self.virtio_context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
                     for (&self.virtio_context.queues) |*q| {
@@ -159,7 +157,7 @@ pub const VirtioNet = struct {
 
     pub fn read(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.read(offset, data)) {
-            VirtioAction.NoAction => {},
+            .NoAction => {},
             else => |action| {
                 log.err(@src(), "unhandled read virtio action: {}", .{action});
             },
@@ -251,8 +249,8 @@ const RxChains = struct {
 
     pub fn init() Self {
         return .{
-            .iovec_ring = IovRing.init(),
-            .chain_infos = RingBuffer(ChainInfo, IovRing.MAX_IOVECS).init(),
+            .iovec_ring = .init(),
+            .chain_infos = .init(),
         };
     }
 
