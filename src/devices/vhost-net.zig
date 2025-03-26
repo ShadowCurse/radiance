@@ -1,14 +1,11 @@
-const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
 const Vm = @import("../vm.zig");
-const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 const Memory = @import("../memory.zig");
-const VIRTIO = @import("../virtio/context.zig");
-const VirtioContext = VIRTIO.VirtioContext;
-const VirtioAction = VIRTIO.VirtioAction;
+const _virtio = @import("../virtio/context.zig");
+const VirtioContext = _virtio.VirtioContext;
 
 pub const TYPE_NET: u32 = 1;
 
@@ -249,8 +246,8 @@ pub const VhostNet = struct {
 
     pub fn write(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.write(offset, data)) {
-            VirtioAction.NoAction => {},
-            VirtioAction.ActivateDevice => self.activate(),
+            .NoAction => {},
+            .ActivateDevice => self.activate(),
             else => |action| {
                 log.err(@src(), "unhandled write virtio action: {}", .{action});
             },
@@ -259,7 +256,7 @@ pub const VhostNet = struct {
 
     pub fn read(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.read(offset, data)) {
-            VirtioAction.NoAction => {},
+            .NoAction => {},
             else => |action| {
                 log.err(@src(), "unhandled read virtio action: {}", .{action});
             },

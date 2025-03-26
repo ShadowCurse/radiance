@@ -1,12 +1,6 @@
-const std = @import("std");
 const log = @import("log.zig");
 const Memory = @import("memory.zig");
 const Gicv2 = @import("gicv2.zig");
-const Uart = @import("devices/uart.zig");
-const Rtc = @import("devices/rtc.zig");
-const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
-const VhostNet = @import("devices/vhost-net.zig").VhostNet;
-const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
 const VIRTIO_INTERRUPT_STATUS_OFFSET = @import("virtio/context.zig").INTERRUPT_STATUS_OFFSET;
 

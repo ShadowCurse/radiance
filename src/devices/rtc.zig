@@ -1,6 +1,5 @@
 const std = @import("std");
 const log = @import("../log.zig");
-const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 
 // PL031 Real Time Clock (RTC)
 // https://developer.arm.com/documentation/ddi0224/c/Programmers-model/Summary-of-RTC-registers

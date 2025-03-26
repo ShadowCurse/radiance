@@ -9,9 +9,8 @@ const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 const Memory = @import("../memory.zig");
 const HOST_PAGE_SIZE = Memory.HOST_PAGE_SIZE;
 
-const VIRTIO = @import("../virtio/context.zig");
-const VirtioContext = VIRTIO.VirtioContext;
-const VirtioAction = VIRTIO.VirtioAction;
+const _virtio = @import("../virtio/context.zig");
+const VirtioContext = _virtio.VirtioContext;
 
 pub const SECTOR_SHIFT: u8 = 9;
 pub const TYPE_BLOCK: u32 = 2;
@@ -114,8 +113,8 @@ pub const VirtioBlock = struct {
 
     pub fn write(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.write(offset, data)) {
-            VirtioAction.NoAction => {},
-            VirtioAction.ActivateDevice => {
+            .NoAction => {},
+            .ActivateDevice => {
                 self.virtio_context.set_memory();
 
                 // Only VIRTIO_MMIO_INT_VRING notification type is supported.
@@ -133,7 +132,7 @@ pub const VirtioBlock = struct {
 
     pub fn read(self: *Self, offset: u64, data: []u8) void {
         switch (self.virtio_context.read(offset, data)) {
-            VirtioAction.NoAction => {},
+            .NoAction => {},
             else => |action| {
                 log.err(@src(), "unhandled read virtio action: {}", .{action});
             },

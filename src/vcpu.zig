@@ -36,14 +36,6 @@ threadlocal var self_ref: ?*Self = null;
 
 const Self = @This();
 
-pub const VcpuError = error{
-    New,
-    Init,
-    SetReg,
-    GetReg,
-    Run,
-};
-
 pub fn core_reg_id(comptime name: []const u8) u64 {
     const offset = @offsetOf(nix.kvm_regs, "regs") + @offsetOf(nix.user_pt_regs, name);
     return nix.KVM_REG_ARM64 |

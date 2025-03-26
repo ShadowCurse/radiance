@@ -1,6 +1,5 @@
 const std = @import("std");
 const nix = @import("../nix.zig");
-const log = @import("../log.zig");
 
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
