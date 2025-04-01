@@ -101,7 +101,6 @@ pub fn run(self: *Self) void {
         );
         log.assert(@src(), 0 < nfds, "epoll_wait returned {}", .{nfds});
 
-        log.debug(@src(), "events: {}", .{nfds});
         const n: usize = @intCast(nfds);
         for (0..n) |i| {
             const event = &self.events[i];
