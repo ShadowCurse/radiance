@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const log = @import("log.zig");
+
 const _cache = @import("cache.zig");
 const read_host_caches = _cache.read_host_caches;
 const Gicv2 = @import("gicv2.zig");
@@ -157,17 +159,25 @@ pub const FdtBuilder = struct {
     }
 
     pub fn begin_node(self: *Self, name: [:0]const u8) void {
+        log.debug(@src(), "FDT: start node: {s}", .{name});
+
         self.data.append(u32, FDT_BEGIN_NODE);
         self.data.append([:0]const u8, name);
         self.data.align_self(4);
     }
 
     pub fn end_node(self: *Self) void {
+        log.debug(@src(), "FDT: end node", .{});
         self.data.append(u32, FDT_END_NODE);
     }
 
     /// Expects integer types to be in big endian format. (use @byteSwap(..) before passing integers)
     pub fn add_property(self: *Self, comptime t: type, name: [:0]const u8, item: t) void {
+        if (t == [:0]const u8)
+            log.debug(@src(), "FDT: add property: name: {s}, item: {s}", .{ name, item })
+        else
+            log.debug(@src(), "FDT: add property: name: {s}, item: {any}", .{ name, item });
+
         const name_offset = self.string_offset(name);
         self.data.append(u32, FDT_PROP);
         const bytes: usize = switch (t) {
@@ -236,7 +246,7 @@ pub fn create_fdt(
     rtc_device_info: MmioDeviceInfo,
     virtio_devices_info: []const MmioDeviceInfo,
     pmem_info: []const Pmem.Info,
-) !u64 {
+) u64 {
     // https://mjmwired.net/kernel/Documentation/devicetree/booting-without-of.txt
     const ADDRESS_CELLS: u32 = 0x2;
     const SIZE_CELLS: u32 = 0x2;
@@ -251,7 +261,7 @@ pub fn create_fdt(
     fdt_builder.add_property(u32, "#size-cells", SIZE_CELLS);
     fdt_builder.add_property(u32, "interrupt-parent", FdtBuilder.GIC_PHANDLE);
 
-    try create_cpu_fdt(&fdt_builder, mpidrs);
+    create_cpu_fdt(&fdt_builder, mpidrs);
     create_memory_fdt(&fdt_builder, memory);
     create_cmdline_fdt(&fdt_builder, cmdline);
     create_gic_fdt(&fdt_builder);
@@ -277,12 +287,12 @@ pub fn create_fdt(
     return FdtBuilder.fdt_addr(memory.last_addr());
 }
 
-fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
+fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml
     // In order to not overlap with other phandles start from a big offset.
     const LAST_CACHE_PHANDLE: u32 = 4000;
 
-    const caches = try read_host_caches();
+    const caches = read_host_caches();
 
     builder.begin_node("cpus");
     defer builder.end_node();
@@ -301,25 +311,25 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
         builder.add_property([:0]const u8, "enable-method", "psci");
         builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
 
-        if (caches.l1d_cache) |cache| {
-            const cache_size: u32 = @intCast(cache.size);
-            builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+        if (caches.l1d_cache) |l1d| {
+            const cache_size: u32 = @intCast(l1d.size);
+            builder.add_property(u32, l1d.cache_type.cache_size_str(), cache_size);
 
-            const line_size: u32 = @intCast(cache.line_size);
-            builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+            const line_size: u32 = @intCast(l1d.line_size);
+            builder.add_property(u32, l1d.cache_type.cache_line_size_str(), line_size);
 
-            const number_of_sets: u32 = @intCast(cache.number_of_sets);
-            builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
+            const number_of_sets: u32 = @intCast(l1d.number_of_sets);
+            builder.add_property(u32, l1d.cache_type.cache_sets_str(), number_of_sets);
         }
-        if (caches.l1i_cache) |cache| {
-            const cache_size: u32 = @intCast(cache.size);
-            builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
+        if (caches.l1i_cache) |l1i| {
+            const cache_size: u32 = @intCast(l1i.size);
+            builder.add_property(u32, l1i.cache_type.cache_size_str(), cache_size);
 
-            const line_size: u32 = @intCast(cache.line_size);
-            builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
+            const line_size: u32 = @intCast(l1i.line_size);
+            builder.add_property(u32, l1i.cache_type.cache_line_size_str(), line_size);
 
-            const number_of_sets: u32 = @intCast(cache.number_of_sets);
-            builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
+            const number_of_sets: u32 = @intCast(l1i.number_of_sets);
+            builder.add_property(u32, l1i.cache_type.cache_sets_str(), number_of_sets);
         }
 
         if (caches.l2_cache) |_| {
@@ -328,7 +338,7 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
         }
     }
 
-    if (caches.l2_cache) |cache| {
+    if (caches.l2_cache) |l2| {
         for (0..mpidrs.len) |i| {
             const l2_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(i));
 
@@ -338,14 +348,14 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
 
             builder.add_property(u32, "phandle", l2_cache_phandle);
             builder.add_property([:0]const u8, "compatible", "cache");
-            builder.add_property(u32, "cache-level", cache.level);
-            const cache_size: u32 = @intCast(cache.size);
-            builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
-            const line_size: u32 = @intCast(cache.line_size);
-            builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
-            const number_of_sets: u32 = @intCast(cache.number_of_sets);
-            builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
-            if (cache.cache_type.cache_type_str()) |s| {
+            builder.add_property(u32, "cache-level", l2.level);
+            const cache_size: u32 = @intCast(l2.size);
+            builder.add_property(u32, l2.cache_type.cache_size_str(), cache_size);
+            const line_size: u32 = @intCast(l2.line_size);
+            builder.add_property(u32, l2.cache_type.cache_line_size_str(), line_size);
+            const number_of_sets: u32 = @intCast(l2.number_of_sets);
+            builder.add_property(u32, l2.cache_type.cache_sets_str(), number_of_sets);
+            if (l2.cache_type.cache_type_str()) |s| {
                 builder.add_property(void, s, {});
             }
             if (caches.l3_cache) |_| {
@@ -353,25 +363,25 @@ fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) !void {
                 builder.add_property(u32, "next-level-cache", l3_cache_phandle);
             }
         }
-    }
 
-    if (caches.l3_cache) |cache| {
-        const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(mpidrs.len));
+        if (caches.l3_cache) |l3| {
+            const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(mpidrs.len));
 
-        builder.begin_node("l3-cache");
-        defer builder.end_node();
+            builder.begin_node("l3-cache");
+            defer builder.end_node();
 
-        builder.add_property(u32, "phandle", l3_cache_phandle);
-        builder.add_property([:0]const u8, "compatible", "cache");
-        builder.add_property(u32, "cache-level", cache.level);
-        const cache_size: u32 = @intCast(cache.size);
-        builder.add_property(u32, cache.cache_type.cache_size_str(), cache_size);
-        const line_size: u32 = @intCast(cache.line_size);
-        builder.add_property(u32, cache.cache_type.cache_line_size_str(), line_size);
-        const number_of_sets: u32 = @intCast(cache.number_of_sets);
-        builder.add_property(u32, cache.cache_type.cache_sets_str(), number_of_sets);
-        if (cache.cache_type.cache_type_str()) |s| {
-            builder.add_property(void, s, {});
+            builder.add_property(u32, "phandle", l3_cache_phandle);
+            builder.add_property([:0]const u8, "compatible", "cache");
+            builder.add_property(u32, "cache-level", l3.level);
+            const cache_size: u32 = @intCast(l3.size);
+            builder.add_property(u32, l3.cache_type.cache_size_str(), cache_size);
+            const line_size: u32 = @intCast(l3.line_size);
+            builder.add_property(u32, l3.cache_type.cache_line_size_str(), line_size);
+            const number_of_sets: u32 = @intCast(l3.number_of_sets);
+            builder.add_property(u32, l3.cache_type.cache_sets_str(), number_of_sets);
+            if (l3.cache_type.cache_type_str()) |s| {
+                builder.add_property(void, s, {});
+            }
         }
     }
 }

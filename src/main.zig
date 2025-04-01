@@ -228,7 +228,7 @@ pub fn main() !void {
         mpidr.* = vcpu.get_reg(Vcpu.MPIDR_EL1);
     }
 
-    const fdt_addr = try FDT.create_fdt(
+    const fdt_addr = FDT.create_fdt(
         tmp_alloc,
         &memory,
         mpidrs,
