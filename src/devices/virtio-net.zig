@@ -38,13 +38,14 @@ pub const VirtioNet = struct {
     const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
 
     pub fn new(
+        comptime System: type,
         vm: *Vm,
         tap_name: []const u8,
         mac: ?[6]u8,
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
     ) Self {
-        const tun = nix.assert(@src(), nix.open, .{
+        const tun = nix.assert(@src(), System.open, .{
             "/dev/net/tun",
             .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
             0,
@@ -59,19 +60,20 @@ pub const VirtioNet = struct {
             .{ tap_name, @as(u32, nix.IFNAMESIZE) },
         );
         @memcpy(ifreq.name[0..tap_name.len], tap_name);
-        _ = nix.assert(@src(), nix.ioctl, .{
+        _ = nix.assert(@src(), System.ioctl, .{
             tun,
             nix.TUNSETIFF,
             @intFromPtr(&ifreq),
         });
         const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
-        _ = nix.assert(@src(), nix.ioctl, .{
+        _ = nix.assert(@src(), System.ioctl, .{
             tun,
             nix.TUNSETVNETHDRSZ,
             @intFromPtr(&size),
         });
 
         var virtio_context = VIRTIO_CONTEXT.new(
+            System,
             vm,
             QueueSizes,
             mmio_info.irq,
@@ -94,7 +96,7 @@ pub const VirtioNet = struct {
             virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
         }
 
-        const rx_chains = RxChains.init();
+        const rx_chains = RxChains.init(System);
         const tx_chain = TxChain.init();
 
         return Self{
@@ -106,8 +108,8 @@ pub const VirtioNet = struct {
         };
     }
 
-    pub fn activate(self: *Self) void {
-        self.virtio_context.set_memory();
+    pub fn activate(self: *Self, comptime System: type) void {
+        self.virtio_context.set_memory(System);
 
         // TUN_F_CSUM - L4 packet checksum offload
         // TUN_F_TSO4 - TCP Segmentation Offload - TSO for IPv4 packets
@@ -129,14 +131,17 @@ pub const VirtioNet = struct {
         if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
             tun_flags |= nix.TUN_F_TSO6;
         }
-        _ = nix.assert(@src(), nix.ioctl, .{
+        _ = nix.assert(@src(), System.ioctl, .{
             self.tun,
             nix.TUNSETOFFLOAD,
             tun_flags,
         });
     }
 
-    pub fn write(self: *Self, offset: u64, data: []u8) void {
+    pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+        self.write(nix.System, offset, data);
+    }
+    pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
         switch (self.virtio_context.write(offset, data)) {
             .NoAction => {},
             .ActivateDevice => {
@@ -146,7 +151,7 @@ pub const VirtioNet = struct {
                         q.notification_suppression = true;
                     }
                 }
-                self.activate();
+                self.activate(System);
                 self.activated = true;
             },
             else => |action| {
@@ -164,29 +169,38 @@ pub const VirtioNet = struct {
         }
     }
 
-    pub fn process_rx(self: *Self) void {
-        _ = self.virtio_context.queue_events[RX_INDEX].read();
-        self.process_tap();
+    pub fn event_process_rx(self: *Self) void {
+        self.process_rx(nix.System);
+    }
+    pub fn process_rx(self: *Self, comptime System: type) void {
+        _ = self.virtio_context.queue_events[RX_INDEX].read(System);
+        self.process_tap(System);
     }
 
-    pub fn process_tx(self: *Self) void {
-        _ = self.virtio_context.queue_events[TX_INDEX].read();
+    pub fn event_process_tx(self: *Self) void {
+        self.process_tx(nix.System);
+    }
+    pub fn process_tx(self: *Self, comptime System: type) void {
+        _ = self.virtio_context.queue_events[TX_INDEX].read(System);
         const queue = &self.virtio_context.queues[TX_INDEX];
 
         while (queue.pop_desc_chain(self.memory)) |dc| {
             self.tx_chain.add_chain(self.memory, dc);
 
             const iov_slice = self.tx_chain.slice();
-            _ = nix.assert(@src(), nix.writev, .{ self.tun, iov_slice });
+            _ = nix.assert(@src(), System.writev, .{ self.tun, iov_slice });
             self.tx_chain.finish_used(self.memory, queue);
         }
 
         if (queue.send_notification(self.memory)) {
-            self.virtio_context.irq_evt.write(1);
+            self.virtio_context.irq_evt.write(System, 1);
         }
     }
 
-    pub fn process_tap(self: *Self) void {
+    pub fn event_process_tap(self: *Self) void {
+        self.process_tap(nix.System);
+    }
+    pub fn process_tap(self: *Self, comptime System: type) void {
         if (!self.activated) {
             return;
         }
@@ -217,7 +231,7 @@ pub const VirtioNet = struct {
             else
                 self.rx_chains.first_chain_slice();
 
-            const bytes = nix.readv(self.tun, iov_slice) catch |e| {
+            const bytes = System.readv(self.tun, iov_slice) catch |e| {
                 log.assert(
                     @src(),
                     e == nix.ReadError.WouldBlock,
@@ -231,7 +245,7 @@ pub const VirtioNet = struct {
         }
 
         if (queue.send_notification(self.memory)) {
-            self.virtio_context.irq_evt.write(1);
+            self.virtio_context.irq_evt.write(System, 1);
         }
     }
 };
@@ -247,10 +261,10 @@ const RxChains = struct {
     iovec_ring: IovRing,
     chain_infos: RingBuffer(ChainInfo, IovRing.MAX_IOVECS),
 
-    pub fn init() Self {
+    pub fn init(comptime System: type) Self {
         return .{
-            .iovec_ring = .init(),
-            .chain_infos = .init(),
+            .iovec_ring = .init(System),
+            .chain_infos = .init(System),
         };
     }
 

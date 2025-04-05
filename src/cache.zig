@@ -1,6 +1,5 @@
 const std = @import("std");
 const log = @import("log.zig");
-const nix = @import("nix.zig");
 
 pub const CacheType = enum(u8) {
     Instruction,
@@ -64,18 +63,18 @@ pub const CacheEntry = struct {
 
     const Self = @This();
 
-    pub fn new(comptime index: usize) !Self {
+    pub fn new(comptime System: type, comptime index: usize) !Self {
         var read_buff: [30]u8 = undefined;
 
         // removing 1 from read bytes because last byte is `10` ASCII and
         // it breaks `parseInt`
-        const level_bytes = try Self.read_info(index, "level", &read_buff) - 1;
+        const level_bytes = try Self.read_info(System, index, "level", &read_buff) - 1;
         const level = try std.fmt.parseInt(u8, read_buff[0..level_bytes], 10);
 
-        const cache_type_bytes = try Self.read_info(index, "type", &read_buff) - 1;
+        const cache_type_bytes = try Self.read_info(System, index, "type", &read_buff) - 1;
         const cache_type = CacheType.from_str(read_buff[0..cache_type_bytes]);
 
-        const scm_bytes = try Self.read_info(index, "shared_cpu_map", &read_buff) - 1;
+        const scm_bytes = try Self.read_info(System, index, "shared_cpu_map", &read_buff) - 1;
         var scm: u16 = 0;
         var scm_iter = std.mem.splitScalar(u8, read_buff[0..scm_bytes], ',');
         while (scm_iter.next()) |slice| {
@@ -83,13 +82,13 @@ pub const CacheEntry = struct {
             scm += @popCount(v);
         }
 
-        const cls_bytes = try Self.read_info(index, "coherency_line_size", &read_buff) - 1;
+        const cls_bytes = try Self.read_info(System, index, "coherency_line_size", &read_buff) - 1;
         const cls = try std.fmt.parseInt(u16, read_buff[0..cls_bytes], 10);
 
-        const size_bytes = try Self.read_info(index, "size", &read_buff) - 1;
+        const size_bytes = try Self.read_info(System, index, "size", &read_buff) - 1;
         const size = try parse_size(read_buff[0..size_bytes]);
 
-        const nos_bytes = try Self.read_info(index, "number_of_sets", &read_buff) - 1;
+        const nos_bytes = try Self.read_info(System, index, "number_of_sets", &read_buff) - 1;
         const nos = try std.fmt.parseInt(u16, read_buff[0..nos_bytes], 10);
 
         return Self{
@@ -111,6 +110,7 @@ pub const CacheEntry = struct {
     }
 
     fn read_info(
+        comptime System: type,
         comptime index: u32,
         comptime name: []const u8,
         read_buff: []u8,
@@ -121,9 +121,9 @@ pub const CacheEntry = struct {
                 .{ index, name },
             );
         log.debug(@src(), "reading cache path: {s}", .{path});
-        const fd = try nix.open(path, .{ .CLOEXEC = true, .ACCMODE = .RDONLY }, 0);
-        defer nix.close(fd);
-        return try nix.read(fd, read_buff);
+        const fd = try System.open(path, .{ .CLOEXEC = true, .ACCMODE = .RDONLY }, 0);
+        defer System.close(fd);
+        return try System.read(fd, read_buff);
     }
 };
 
@@ -138,10 +138,10 @@ pub const Caches = struct {
     l2_cache: ?CacheEntry = null,
     l3_cache: ?CacheEntry = null,
 };
-pub fn read_host_caches() Caches {
+pub fn read_host_caches(comptime System: type) Caches {
     var caches: Caches = .{};
     inline for (0..MAX_CACHE_INDEXES) |i| {
-        if (CacheEntry.new(i)) |entry| {
+        if (CacheEntry.new(System, i)) |entry| {
             switch (entry.level) {
                 1 => {
                     switch (entry.cache_type) {

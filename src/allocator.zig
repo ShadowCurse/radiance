@@ -25,14 +25,14 @@ pub const PermanentMemory = struct {
 
     const Self = @This();
 
-    pub fn init(size: usize) Self {
+    pub fn init(comptime System: type, size: usize) Self {
         const prot = nix.PROT.READ | nix.PROT.WRITE;
         const flags = nix.MAP{
             .TYPE = .PRIVATE,
             .ANONYMOUS = true,
             .NORESERVE = true,
         };
-        const mem = nix.assert(@src(), nix.mmap, .{ null, size, prot, flags, -1, 0 });
+        const mem = nix.assert(@src(), System.mmap, .{ null, size, prot, flags, -1, 0 });
         return .{
             .inner = .init(mem),
         };

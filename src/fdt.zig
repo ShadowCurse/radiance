@@ -238,6 +238,7 @@ pub const FdtBuilder = struct {
 };
 
 pub fn create_fdt(
+    comptime System: type,
     allocator: Allocator,
     memory: *const Memory,
     mpidrs: []const u64,
@@ -261,7 +262,7 @@ pub fn create_fdt(
     fdt_builder.add_property(u32, "#size-cells", SIZE_CELLS);
     fdt_builder.add_property(u32, "interrupt-parent", FdtBuilder.GIC_PHANDLE);
 
-    create_cpu_fdt(&fdt_builder, mpidrs);
+    create_cpu_fdt(System, &fdt_builder, mpidrs);
     create_memory_fdt(&fdt_builder, memory);
     create_cmdline_fdt(&fdt_builder, cmdline);
     create_gic_fdt(&fdt_builder);
@@ -287,12 +288,12 @@ pub fn create_fdt(
     return FdtBuilder.fdt_addr(memory.last_addr());
 }
 
-fn create_cpu_fdt(builder: *FdtBuilder, mpidrs: []const u64) void {
+fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, mpidrs: []const u64) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml
     // In order to not overlap with other phandles start from a big offset.
     const LAST_CACHE_PHANDLE: u32 = 4000;
 
-    const caches = read_host_caches();
+    const caches = read_host_caches(System);
 
     builder.begin_node("cpus");
     defer builder.end_node();

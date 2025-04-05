@@ -1,6 +1,54 @@
 const std = @import("std");
 const log = @import("log.zig");
 
+pub const System = struct {
+    pub const epoll_ctl = std.posix.epoll_ctl;
+    pub const epoll_wait = std.posix.epoll_wait;
+    pub const epoll_create1 = std.posix.epoll_create1;
+    pub const memfd_create = std.posix.memfd_create;
+    pub const ftruncate = std.posix.ftruncate;
+    pub const eventfd = std.posix.eventfd;
+    pub const getpid = std.os.linux.getpid;
+    pub const kill = std.os.linux.kill;
+    pub const tcgetattr = std.os.linux.tcgetattr;
+    pub const tcsetattr = std.os.linux.tcsetattr;
+    pub const mmap = std.posix.mmap;
+    pub const munmap = std.posix.munmap;
+    pub const sigaction = std.os.linux.sigaction;
+    pub const open = std.posix.open;
+    pub const close = std.posix.close;
+    pub const read = std.posix.read;
+    pub const readv = std.posix.readv;
+    pub const write = std.posix.write;
+    pub const writev = std.posix.writev;
+    pub const accept = std.posix.accept;
+    pub const ioctl = std.os.linux.ioctl;
+    pub const msync = std.posix.msync;
+
+    pub fn statx(fd: fd_t) !Statx {
+        var stx = std.mem.zeroes(Statx);
+        const rcx = std.os.linux.statx(
+            fd,
+            "\x00",
+            std.os.linux.AT.EMPTY_PATH,
+            std.os.linux.STATX_TYPE |
+                std.os.linux.STATX_MODE |
+                std.os.linux.STATX_ATIME |
+                std.os.linux.STATX_MTIME |
+                std.os.linux.STATX_BTIME,
+            &stx,
+        );
+
+        switch (errno(rcx)) {
+            .SUCCESS => {},
+            else => |e| return std.posix.unexpectedErrno(e),
+        }
+        return stx;
+    }
+
+    pub const spawn_thread = std.Thread.spawn;
+};
+
 pub const KVMIO = 0xAE;
 pub const _IOC_NRBITS = 8;
 pub const _IOC_TYPEBITS = 8;
@@ -279,9 +327,6 @@ pub const virtio_net_hdr_v1 = extern struct {
 pub const EPOLLIN = 0x001;
 pub const EPOLL_CTL_ADD = 1;
 pub const EPOLL_CTL_DEL = 2;
-pub const epoll_ctl = std.posix.epoll_ctl;
-pub const epoll_wait = std.posix.epoll_wait;
-pub const epoll_create1 = std.posix.epoll_create1;
 pub const epoll_event = std.os.linux.epoll_event;
 
 pub const VRING_DESC_F_NEXT = 1;
@@ -356,10 +401,6 @@ pub const vhost_vring_addr = extern struct {
 };
 
 pub const EFD_NONBLOCK = 0o4000;
-pub const eventfd = std.posix.eventfd;
-
-pub const getpid = std.os.linux.getpid;
-pub const kill = std.os.linux.kill;
 pub const SIGUSR1 = 10;
 
 pub const PROT = std.os.linux.PROT;
@@ -367,13 +408,8 @@ pub const MAP = std.os.linux.MAP;
 pub const MAP_TYPE = std.os.linux.MAP_TYPE;
 pub const Sigaction = std.os.linux.Sigaction;
 pub const sigset_t = std.os.linux.sigset_t;
-pub const tcgetattr = std.os.linux.tcgetattr;
-pub const tcsetattr = std.os.linux.tcsetattr;
 pub const TCSA = std.os.linux.TCSA;
 pub const termios = std.posix.termios;
-pub const mmap = std.posix.mmap;
-pub const munmap = std.posix.munmap;
-pub const sigaction = std.os.linux.sigaction;
 pub const fd_t = std.posix.fd_t;
 pub const socklen_t = std.posix.socklen_t;
 pub const STDIN_FILENO = std.posix.STDIN_FILENO;
@@ -382,42 +418,10 @@ pub const SOCK = std.posix.SOCK;
 pub const ReadError = std.posix.ReadError;
 pub const iovec = std.posix.iovec;
 pub const iovec_const = std.posix.iovec_const;
-pub const open = std.posix.open;
-pub const close = std.posix.close;
-pub const read = std.posix.read;
-pub const readv = std.posix.readv;
-pub const write = std.posix.write;
-pub const writev = std.posix.writev;
-pub const accept = std.posix.accept;
-pub const errno = std.posix.errno;
-
-pub const ioctl = std.os.linux.ioctl;
 
 pub const MSF = std.posix.MSF;
-pub const msync = std.posix.msync;
 
 pub const Statx = std.os.linux.Statx;
-pub fn statx(fd: fd_t) !Statx {
-    var stx = std.mem.zeroes(Statx);
-    const rcx = std.os.linux.statx(
-        fd,
-        "\x00",
-        std.os.linux.AT.EMPTY_PATH,
-        std.os.linux.STATX_TYPE |
-            std.os.linux.STATX_MODE |
-            std.os.linux.STATX_ATIME |
-            std.os.linux.STATX_MTIME |
-            std.os.linux.STATX_BTIME,
-        &stx,
-    );
-
-    switch (errno(rcx)) {
-        .SUCCESS => {},
-        else => |e| return std.posix.unexpectedErrno(e),
-    }
-    return stx;
-}
-
 pub const FD_CLOEXEC = std.posix.FD_CLOEXEC;
 pub const memfd_create = std.posix.memfd_create;
 pub const ftruncate = std.posix.ftruncate;
@@ -446,6 +450,7 @@ fn clean_return_type(
     );
 }
 
+const errno = std.posix.errno;
 pub inline fn assert(
     comptime src: std.builtin.SourceLocation,
     comptime function: anytype,
@@ -463,9 +468,9 @@ pub inline fn assert(
         },
         .int => {
             const r = @call(.always_inline, function, args);
-            log.assert(src, std.posix.errno(r) == .SUCCESS, "{}({})", .{
+            log.assert(src, errno(r) == .SUCCESS, "{}({})", .{
                 r,
-                std.posix.errno(r),
+                errno(r),
             });
             return @intCast(r);
         },

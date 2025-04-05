@@ -9,8 +9,8 @@ pub fn RingBuffer(comptime T: type, comptime SIZE: u32) type {
         start: u32,
         len: u32,
 
-        pub fn init() Self {
-            const mem = nix.assert(@src(), nix.mmap, .{
+        pub fn init(comptime System: type) Self {
+            const mem = nix.assert(@src(), System.mmap, .{
                 null,
                 @sizeOf(T) * SIZE,
                 nix.PROT.READ | nix.PROT.WRITE,
@@ -62,8 +62,28 @@ pub fn RingBuffer(comptime T: type, comptime SIZE: u32) type {
     };
 }
 
+const TestSystem = struct {
+    const memory = @import("memory.zig");
+
+    var M align(memory.HOST_PAGE_SIZE) = [_]u8{0} ** 4096;
+    pub fn mmap(
+        ptr: ?[*]align(memory.HOST_PAGE_SIZE) u8,
+        length: usize,
+        prot: u32,
+        flags: nix.MAP,
+        fd: nix.fd_t,
+        offset: u64,
+    ) ![]align(8) u8 {
+        _ = ptr;
+        _ = prot;
+        _ = flags;
+        _ = fd;
+        _ = offset;
+        return M[0..length];
+    }
+};
 test "test_ring_buffer_push" {
-    var rb = RingBuffer(usize, 256).init();
+    var rb = RingBuffer(usize, 256).init(TestSystem);
 
     for (0..256) |i| {
         rb.push_back(i);
@@ -73,7 +93,7 @@ test "test_ring_buffer_push" {
 }
 
 test "test_ring_buffer_pop_front" {
-    var rb = RingBuffer(usize, 256).init();
+    var rb = RingBuffer(usize, 256).init(TestSystem);
 
     for (0..256) |i| {
         rb.push_back(i);

@@ -38,22 +38,23 @@ pub const VirtioBlock = struct {
     const VIRTIO_CONTEXT = VirtioContext(QUEUE_SIZES.len, TYPE_BLOCK, Config);
 
     pub fn new(
+        comptime System: type,
         vm: *Vm,
         file_path: []const u8,
         read_only: bool,
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
     ) Self {
-        const fd = nix.assert(@src(), nix.open, .{
+        const fd = nix.assert(@src(), System.open, .{
             file_path,
             .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
             0,
         });
-        defer nix.close(fd);
+        defer System.close(fd);
 
-        const statx = nix.assert(@src(), nix.statx, .{fd});
+        const statx = nix.assert(@src(), System.statx, .{fd});
 
-        const file_mem = nix.assert(@src(), nix.mmap, .{
+        const file_mem = nix.assert(@src(), System.mmap, .{
             null,
             statx.size,
             if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
@@ -80,6 +81,7 @@ pub const VirtioBlock = struct {
         };
 
         var virtio_context = VIRTIO_CONTEXT.new(
+            System,
             vm,
             QUEUE_SIZES,
             mmio_info.irq,
@@ -111,11 +113,14 @@ pub const VirtioBlock = struct {
         }
     }
 
-    pub fn write(self: *Self, offset: u64, data: []u8) void {
+    pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+        self.write(nix.System, offset, data);
+    }
+    pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
         switch (self.virtio_context.write(offset, data)) {
             .NoAction => {},
             .ActivateDevice => {
-                self.virtio_context.set_memory();
+                self.virtio_context.set_memory(System);
 
                 // Only VIRTIO_MMIO_INT_VRING notification type is supported.
                 if (self.virtio_context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
@@ -139,8 +144,11 @@ pub const VirtioBlock = struct {
         }
     }
 
-    pub fn process_queue(self: *Self) void {
-        _ = self.virtio_context.queue_events[self.virtio_context.selected_queue].read();
+    pub fn event_process_queue(self: *Self) void {
+        self.process_queue(nix.System);
+    }
+    pub fn process_queue(self: *Self, comptime System: type) void {
+        _ = self.virtio_context.queue_events[self.virtio_context.selected_queue].read(System);
 
         var segments: [MAX_SEGMENTS][]volatile u8 = undefined;
         var segments_n: u32 = 0;
@@ -175,7 +183,7 @@ pub const VirtioBlock = struct {
 
             if (segments_n == 0) {
                 if (!self.read_only) {
-                    nix.assert(@src(), nix.msync, .{ self.file_mem, nix.MSF.ASYNC });
+                    nix.assert(@src(), System.msync, .{ self.file_mem, nix.MSF.ASYNC });
                 }
 
                 const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
@@ -196,7 +204,7 @@ pub const VirtioBlock = struct {
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
                         // TODO maybe add a msync with SYNC call at the end of VM lifetime
-                        nix.assert(@src(), nix.msync, .{ self.file_mem, nix.MSF.ASYNC });
+                        nix.assert(@src(), System.msync, .{ self.file_mem, nix.MSF.ASYNC });
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
                         log.assert(
@@ -222,7 +230,7 @@ pub const VirtioBlock = struct {
         if (self.virtio_context.queues[self.virtio_context.selected_queue]
             .send_notification(self.memory))
         {
-            self.virtio_context.irq_evt.write(1);
+            self.virtio_context.irq_evt.write(System, 1);
         }
     }
 };

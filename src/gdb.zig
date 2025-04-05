@@ -92,7 +92,7 @@ const Interrupt = struct {
         // for (gdb.vcpu_threads) |*t| {
         //     Vcpu.kick_thread(t, gdb.vcpu_exit_signal);
         // }
-        Vcpu.kick_threads();
+        // Vcpu.kick_threads();
 
         const msg = "S05";
         return fmt_response(buffer, msg);
@@ -559,7 +559,9 @@ pub const GdbServer = struct {
 
     const Self = @This();
 
+    // TODO move Server and Connectino to use System
     pub fn init(
+        comptime System: type,
         socket_path: []const u8,
         vcpus: []Vcpu,
         vcpu_threads: []std.Thread,
@@ -575,7 +577,7 @@ pub const GdbServer = struct {
 
         var accepted_addr: std.net.Address = undefined;
         var addr_len: nix.socklen_t = @sizeOf(std.net.Address);
-        const fd = try nix.accept(
+        const fd = try System.accept(
             server.stream.handle,
             &accepted_addr.any,
             &addr_len,
