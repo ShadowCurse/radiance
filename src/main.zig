@@ -268,18 +268,6 @@ pub fn main() !void {
     // free config memory
     config_parse_result.deinit(nix.System);
 
-    log.debug(@src(), "starting vcpu threads", .{});
-    // TODO this does linux futex syscalls. Maybe can be replaced
-    // by simple atomic value?
-    var barrier: std.Thread.ResetEvent = .{};
-    for (vcpu_threads, vcpus) |*t, *vcpu| {
-        t.* = try nix.System.spawn_thread(
-            .{},
-            Vcpu.run_threaded,
-            .{ vcpu, nix.System, &barrier, &mmio, &start_time },
-        );
-    }
-
     // create event loop
     var el = EventLoop.new(nix.System);
     if (config.uart.enabled) el.add_event(
@@ -317,6 +305,18 @@ pub fn main() !void {
         );
     }
     el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &el);
+
+    log.debug(@src(), "starting vcpu threads", .{});
+    // TODO this does linux futex syscalls. Maybe can be replaced
+    // by simple atomic value?
+    var barrier: std.Thread.ResetEvent = .{};
+    for (vcpu_threads, vcpus) |*t, *vcpu| {
+        t.* = try nix.System.spawn_thread(
+            .{},
+            Vcpu.run_threaded,
+            .{ vcpu, nix.System, &barrier, &mmio, &start_time },
+        );
+    }
 
     if (config.gdb) |gdb_config| {
         // start gdb server
