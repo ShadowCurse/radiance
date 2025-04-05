@@ -32,14 +32,14 @@ mem: []align(HOST_PAGE_SIZE) u8,
 
 const Self = @This();
 
-pub fn init(size: usize) Self {
+pub fn init(comptime System: type, size: usize) Self {
     const prot = nix.PROT.READ | nix.PROT.WRITE;
     const flags = nix.MAP{
         .TYPE = .PRIVATE,
         .ANONYMOUS = true,
         .NORESERVE = true,
     };
-    const mem = nix.assert(@src(), nix.mmap, .{
+    const mem = nix.assert(@src(), System.mmap, .{
         null,
         size,
         prot,
@@ -54,8 +54,8 @@ pub fn init(size: usize) Self {
     return Self{ .guest_addr = DRAM_START, .mem = mem };
 }
 
-pub fn deinit(self: *const Self) void {
-    nix.munmap(self.mem);
+pub fn deinit(self: *const Self, comptime System: type) void {
+    System.munmap(self.mem);
 }
 
 pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
@@ -89,8 +89,8 @@ pub fn is_aligned(addr: u64, align_to: u64) bool {
 /// Returns the guest memory address where
 /// the executable code starts and a size of the kernel.
 /// https://github.com/torvalds/linux/blob/master/Documentation/arch/arm64/booting.rst
-pub fn load_linux_kernel(self: *Self, path: []const u8) struct { u64, u64 } {
-    const fd = nix.assert(@src(), nix.open, .{
+pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) struct { u64, u64 } {
+    const fd = nix.assert(@src(), System.open, .{
         path,
         .{
             .CLOEXEC = true,
@@ -98,7 +98,7 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) struct { u64, u64 } {
         },
         0,
     });
-    const meta = nix.assert(@src(), nix.statx, .{fd});
+    const meta = nix.assert(@src(), System.statx, .{fd});
 
     const prot = nix.PROT.READ | nix.PROT.WRITE;
     const flags = nix.MAP{
@@ -106,7 +106,7 @@ pub fn load_linux_kernel(self: *Self, path: []const u8) struct { u64, u64 } {
         .FIXED = true,
         .NORESERVE = true,
     };
-    const file_mem = nix.assert(@src(), nix.mmap, .{
+    const file_mem = nix.assert(@src(), System.mmap, .{
         self.mem.ptr,
         meta.size,
         prot,

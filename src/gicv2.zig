@@ -31,13 +31,13 @@ pub const IRQ_BASE: u32 = 32;
 /// The value must be bigger than 64 and smaller than 1024 and be a multiple of 32.
 pub const IRQ_MAX: u32 = 128;
 
-pub fn new(vm: *const Vm) void {
+pub fn new(comptime System: type, vm: *const Vm) void {
     var device: nix.kvm_create_device = .{
         .type = nix.KVM_DEV_TYPE_ARM_VGIC_V2,
         .fd = 0,
         .flags = 0,
     };
-    _ = nix.assert(@src(), nix.ioctl, .{
+    _ = nix.assert(@src(), System.ioctl, .{
         vm.fd,
         nix.KVM_CREATE_DEVICE,
         @intFromPtr(&device),
@@ -45,6 +45,7 @@ pub fn new(vm: *const Vm) void {
     const fd: nix.fd_t = @intCast(device.fd);
 
     set_attributes(
+        System,
         fd,
         0,
         nix.KVM_DEV_ARM_VGIC_GRP_ADDR,
@@ -52,6 +53,7 @@ pub fn new(vm: *const Vm) void {
         @intFromPtr(&DISTRIBUTOR_ADDRESS),
     );
     set_attributes(
+        System,
         fd,
         0,
         nix.KVM_DEV_ARM_VGIC_GRP_ADDR,
@@ -60,11 +62,32 @@ pub fn new(vm: *const Vm) void {
     );
     // KVM_DEV_ARM_VGIC_GRP_NR_IRQS sets the highest SPI interrupt number.
     // Total number of available interrupts is: IRQ_MAX - IRQ_BASE
-    set_attributes(fd, 0, nix.KVM_DEV_ARM_VGIC_GRP_NR_IRQS, 0, @intFromPtr(&IRQ_MAX));
-    set_attributes(fd, 0, nix.KVM_DEV_ARM_VGIC_GRP_CTRL, nix.KVM_DEV_ARM_VGIC_CTRL_INIT, 0);
+    set_attributes(
+        System,
+        fd,
+        0,
+        nix.KVM_DEV_ARM_VGIC_GRP_NR_IRQS,
+        0,
+        @intFromPtr(&IRQ_MAX),
+    );
+    set_attributes(
+        System,
+        fd,
+        0,
+        nix.KVM_DEV_ARM_VGIC_GRP_CTRL,
+        nix.KVM_DEV_ARM_VGIC_CTRL_INIT,
+        0,
+    );
 }
 
-fn set_attributes(fd: nix.fd_t, flags: u32, group: u32, attr: u64, addr: u64) void {
+fn set_attributes(
+    comptime System: type,
+    fd: nix.fd_t,
+    flags: u32,
+    group: u32,
+    attr: u64,
+    addr: u64,
+) void {
     const kda = nix.kvm_device_attr{
         .flags = flags,
         .group = group,
@@ -72,7 +95,7 @@ fn set_attributes(fd: nix.fd_t, flags: u32, group: u32, attr: u64, addr: u64) vo
         .addr = addr,
     };
     log.debug(@src(), "Setting device attributes: {any}", .{kda});
-    _ = nix.assert(@src(), nix.ioctl, .{
+    _ = nix.assert(@src(), System.ioctl, .{
         fd,
         nix.KVM_SET_DEVICE_ATTR,
         @intFromPtr(&kda),

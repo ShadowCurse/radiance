@@ -60,28 +60,29 @@ fn signal_handler(s: c_int) callconv(.C) void {
     Self.self_ref.?.kvm_run.immediate_exit = 1;
 }
 
-fn set_thread_handler() void {
+fn set_thread_handler(comptime System: type) void {
     const sigact = nix.Sigaction{
         .handler = .{ .handler = signal_handler },
         .flags = 4,
         .mask = std.mem.zeroes(nix.sigset_t),
         .restorer = null,
     };
-    _ = nix.assert(@src(), nix.sigaction, .{ VCPU_SIGNAL, &sigact, null });
+    _ = nix.assert(@src(), System.sigaction, .{ VCPU_SIGNAL, &sigact, null });
 }
 
-pub fn kick_threads() void {
-    const pid = nix.getpid();
-    _ = nix.kill(pid, VCPU_SIGNAL);
+pub fn kick_threads(comptime System: type) void {
+    const pid = System.getpid();
+    _ = System.kill(pid, VCPU_SIGNAL);
 }
 
 pub fn new(
+    comptime System: type,
     vm: *const Vm,
     index: u64,
     exit_event: EventFd,
     vcpu_mmap_size: u32,
 ) Self {
-    const fd = nix.assert(@src(), nix.ioctl, .{
+    const fd = nix.assert(@src(), System.ioctl, .{
         vm.fd,
         nix.KVM_CREATE_VCPU,
         index,
@@ -92,7 +93,7 @@ pub fn new(
     const flags = nix.MAP{
         .TYPE = .SHARED,
     };
-    const kvm_run = nix.assert(@src(), nix.mmap, .{
+    const kvm_run = nix.assert(@src(), System.mmap, .{
         null,
         size,
         prot,
@@ -109,14 +110,14 @@ pub fn new(
     };
 }
 
-pub fn init(self: *const Self, preferred_target: nix.kvm_vcpu_init) void {
+pub fn init(self: *const Self, comptime System: type, preferred_target: nix.kvm_vcpu_init) void {
     var kvi = preferred_target;
     kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_PSCI_0_2;
     // All vcpus are powered off except first one
     if (0 < self.index) {
         kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
     }
-    _ = nix.assert(@src(), nix.ioctl, .{
+    _ = nix.assert(@src(), System.ioctl, .{
         self.fd,
         nix.KVM_ARM_VCPU_INIT,
         @intFromPtr(&kvi),
@@ -125,23 +126,24 @@ pub fn init(self: *const Self, preferred_target: nix.kvm_vcpu_init) void {
 
 pub fn set_reg(
     self: *const Self,
+    comptime System: type,
     comptime t: type,
     reg_id: u64,
     value: t,
 ) void {
     log.debug(@src(), "setting reg: 0x{x} to 0x{x}", .{ reg_id, value });
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-    _ = nix.assert(@src(), nix.ioctl, .{
+    _ = nix.assert(@src(), System.ioctl, .{
         self.fd,
         nix.KVM_SET_ONE_REG,
         @intFromPtr(&kor),
     });
 }
 
-pub fn get_reg(self: *const Self, reg_id: u64) u64 {
+pub fn get_reg(self: *const Self, comptime System: type, reg_id: u64) u64 {
     var value: u64 = undefined;
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-    _ = nix.assert(@src(), nix.ioctl, .{
+    _ = nix.assert(@src(), System.ioctl, .{
         self.fd,
         nix.KVM_GET_ONE_REG,
         @intFromPtr(&kor),
@@ -150,8 +152,8 @@ pub fn get_reg(self: *const Self, reg_id: u64) u64 {
     return value;
 }
 
-pub fn run(self: *Self, mmio: *Mmio) bool {
-    const r = nix.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
+pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
+    const r = System.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
     if (r < 0) {
         const e = nix.errno(r);
         switch (e) {
@@ -174,7 +176,7 @@ pub fn run(self: *Self, mmio: *Mmio) bool {
                         "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN",
                         .{},
                     );
-                    self.exit_event.write(1);
+                    self.exit_event.write(System, 1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_RESET => {
@@ -183,7 +185,7 @@ pub fn run(self: *Self, mmio: *Mmio) bool {
                         "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_RESET",
                         .{},
                     );
-                    self.exit_event.write(1);
+                    self.exit_event.write(System, 1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_CRASH => {
@@ -192,7 +194,7 @@ pub fn run(self: *Self, mmio: *Mmio) bool {
                         "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_CRASH",
                         .{},
                     );
-                    self.exit_event.write(1);
+                    self.exit_event.write(System, 1);
                     return false;
                 },
                 nix.KVM_SYSTEM_EVENT_WAKEUP => {
@@ -239,14 +241,15 @@ pub fn run(self: *Self, mmio: *Mmio) bool {
 
 pub fn run_threaded(
     self: *Self,
+    comptime System: type,
     barrier: *std.Thread.ResetEvent,
     mmio: *Mmio,
     start_time: *const std.time.Instant,
 ) void {
     self_ref = self;
-    Self.set_thread_handler();
+    Self.set_thread_handler(System);
     barrier.wait();
     const now = std.time.Instant.now() catch unreachable;
     log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / std.time.ns_per_us});
-    while (self.run(mmio)) {}
+    while (self.run(System, mmio)) {}
 }

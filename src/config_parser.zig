@@ -124,27 +124,27 @@ pub const ParseResult = struct {
 
     const Self = @This();
 
-    pub fn deinit(self: *const Self) void {
-        nix.munmap(self.file_mem);
+    pub fn deinit(self: *const Self, comptime System: type) void {
+        System.munmap(self.file_mem);
     }
 };
 
-pub fn parse_file(config_path: []const u8) !ParseResult {
-    const fd = try nix.open(
+pub fn parse_file(comptime System: type, config_path: []const u8) !ParseResult {
+    const fd = try System.open(
         config_path,
         .{
             .ACCMODE = .RDONLY,
         },
         0,
     );
-    defer nix.close(fd);
+    defer System.close(fd);
 
-    return parse_fd(fd);
+    return parse_fd(System, fd);
 }
 
-pub fn parse_fd(fd: nix.fd_t) !ParseResult {
-    const statx = try nix.statx(fd);
-    const file_mem = try nix.mmap(
+pub fn parse_fd(comptime System: type, fd: nix.fd_t) !ParseResult {
+    const statx = try System.statx(fd);
+    const file_mem = try System.mmap(
         null,
         statx.size,
         nix.PROT.READ,
@@ -263,8 +263,8 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
     return t;
 }
 
-fn dump_file(config: Config, config_path: []const u8) void {
-    const fd = nix.assert(@src(), nix.open, .{
+fn dump_file(comptime System: type, config: Config, config_path: []const u8) void {
+    const fd = nix.assert(@src(), System.open, .{
         config_path,
         .{
             .CREAT = true,
@@ -272,26 +272,32 @@ fn dump_file(config: Config, config_path: []const u8) void {
         },
         0,
     });
-    defer nix.close(fd);
+    defer System.close(fd);
 
     dump_fd(config, fd);
 }
 
-fn dump_fd(config: Config, fd: nix.fd_t) void {
+fn dump_fd(comptime System: type, config: Config, fd: nix.fd_t) void {
     const type_fields = comptime @typeInfo(Config).@"struct".fields;
     inline for (type_fields, 0..) |field, i| {
         const last = type_fields.len - 1 == i;
         if (@typeInfo(field.type) == .optional) {
             if (@field(config, field.name)) |v| {
-                dump_section(field.name, v, fd, last);
+                dump_section(System, field.name, v, fd, last);
             }
         } else {
-            dump_section(field.name, @field(config, field.name), fd, last);
+            dump_section(System, field.name, @field(config, field.name), fd, last);
         }
     }
 }
 
-fn dump_section(comptime name: []const u8, t: anytype, fd: nix.fd_t, comptime last: bool) void {
+fn dump_section(
+    comptime System: type,
+    comptime name: []const u8,
+    t: anytype,
+    fd: nix.fd_t,
+    comptime last: bool,
+) void {
     const t_type = @TypeOf(t);
     switch (t_type) {
         DrivesConfigs, PmemConfigs, NetConfigs => {
@@ -299,34 +305,34 @@ fn dump_section(comptime name: []const u8, t: anytype, fd: nix.fd_t, comptime la
             const first_field = type_fields[0];
             const items = @field(t, first_field.name).slice();
             for (items) |item| {
-                dump_type(name, item, fd);
+                dump_type(System, name, item, fd);
                 if (!last)
-                    _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+                    _ = nix.assert(@src(), System.write, .{ fd, "\n" });
             }
         },
         else => {
-            dump_type(name, t, fd);
+            dump_type(System, name, t, fd);
             if (!last)
-                _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+                _ = nix.assert(@src(), System.write, .{ fd, "\n" });
         },
     }
 }
 
-fn dump_type(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
+fn dump_type(comptime System: type, comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
     const type_fields = @typeInfo(@TypeOf(t)).@"struct".fields;
 
     const header = if (std.mem.endsWith(u8, name, "s"))
         std.fmt.comptimePrint("[[{s}]]\n", .{name})
     else
         std.fmt.comptimePrint("[{s}]\n", .{name});
-    _ = nix.assert(@src(), nix.write, .{ fd, header });
+    _ = nix.assert(@src(), System.write, .{ fd, header });
 
     inline for (type_fields) |field| {
         switch (field.type) {
             ?[6]u8 => {
                 if (@field(t, field.name)) |value| {
                     const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
-                    _ = nix.assert(@src(), nix.write, .{ fd, field_start });
+                    _ = nix.assert(@src(), System.write, .{ fd, field_start });
 
                     var buff: [24]u8 = undefined;
                     const v = std.fmt.bufPrint(
@@ -334,28 +340,28 @@ fn dump_type(comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
                         "[{X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}]",
                         .{ value[0], value[1], value[2], value[3], value[4], value[5] },
                     ) catch unreachable;
-                    _ = nix.assert(@src(), nix.write, .{ fd, v });
+                    _ = nix.assert(@src(), System.write, .{ fd, v });
 
-                    _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+                    _ = nix.assert(@src(), System.write, .{ fd, "\n" });
                 }
             },
             [:0]const u8, []const u8 => {
                 if (@field(t, field.name).len != 0) {
                     const field_start = std.fmt.comptimePrint("{s} = \"", .{field.name});
-                    _ = nix.assert(@src(), nix.write, .{ fd, field_start });
-                    _ = nix.assert(@src(), nix.write, .{ fd, @field(t, field.name) });
-                    _ = nix.assert(@src(), nix.write, .{ fd, "\"\n" });
+                    _ = nix.assert(@src(), System.write, .{ fd, field_start });
+                    _ = nix.assert(@src(), System.write, .{ fd, @field(t, field.name) });
+                    _ = nix.assert(@src(), System.write, .{ fd, "\"\n" });
                 }
             },
             u32, bool => {
                 const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
-                _ = nix.assert(@src(), nix.write, .{ fd, field_start });
+                _ = nix.assert(@src(), System.write, .{ fd, field_start });
 
                 var buff: [16]u8 = undefined;
                 const v = std.fmt.bufPrint(&buff, "{}", .{@field(t, field.name)}) catch unreachable;
-                _ = nix.assert(@src(), nix.write, .{ fd, v });
+                _ = nix.assert(@src(), System.write, .{ fd, v });
 
-                _ = nix.assert(@src(), nix.write, .{ fd, "\n" });
+                _ = nix.assert(@src(), System.write, .{ fd, "\n" });
             },
             else => unreachable,
         }
@@ -440,11 +446,17 @@ test "dump_and_parse" {
         },
     };
 
-    const memfd = nix.assert(@src(), nix.memfd_create, .{ "test_config_parse", nix.FD_CLOEXEC });
-    dump_fd(config, memfd);
+    const System = nix.System;
 
-    const statx = try nix.statx(memfd);
-    const file_mem = try nix.mmap(
+    const memfd = nix.assert(
+        @src(),
+        System.memfd_create,
+        .{ "test_config_parse", nix.FD_CLOEXEC },
+    );
+    dump_fd(System, config, memfd);
+
+    const statx = try System.statx(memfd);
+    const file_mem = try System.mmap(
         null,
         statx.size,
         nix.PROT.READ,
@@ -457,7 +469,7 @@ test "dump_and_parse" {
 
     try std.testing.expect(std.mem.eql(u8, file_mem, config_toml));
 
-    const new_config = try parse_fd(memfd);
+    const new_config = try parse_fd(System, memfd);
 
     try std.testing.expect(new_config.config.machine.vcpus == config.machine.vcpus);
     try std.testing.expect(new_config.config.machine.memory_mb == config.machine.memory_mb);

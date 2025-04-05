@@ -36,7 +36,7 @@ const Args = struct {
 pub fn main() !void {
     const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
-    const config_parse_result = try config_parser.parse_file(args.config_path);
+    const config_parse_result = try config_parser.parse_file(nix.System, args.config_path);
     const config = &config_parse_result.config;
 
     var vhost_net_count: u32 = 0;
@@ -56,47 +56,47 @@ pub fn main() !void {
         @sizeOf(VhostNet) * vhost_net_count;
 
     log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
-    var permanent_memory = allocator.PermanentMemory.init(permanent_memory_size);
+    var permanent_memory = allocator.PermanentMemory.init(nix.System, permanent_memory_size);
     const permanent_alloc = permanent_memory.allocator();
 
-    var memory = Memory.init(config.machine.memory_mb << 20);
-    const load_result = memory.load_linux_kernel(config.kernel.path);
+    var memory = Memory.init(nix.System, config.machine.memory_mb << 20);
+    const load_result = memory.load_linux_kernel(nix.System, config.kernel.path);
     const kernel_load_address = load_result[0];
     const kernel_size = load_result[1];
 
     var guest_memory = allocator.GuestMemory.init(&memory, kernel_size);
     const tmp_alloc = guest_memory.allocator();
 
-    const kvm = Kvm.new();
+    const kvm = Kvm.new(nix.System);
 
     // create vm
-    var vm = Vm.new(&kvm);
-    vm.set_memory(.{
+    var vm = Vm.new(nix.System, &kvm);
+    vm.set_memory(nix.System, .{
         .guest_phys_addr = memory.guest_addr,
         .memory_size = memory.mem.len,
         .userspace_addr = @intFromPtr(memory.mem.ptr),
     });
 
     // create vcpu
-    const kvi = vm.get_preferred_target();
-    const vcpu_exit_event = EventFd.new(0, nix.EFD_NONBLOCK);
-    const vcpu_mmap_size = kvm.vcpu_mmap_size();
+    const kvi = vm.get_preferred_target(nix.System);
+    const vcpu_exit_event = EventFd.new(nix.System, 0, nix.EFD_NONBLOCK);
+    const vcpu_mmap_size = kvm.vcpu_mmap_size(nix.System);
 
     var vcpus = try permanent_alloc.alloc(Vcpu, config.machine.vcpus);
     for (vcpus, 0..) |*vcpu, i| {
-        vcpu.* = Vcpu.new(&vm, i, vcpu_exit_event, vcpu_mmap_size);
-        vcpu.init(kvi);
+        vcpu.* = Vcpu.new(nix.System, &vm, i, vcpu_exit_event, vcpu_mmap_size);
+        vcpu.init(nix.System, kvi);
     }
 
     // create interrupt controller
-    Gicv2.new(&vm);
+    Gicv2.new(nix.System, &vm);
 
     // attach pmem
     var last_addr = Memory.align_addr(memory.last_addr(), Pmem.ALIGNMENT);
     const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmems.pmems.len);
     for (config.pmems.pmems.slice(), pmem_infos) |*pmem_config, *info| {
         info.start = last_addr;
-        info.len = Pmem.attach(&vm, pmem_config.path, info.start);
+        info.len = Pmem.attach(nix.System, &vm, pmem_config.path, info.start);
         last_addr += info.len;
     }
 
@@ -113,6 +113,7 @@ pub fn main() !void {
     }
 
     var uart = if (config.uart.enabled) Uart.new(
+        nix.System,
         &vm,
         nix.STDIN_FILENO,
         nix.STDOUT_FILENO,
@@ -123,7 +124,14 @@ pub fn main() !void {
     const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, config.drives.drives.len);
     const vb_infos = virtio_device_infos[0..config.drives.drives.len];
     for (virtio_blocks, config.drives.drives.slice(), vb_infos) |*block, *drive, mmio_info| {
-        block.* = VirtioBlock.new(&vm, drive.path, drive.read_only, &memory, mmio_info);
+        block.* = VirtioBlock.new(
+            nix.System,
+            &vm,
+            drive.path,
+            drive.read_only,
+            &memory,
+            mmio_info,
+        );
     }
 
     const virtio_nets = try permanent_alloc.alloc(VirtioNet, virtio_net_count);
@@ -135,6 +143,7 @@ pub fn main() !void {
     for (config.networks.networks.slice(), net_infos) |*net_config, mmio_info| {
         if (net_config.vhost) {
             vhost_nets[vhost_net_index] = VhostNet.new(
+                nix.System,
                 &vm,
                 net_config.dev_name,
                 net_config.mac,
@@ -144,6 +153,7 @@ pub fn main() !void {
             vhost_net_index += 1;
         } else {
             virtio_nets[virtio_net_index] = VirtioNet.new(
+                nix.System,
                 &vm,
                 net_config.dev_name,
                 net_config.mac,
@@ -157,7 +167,7 @@ pub fn main() !void {
     if (config.uart.enabled) mmio.add_device(.{
         .ptr = &uart,
         .read_ptr = @ptrCast(&Uart.read),
-        .write_ptr = @ptrCast(&Uart.write),
+        .write_ptr = @ptrCast(&Uart.write_default),
     });
     mmio.add_device(.{
         .ptr = &rtc,
@@ -168,21 +178,21 @@ pub fn main() !void {
         mmio.add_device_virtio(.{
             .ptr = virtio_block,
             .read_ptr = @ptrCast(&VirtioBlock.read),
-            .write_ptr = @ptrCast(&VirtioBlock.write),
+            .write_ptr = @ptrCast(&VirtioBlock.write_default),
         });
     }
     for (virtio_nets) |*virtio_net| {
         mmio.add_device_virtio(.{
             .ptr = virtio_net,
             .read_ptr = @ptrCast(&VirtioNet.read),
-            .write_ptr = @ptrCast(&VirtioNet.write),
+            .write_ptr = @ptrCast(&VirtioNet.write_default),
         });
     }
     for (vhost_nets) |*vhost_net| {
         mmio.add_device_virtio(.{
             .ptr = vhost_net,
             .read_ptr = @ptrCast(&VhostNet.read),
-            .write_ptr = @ptrCast(&VhostNet.write),
+            .write_ptr = @ptrCast(&VhostNet.write_default),
         });
     }
 
@@ -225,10 +235,11 @@ pub fn main() !void {
     // create fdt
     const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
     for (mpidrs, vcpus) |*mpidr, *vcpu| {
-        mpidr.* = vcpu.get_reg(Vcpu.MPIDR_EL1);
+        mpidr.* = vcpu.get_reg(nix.System, Vcpu.MPIDR_EL1);
     }
 
     const fdt_addr = FDT.create_fdt(
+        nix.System,
         tmp_alloc,
         &memory,
         mpidrs,
@@ -240,65 +251,77 @@ pub fn main() !void {
     );
 
     // configure vcpus
-    vcpus[0].set_reg(u64, Vcpu.PC, kernel_load_address);
-    vcpus[0].set_reg(u64, Vcpu.REGS0, @as(u64, fdt_addr));
+    vcpus[0].set_reg(nix.System, u64, Vcpu.PC, kernel_load_address);
+    vcpus[0].set_reg(nix.System, u64, Vcpu.REGS0, @as(u64, fdt_addr));
 
     for (vcpus) |*vcpu| {
-        vcpu.set_reg(u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
+        vcpu.set_reg(nix.System, u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
     }
 
     // configure terminal for uart in/out
     const stdin = if (config.uart.enabled) std.io.getStdIn() else undefined;
-    const state = if (config.uart.enabled) configure_terminal(&stdin) else undefined;
+    const state = if (config.uart.enabled) configure_terminal(nix.System, &stdin) else undefined;
 
     // start vcpu threads
     const vcpu_threads = try permanent_alloc.alloc(std.Thread, config.machine.vcpus);
 
     // free config memory
-    config_parse_result.deinit();
+    config_parse_result.deinit(nix.System);
 
     log.debug(@src(), "starting vcpu threads", .{});
+    // TODO this does linux futex syscalls. Maybe can be replaced
+    // by simple atomic value?
     var barrier: std.Thread.ResetEvent = .{};
     for (vcpu_threads, vcpus) |*t, *vcpu| {
-        t.* = try std.Thread.spawn(
+        t.* = try nix.System.spawn_thread(
             .{},
             Vcpu.run_threaded,
-            .{ vcpu, &barrier, &mmio, &start_time },
+            .{ vcpu, nix.System, &barrier, &mmio, &start_time },
         );
     }
 
     // create event loop
-    var el = EventLoop.new();
-    if (config.uart.enabled) el.add_event(stdin.handle, @ptrCast(&Uart.read_input), &uart);
+    var el = EventLoop.new(nix.System);
+    if (config.uart.enabled) el.add_event(
+        nix.System,
+        stdin.handle,
+        @ptrCast(&Uart.event_read_input),
+        &uart,
+    );
     for (virtio_blocks) |*block| {
         el.add_event(
+            nix.System,
             block.virtio_context.queue_events[0].fd,
-            @ptrCast(&VirtioBlock.process_queue),
+            @ptrCast(&VirtioBlock.event_process_queue),
             block,
         );
     }
     for (virtio_nets) |*net| {
         el.add_event(
+            nix.System,
             net.virtio_context.queue_events[0].fd,
-            @ptrCast(&VirtioNet.process_rx),
+            @ptrCast(&VirtioNet.event_process_rx),
             net,
         );
         el.add_event(
+            nix.System,
             net.virtio_context.queue_events[1].fd,
-            @ptrCast(&VirtioNet.process_tx),
+            @ptrCast(&VirtioNet.event_process_tx),
             net,
         );
         el.add_event(
+            nix.System,
             net.tun,
-            @ptrCast(&VirtioNet.process_tap),
+            @ptrCast(&VirtioNet.event_process_tap),
             net,
         );
     }
-    el.add_event(vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &el);
+    el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &el);
 
     if (config.gdb) |gdb_config| {
         // start gdb server
         var gdb_server = try gdb.GdbServer.init(
+            nix.System,
             gdb_config.socket_path,
             vcpus,
             vcpu_threads,
@@ -308,31 +331,32 @@ pub fn main() !void {
             &el,
         );
         el.add_event(
+            nix.System,
             gdb_server.connection.stream.handle,
             @ptrCast(&gdb.GdbServer.process_request),
             &gdb_server,
         );
 
         // start event loop
-        el.run();
+        el.run(nix.System);
     } else {
         // start vcpus
         barrier.set();
 
         // start event loop
-        el.run();
+        el.run(nix.System);
     }
 
     log.info(@src(), "Shutting down", .{});
-    if (config.uart.enabled) restore_terminal(&stdin, &state);
+    if (config.uart.enabled) restore_terminal(nix.System, &stdin, &state);
     return;
 }
 
-fn configure_terminal(stdin: *const std.fs.File) nix.termios {
+fn configure_terminal(comptime System: type, stdin: *const std.fs.File) nix.termios {
     var ttystate: nix.termios = undefined;
     var ttysave: nix.termios = undefined;
 
-    _ = nix.tcgetattr(stdin.handle, &ttystate);
+    _ = System.tcgetattr(stdin.handle, &ttystate);
     ttysave = ttystate;
 
     //turn off canonical mode and echo
@@ -342,16 +366,17 @@ fn configure_terminal(stdin: *const std.fs.File) nix.termios {
     ttystate.cc[4] = 1;
 
     //set the terminal attributes.
-    _ = nix.tcsetattr(stdin.handle, nix.TCSA.NOW, &ttystate);
+    _ = System.tcsetattr(stdin.handle, nix.TCSA.NOW, &ttystate);
     return ttysave;
 }
 
 fn restore_terminal(
+    comptime System: type,
     stdin: *const std.fs.File,
     state: *const nix.termios,
 ) void {
     //set the terminal attributes.
-    _ = nix.tcsetattr(stdin.handle, nix.TCSA.NOW, state);
+    _ = System.tcsetattr(stdin.handle, nix.TCSA.NOW, state);
 }
 
 pub const _queue = @import("./virtio/queue.zig");

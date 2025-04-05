@@ -29,8 +29,8 @@ pub const EventLoopError = error{
     Run,
 };
 
-pub fn new() Self {
-    const epollfd = nix.assert(@src(), nix.epoll_create1, .{0});
+pub fn new(comptime System: type) Self {
+    const epollfd = nix.assert(@src(), System.epoll_create1, .{0});
 
     return Self{
         .exit = false,
@@ -43,6 +43,7 @@ pub fn new() Self {
 
 pub fn add_event(
     self: *Self,
+    comptime System: type,
     fd: nix.fd_t,
     callback: CallbackFn,
     parameter: CallbackParam,
@@ -70,20 +71,21 @@ pub fn add_event(
 
     nix.assert(
         @src(),
-        nix.epoll_ctl,
+        System.epoll_ctl,
         .{ self.epollfd, nix.EPOLL_CTL_ADD, fd, &event },
     );
 }
 
 pub fn remove_event(
     self: *Self,
+    comptime System: type,
     fd: nix.fd_t,
 ) void {
     for (&self.events_info) |*ec| {
         if (ec.fd == fd) {
             nix.assert(
                 @src(),
-                nix.epoll_ctl,
+                System.epoll_ctl,
                 .{ self.epollfd, nix.EPOLL_CTL_DEL, fd, null },
             );
             return;
@@ -91,12 +93,12 @@ pub fn remove_event(
     }
 }
 
-pub fn run(self: *Self) void {
+pub fn run(self: *Self, comptime System: type) void {
     log.debug(@src(), "runnning", .{});
     while (!self.exit) {
         const nfds = nix.assert(
             @src(),
-            nix.epoll_wait,
+            System.epoll_wait,
             .{ self.epollfd, &self.events, -1 },
         );
         log.assert(@src(), 0 < nfds, "epoll_wait returned {}", .{nfds});

@@ -168,11 +168,34 @@ pub const Queue = struct {
     }
 };
 
+const TestSystem = struct {
+    const memory = @import("../memory.zig");
+
+    var M align(memory.HOST_PAGE_SIZE) = [_]u8{0} ** 4096;
+    pub fn mmap(
+        ptr: ?[*]align(memory.HOST_PAGE_SIZE) u8,
+        length: usize,
+        prot: u32,
+        flags: nix.MAP,
+        fd: nix.fd_t,
+        offset: u64,
+    ) ![]align(memory.HOST_PAGE_SIZE) u8 {
+        _ = ptr;
+        _ = prot;
+        _ = flags;
+        _ = fd;
+        _ = offset;
+        return M[0..length];
+    }
+    pub fn munmap(m: []align(memory.HOST_PAGE_SIZE) const u8) void {
+        _ = m;
+    }
+};
 test "test_queue_pop_desc_chain" {
     const expect = std.testing.expect;
 
-    var memory = Memory.init(0x1000);
-    defer memory.deinit();
+    var memory = Memory.init(TestSystem, 0x1000);
+    defer memory.deinit(TestSystem);
 
     memory.guest_addr = 0;
     @memset(memory.mem, 0);
@@ -215,8 +238,8 @@ test "test_queue_pop_desc_chain" {
 test "test_queue_add_used_desc" {
     const expect = std.testing.expect;
 
-    var memory = Memory.init(0x1000);
-    defer memory.deinit();
+    var memory = Memory.init(TestSystem, 0x1000);
+    defer memory.deinit(TestSystem);
 
     memory.guest_addr = 0;
     @memset(memory.mem, 0);

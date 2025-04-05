@@ -12,10 +12,10 @@ start: u16,
 len: u16,
 capacity: u32,
 
-pub fn init() Self {
-    const memfd = nix.assert(@src(), nix.memfd_create, .{ "iov_ring", nix.FD_CLOEXEC });
+pub fn init(comptime System: type) Self {
+    const memfd = nix.assert(@src(), System.memfd_create, .{ "iov_ring", nix.FD_CLOEXEC });
     nix.assert(@src(), nix.ftruncate, .{ memfd, HOST_PAGE_SIZE });
-    const mem = nix.assert(@src(), nix.mmap, .{
+    const mem = nix.assert(@src(), System.mmap, .{
         null,
         HOST_PAGE_SIZE * 2,
         nix.PROT.NONE,
@@ -26,7 +26,7 @@ pub fn init() Self {
         -1,
         0,
     });
-    _ = nix.assert(@src(), nix.mmap, .{
+    _ = nix.assert(@src(), System.mmap, .{
         mem.ptr,
         HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,
@@ -37,7 +37,7 @@ pub fn init() Self {
         memfd,
         0,
     });
-    _ = nix.assert(@src(), nix.mmap, .{
+    _ = nix.assert(@src(), System.mmap, .{
         mem.ptr + HOST_PAGE_SIZE,
         HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,
@@ -93,7 +93,9 @@ pub fn slice(self: *Self) []nix.iovec {
 }
 
 test "test_iov_ring_push_back" {
-    var ir = Self.init();
+    const System = nix.System;
+
+    var ir = Self.init(System);
     try std.testing.expectEqual(ir.start, 0);
     try std.testing.expectEqual(ir.len, 0);
     try std.testing.expectEqual(ir.capacity, 0);
@@ -110,7 +112,9 @@ test "test_iov_ring_push_back" {
 }
 
 test "test_iov_ring_pop_front_n" {
-    var ir = Self.init();
+    const System = nix.System;
+
+    var ir = Self.init(System);
 
     for (0..256) |_| {
         ir.push_back(.{ .base = undefined, .len = 1 });
@@ -128,7 +132,9 @@ test "test_iov_ring_pop_front_n" {
 }
 
 test "test_iov_ring_slice" {
-    var ir = Self.init();
+    const System = nix.System;
+
+    var ir = Self.init(System);
 
     for (0..128) |_| {
         ir.push_back(.{ .base = undefined, .len = 1 });
