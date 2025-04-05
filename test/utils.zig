@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub const KernelPath = "./vmlinux-6.12";
+pub const KernelPath = "./resources/vmlinux-6.12";
 pub const RootFsPath = "./resources/ubuntu.ext4";
 pub const DummyFilePath = "./dummy";
 
