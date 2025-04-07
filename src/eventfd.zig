@@ -6,12 +6,6 @@ fd: nix.fd_t,
 
 const Self = @This();
 
-pub const EventfdError = error{
-    Create,
-    Read,
-    Write,
-};
-
 pub fn new(comptime System: type, init: u32, flags: u32) Self {
     const fd = nix.assert(@src(), System.eventfd, .{ init, flags });
     return Self{ .fd = fd };

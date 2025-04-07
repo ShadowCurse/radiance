@@ -469,10 +469,6 @@ const PayloadIterator = struct {
     }
 };
 
-const PayloadError = error{
-    Invalid,
-};
-
 const Payload = union(PayloadEnum) {
     Acknowledgment,
     Retransmission,
@@ -498,7 +494,7 @@ const Payload = union(PayloadEnum) {
                 '+' => .Acknowledgment,
                 '-' => .Retransmission,
                 0x03 => .{ .Interrupt = .{} },
-                else => PayloadError.Invalid,
+                else => error.Invalid,
             };
         } else blk: {
             const stripped = try Self.strip_bytes(bytes);
@@ -534,7 +530,7 @@ const Payload = union(PayloadEnum) {
 
     fn strip_bytes(bytes: []const u8) ![]const u8 {
         return if (bytes.len < 4) blk: {
-            break :blk PayloadError.Invalid;
+            break :blk error.Invalid;
         } else blk: {
             break :blk bytes[1 .. bytes.len - 2];
         };

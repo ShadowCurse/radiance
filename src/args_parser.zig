@@ -1,9 +1,5 @@
 const std = @import("std");
 
-pub const ParseError = error{
-    NotEnoughArgs,
-};
-
 pub fn parse(comptime T: type) !T {
     const type_fields = comptime @typeInfo(T).@"struct".fields;
 
@@ -21,7 +17,7 @@ pub fn parse(comptime T: type) !T {
             }
         } else {
             try print_args_help(T);
-            return ParseError.NotEnoughArgs;
+            return error.NotEnoughArgs;
         }
     }
     return t;

@@ -22,13 +22,6 @@ const Self = @This();
 
 const MAX_EVENTS = 16;
 
-pub const EventLoopError = error{
-    New,
-    TooMuchEvents,
-    AddEvent,
-    Run,
-};
-
 pub fn new(comptime System: type) Self {
     const epollfd = nix.assert(@src(), System.epoll_create1, .{0});
 
