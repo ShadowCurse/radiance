@@ -10,10 +10,6 @@ pub const DRAM_START: u64 = 0x8000_0000; // 2 GB.
 /// GIC is bellow, MMIO devices are here.
 pub const MMIO_START: u64 = 0x4000_0000; // 1 GB
 
-pub const MemoryError = error{
-    NotAllignedKernelOffset,
-};
-
 const arm64_image_header = packed struct {
     code0: u32,
     code1: u32,

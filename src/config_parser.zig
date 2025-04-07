@@ -6,12 +6,6 @@ const HOST_PAGE_SIZE = @import("memory.zig").HOST_PAGE_SIZE;
 const Allocator = std.mem.Allocator;
 const SplitIterator = std.mem.SplitIterator;
 
-pub const ConfigParseError = error{
-    UnknownTableType,
-    NoFieldName,
-    NoFieldValue,
-};
-
 pub const MachineConfig = struct {
     vcpus: u32 = 0,
     memory_mb: u32 = 0,
@@ -174,7 +168,7 @@ pub fn parse_fd(comptime System: type, fd: nix.fd_t) !ParseResult {
                 if (std.mem.startsWith(u8, line, "[")) {
                     break :blk line[1 .. line.len - 1];
                 } else {
-                    return ConfigParseError.UnknownTableType;
+                    return error.UnknownTableType;
                 }
             };
             inline for (type_fields) |field| {
@@ -211,14 +205,14 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
             if (iter.next()) |name| {
                 break :blk std.mem.trim(u8, name, " ");
             } else {
-                return ConfigParseError.NoFieldName;
+                return error.NoFieldName;
             }
         };
         const field_value = blk: {
             if (iter.next()) |value| {
                 break :blk std.mem.trim(u8, value, " ");
             } else {
-                return ConfigParseError.NoFieldValue;
+                return error.NoFieldValue;
             }
         };
 
@@ -237,7 +231,7 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
                             i += 1;
                         }
                         if (i != 6) {
-                            return ConfigParseError.NoFieldValue;
+                            return error.NoFieldValue;
                         }
                         @field(t, field.name) = array;
                     },
