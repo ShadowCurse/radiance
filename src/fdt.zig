@@ -70,7 +70,7 @@ const FdtData = struct {
                 self.mem[self.len] = 0;
                 self.len += 1;
             },
-            else => std.debug.panic("Unknown type: {any}", .{t}),
+            else => log.assert(@src(), false, "Trying to append unknown type: {any}", .{t}),
         }
     }
 };
@@ -186,7 +186,12 @@ pub const FdtBuilder = struct {
             [:0]const u8 => @sizeOf(u8) * item.len + 1,
             []const u32 => @sizeOf(u32) * item.len,
             []const u64 => @sizeOf(u64) * item.len,
-            else => std.debug.panic("Unknown type: {any}", .{t}),
+            else => log.assert(
+                @src(),
+                false,
+                "Trying to convert unknown type to bytes: {any}",
+                .{t},
+            ),
         };
         const len: u32 = @intCast(bytes);
         self.data.append(u32, len);
