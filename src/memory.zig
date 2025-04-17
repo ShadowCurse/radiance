@@ -56,13 +56,25 @@ pub fn deinit(self: *const Self, comptime System: type) void {
 
 pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
     const offset = addr - self.guest_addr;
-    std.debug.assert(offset + @sizeOf(T) <= self.mem.len);
+    const end_of_type = offset + @sizeOf(T);
+    log.assert(
+        @src(),
+        end_of_type <= self.mem.len,
+        "Guest memory type access reaches beyond the end of the RAM: {} <= {}",
+        .{ self.mem.len, end_of_type },
+    );
     return @ptrFromInt(@as(u64, @intFromPtr(self.mem.ptr)) + offset);
 }
 
 pub fn get_slice(self: *const Self, comptime T: type, len: u64, addr: u64) []volatile T {
     const offset = addr - self.guest_addr;
-    std.debug.assert(offset + @sizeOf(T) * len <= self.mem.len);
+    const end_of_slice = offset + @sizeOf(T) * len;
+    log.assert(
+        @src(),
+        end_of_slice <= self.mem.len,
+        "Guest memory slice access reaches beyond the end of the RAM: {} <= {}",
+        .{ self.mem.len, end_of_slice },
+    );
     var slice: []T = undefined;
     slice.ptr = @ptrFromInt(@as(u64, @intFromPtr(self.mem.ptr)) + offset);
     slice.len = len;
@@ -112,7 +124,12 @@ pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) s
     });
 
     const arm64_header: *arm64_image_header = @ptrCast(file_mem.ptr);
-    std.debug.assert(arm64_header.magic == 0x644d_5241);
+    log.assert(
+        @src(),
+        arm64_header.magic == 0x644d_5241,
+        "Kernel magic value is invalid: {} != {}",
+        .{ arm64_header.magic, @as(u32, 0x644d_5241) },
+    );
 
     var text_offset = arm64_header.text_offset;
     if (arm64_header.image_size == 0) {
