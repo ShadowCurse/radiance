@@ -258,7 +258,7 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
 }
 
 fn dump_file(comptime System: type, config: Config, config_path: []const u8) void {
-    const fd = nix.assert(@src(), System.open, .{
+    const fd = nix.assert(@src(), System, "open", .{
         config_path,
         .{
             .CREAT = true,
@@ -301,13 +301,13 @@ fn dump_section(
             for (items) |item| {
                 dump_type(System, name, item, fd);
                 if (!last)
-                    _ = nix.assert(@src(), System.write, .{ fd, "\n" });
+                    _ = nix.assert(@src(), System, "write", .{ fd, "\n" });
             }
         },
         else => {
             dump_type(System, name, t, fd);
             if (!last)
-                _ = nix.assert(@src(), System.write, .{ fd, "\n" });
+                _ = nix.assert(@src(), System, "write", .{ fd, "\n" });
         },
     }
 }
@@ -319,14 +319,14 @@ fn dump_type(comptime System: type, comptime name: []const u8, t: anytype, fd: n
         std.fmt.comptimePrint("[[{s}]]\n", .{name})
     else
         std.fmt.comptimePrint("[{s}]\n", .{name});
-    _ = nix.assert(@src(), System.write, .{ fd, header });
+    _ = nix.assert(@src(), System, "write", .{ fd, header });
 
     inline for (type_fields) |field| {
         switch (field.type) {
             ?[6]u8 => {
                 if (@field(t, field.name)) |value| {
                     const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
-                    _ = nix.assert(@src(), System.write, .{ fd, field_start });
+                    _ = nix.assert(@src(), System, "write", .{ fd, field_start });
 
                     var buff: [24]u8 = undefined;
                     const v = std.fmt.bufPrint(
@@ -334,28 +334,28 @@ fn dump_type(comptime System: type, comptime name: []const u8, t: anytype, fd: n
                         "[{X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}, {X:0>2}]",
                         .{ value[0], value[1], value[2], value[3], value[4], value[5] },
                     ) catch unreachable;
-                    _ = nix.assert(@src(), System.write, .{ fd, v });
+                    _ = nix.assert(@src(), System, "write", .{ fd, v });
 
-                    _ = nix.assert(@src(), System.write, .{ fd, "\n" });
+                    _ = nix.assert(@src(), System, "write", .{ fd, "\n" });
                 }
             },
             [:0]const u8, []const u8 => {
                 if (@field(t, field.name).len != 0) {
                     const field_start = std.fmt.comptimePrint("{s} = \"", .{field.name});
-                    _ = nix.assert(@src(), System.write, .{ fd, field_start });
-                    _ = nix.assert(@src(), System.write, .{ fd, @field(t, field.name) });
-                    _ = nix.assert(@src(), System.write, .{ fd, "\"\n" });
+                    _ = nix.assert(@src(), System, "write", .{ fd, field_start });
+                    _ = nix.assert(@src(), System, "write", .{ fd, @field(t, field.name) });
+                    _ = nix.assert(@src(), System, "write", .{ fd, "\"\n" });
                 }
             },
             u32, bool => {
                 const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
-                _ = nix.assert(@src(), System.write, .{ fd, field_start });
+                _ = nix.assert(@src(), System, "write", .{ fd, field_start });
 
                 var buff: [16]u8 = undefined;
                 const v = std.fmt.bufPrint(&buff, "{}", .{@field(t, field.name)}) catch unreachable;
-                _ = nix.assert(@src(), System.write, .{ fd, v });
+                _ = nix.assert(@src(), System, "write", .{ fd, v });
 
-                _ = nix.assert(@src(), System.write, .{ fd, "\n" });
+                _ = nix.assert(@src(), System, "write", .{ fd, "\n" });
             },
             else => unreachable,
         }
@@ -444,7 +444,8 @@ test "dump_and_parse" {
 
     const memfd = nix.assert(
         @src(),
-        System.memfd_create,
+        System,
+        "memfd_create",
         .{ "test_config_parse", nix.FD_CLOEXEC },
     );
     dump_fd(System, config, memfd);

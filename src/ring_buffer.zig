@@ -10,7 +10,7 @@ pub fn RingBuffer(comptime T: type, comptime SIZE: u32) type {
         len: u32,
 
         pub fn init(comptime System: type) Self {
-            const mem = nix.assert(@src(), System.mmap, .{
+            const mem = nix.assert(@src(), System, "mmap", .{
                 null,
                 @sizeOf(T) * SIZE,
                 nix.PROT.READ | nix.PROT.WRITE,

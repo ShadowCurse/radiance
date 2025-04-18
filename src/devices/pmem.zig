@@ -17,17 +17,17 @@ pub fn attach(
     file_path: []const u8,
     guest_addr: u64,
 ) u64 {
-    const fd = nix.assert(@src(), System.open, .{
+    const fd = nix.assert(@src(), System, "open", .{
         file_path,
         .{ .ACCMODE = .RDWR },
         0,
     });
     defer System.close(fd);
 
-    const statx = nix.assert(@src(), System.statx, .{fd});
+    const statx = nix.assert(@src(), System, "statx", .{fd});
 
     if (Memory.is_aligned(statx.size, ALIGNMENT)) {
-        const file_mem = nix.assert(@src(), System.mmap, .{
+        const file_mem = nix.assert(@src(), System, "mmap", .{
             null,
             statx.size,
             nix.PROT.READ | nix.PROT.WRITE,
@@ -51,7 +51,7 @@ pub fn attach(
             "PMEM backign file {s} has size 0x{x} which is not 2MB aligned. Aligning it up to 0x{x}",
             .{ file_path, statx.size, alined_size },
         );
-        const pmem_mem = nix.assert(@src(), System.mmap, .{
+        const pmem_mem = nix.assert(@src(), System, "mmap", .{
             null,
             alined_size,
             nix.PROT.READ | nix.PROT.WRITE,
@@ -59,7 +59,7 @@ pub fn attach(
             -1,
             0,
         });
-        const file_mem = nix.assert(@src(), System.mmap, .{
+        const file_mem = nix.assert(@src(), System, "mmap", .{
             pmem_mem.ptr,
             statx.size,
             nix.PROT.READ | nix.PROT.WRITE,

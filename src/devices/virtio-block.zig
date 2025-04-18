@@ -45,16 +45,16 @@ pub const VirtioBlock = struct {
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
     ) Self {
-        const fd = nix.assert(@src(), System.open, .{
+        const fd = nix.assert(@src(), System, "open", .{
             file_path,
             .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
             0,
         });
         defer System.close(fd);
 
-        const statx = nix.assert(@src(), System.statx, .{fd});
+        const statx = nix.assert(@src(), System, "statx", .{fd});
 
-        const file_mem = nix.assert(@src(), System.mmap, .{
+        const file_mem = nix.assert(@src(), System, "mmap", .{
             null,
             statx.size,
             if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
@@ -183,7 +183,7 @@ pub const VirtioBlock = struct {
 
             if (segments_n == 0) {
                 if (!self.read_only) {
-                    nix.assert(@src(), System.msync, .{ self.file_mem, nix.MSF.ASYNC });
+                    nix.assert(@src(), System, "msync", .{ self.file_mem, nix.MSF.ASYNC });
                 }
 
                 const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
@@ -204,7 +204,7 @@ pub const VirtioBlock = struct {
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
                         // TODO maybe add a msync with SYNC call at the end of VM lifetime
-                        nix.assert(@src(), System.msync, .{ self.file_mem, nix.MSF.ASYNC });
+                        nix.assert(@src(), System, "msync", .{ self.file_mem, nix.MSF.ASYNC });
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
                         log.assert(

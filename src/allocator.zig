@@ -32,7 +32,7 @@ pub const PermanentMemory = struct {
             .ANONYMOUS = true,
             .NORESERVE = true,
         };
-        const mem = nix.assert(@src(), System.mmap, .{ null, size, prot, flags, -1, 0 });
+        const mem = nix.assert(@src(), System, "mmap", .{ null, size, prot, flags, -1, 0 });
         return .{
             .inner = .init(mem),
         };

@@ -430,7 +430,7 @@ fn clean_return_type(
     comptime src: std.builtin.SourceLocation,
     comptime function: anytype,
 ) type {
-    const fn_type = @typeInfo(@TypeOf(function));
+    const fn_type = @typeInfo(function);
     if (fn_type.@"fn".return_type) |t| {
         const return_type = @typeInfo(t);
         switch (t) {
@@ -450,28 +450,114 @@ fn clean_return_type(
     );
 }
 
+fn args_fmt(comptime args_type: type) []const u8 {
+    var s: []const u8 = "";
+    const args_type_info = @typeInfo(args_type);
+    inline for (args_type_info.@"struct".fields, 0..) |field, i| {
+        const template = std.fmt.comptimePrint("\n{d}: ", .{i});
+        switch (field.type) {
+            []const u8 => s = s ++ template ++ "{s}",
+            i8, u8, i16, u16, i32, u32, i64, u64 => s = s ++ template ++ "{d}",
+            else => s = s ++ template ++ "{any}",
+        }
+    }
+    return s;
+}
+
+fn make_struct(comptime T: type, comptime Err: type) type {
+    const type_fields = comptime @typeInfo(T).@"struct".fields;
+    var fields: [type_fields.len + 2]std.builtin.Type.StructField = undefined;
+    fields[0] = .{
+        .name = "0",
+        .type = []const u8,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = @alignOf([]const u8),
+    };
+    fields[1] = .{
+        .name = "1",
+        .type = Err,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = @alignOf(Err),
+    };
+    for (type_fields, 2..) |f, i| {
+        var ff = f;
+        ff.name = std.fmt.comptimePrint("{}", .{i});
+        ff.is_comptime = false;
+        ff.default_value_ptr = null;
+        fields[i] = ff;
+    }
+
+    return @Type(.{
+        .@"struct" = .{
+            .layout = .auto,
+            .fields = fields[0..],
+            .decls = &[_]std.builtin.Type.Declaration{},
+            .is_tuple = true,
+        },
+    });
+}
+
+fn fill_struct(
+    comptime T: type,
+    fn_name: []const u8,
+    e: anytype,
+    args: anytype,
+) T {
+    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
+    var t: T = undefined;
+
+    @field(t, "0") = fn_name;
+    @field(t, "1") = e;
+
+    // need to inline so the loop would be unrolled
+    // because these fields are assigned at runtime
+    // but we need to generate indexes at comptime
+    inline for (args_fields, 0..) |_, i| {
+        const t_index = std.fmt.comptimePrint("{}", .{2 + i});
+        const args_index = std.fmt.comptimePrint("{}", .{i});
+        @field(t, t_index) = @field(args, args_index);
+    }
+    return t;
+}
+
 const errno = std.posix.errno;
 pub inline fn assert(
     comptime src: std.builtin.SourceLocation,
-    comptime function: anytype,
-    args: std.meta.ArgsTuple(@TypeOf(function)),
-) clean_return_type(src, function) {
-    const fn_type = @typeInfo(@TypeOf(function));
+    comptime S: type,
+    comptime function_name: []const u8,
+    args: std.meta.ArgsTuple(@TypeOf(@field(S, function_name))),
+) clean_return_type(src, @TypeOf(@field(S, function_name))) {
+    const f = @field(S, function_name);
+    const fn_type = @typeInfo(@TypeOf(f));
     const t = if (fn_type.@"fn".return_type) |tt| tt else void;
     const return_type = @typeInfo(t);
     switch (return_type) {
         .error_union => {
-            return @call(.always_inline, function, args) catch |e| {
-                log.assert(src, false, "{}", .{e});
+            return @call(.always_inline, f, args) catch |e| {
+                const T = make_struct(@TypeOf(args), @TypeOf(e));
+                const ttt = fill_struct(T, function_name, e, args);
+                log.assert(
+                    src,
+                    false,
+                    "'{s}' failed with error: {}\nargs:" ++ args_fmt(@TypeOf(args)),
+                    ttt,
+                );
                 unreachable;
             };
         },
         .int => {
-            const r = @call(.always_inline, function, args);
-            log.assert(src, errno(r) == .SUCCESS, "{}({})", .{
-                r,
-                errno(r),
-            });
+            const r = @call(.always_inline, f, args);
+            const err = errno(r);
+            const T = make_struct(@TypeOf(args), @TypeOf(err));
+            const ttt = fill_struct(T, function_name, err, args);
+            log.assert(
+                src,
+                err == .SUCCESS,
+                "'{s}' failed with error: {}\nargs:" ++ args_fmt(@TypeOf(args)),
+                ttt,
+            );
             return @intCast(r);
         },
         else => comptime log.comptime_err(

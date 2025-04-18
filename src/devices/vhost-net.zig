@@ -32,7 +32,7 @@ pub const VhostNet = struct {
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
     ) Self {
-        const tun = nix.assert(@src(), System.open, .{
+        const tun = nix.assert(@src(), System, "open", .{
             "/dev/net/tun",
             .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
             0,
@@ -47,13 +47,13 @@ pub const VhostNet = struct {
             .{ tap_name, @as(u32, nix.IFNAMESIZE) },
         );
         @memcpy(ifreq.name[0..tap_name.len], tap_name);
-        _ = nix.assert(@src(), System.ioctl, .{
+        _ = nix.assert(@src(), System, "ioctl", .{
             tun,
             nix.TUNSETIFF,
             @intFromPtr(&ifreq),
         });
         const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
-        _ = nix.assert(@src(), System.ioctl, .{
+        _ = nix.assert(@src(), System, "ioctl", .{
             tun,
             nix.TUNSETVNETHDRSZ,
             @intFromPtr(&size),
@@ -128,13 +128,13 @@ pub const VhostNet = struct {
         if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_USO6) != 0) {
             tun_flags |= nix.TUN_F_USO6;
         }
-        _ = nix.assert(@src(), System.ioctl, .{
+        _ = nix.assert(@src(), System, "ioctl", .{
             self.tun,
             nix.TUNSETOFFLOAD,
             tun_flags,
         });
 
-        const vhost = nix.assert(@src(), System.open, .{
+        const vhost = nix.assert(@src(), System, "open", .{
             "/dev/vhost-net",
             .{
                 .CLOEXEC = true,
@@ -143,7 +143,7 @@ pub const VhostNet = struct {
             },
             0,
         });
-        _ = nix.assert(@src(), System.ioctl, .{
+        _ = nix.assert(@src(), System, "ioctl", .{
             vhost,
             nix.VHOST_SET_OWNER,
             @as(usize, 0),
@@ -154,7 +154,7 @@ pub const VhostNet = struct {
                 1 << nix.VIRTIO_RING_F_EVENT_IDX |
                 1 << nix.VIRTIO_RING_F_INDIRECT_DESC |
                 1 << nix.VIRTIO_NET_F_MRG_RXBUF;
-            _ = nix.assert(@src(), System.ioctl, .{
+            _ = nix.assert(@src(), System, "ioctl", .{
                 vhost,
                 nix.VHOST_SET_FEATURES,
                 @intFromPtr(&features),
@@ -174,7 +174,7 @@ pub const VhostNet = struct {
                 .userspace_addr = @intFromPtr(self.memory.mem.ptr),
                 .flags_padding = 0,
             };
-            _ = nix.assert(@src(), System.ioctl, .{
+            _ = nix.assert(@src(), System, "ioctl", .{
                 vhost,
                 nix.VHOST_SET_MEM_TABLE,
                 @intFromPtr(&memory),
@@ -186,7 +186,7 @@ pub const VhostNet = struct {
                 .index = @intCast(i),
                 .fd = self.virtio_context.irq_evt.fd,
             };
-            _ = nix.assert(@src(), System.ioctl, .{
+            _ = nix.assert(@src(), System, "ioctl", .{
                 vhost,
                 nix.VHOST_SET_VRING_CALL,
                 @intFromPtr(&vring),
@@ -198,7 +198,7 @@ pub const VhostNet = struct {
                 .index = @intCast(i),
                 .fd = queue_event.fd,
             };
-            _ = nix.assert(@src(), System.ioctl, .{
+            _ = nix.assert(@src(), System, "ioctl", .{
                 vhost,
                 nix.VHOST_SET_VRING_KICK,
                 @intFromPtr(&vring),
@@ -211,7 +211,7 @@ pub const VhostNet = struct {
                     .index = @intCast(i),
                     .num = queue.size,
                 };
-                _ = nix.assert(@src(), System.ioctl, .{
+                _ = nix.assert(@src(), System, "ioctl", .{
                     vhost,
                     nix.VHOST_SET_VRING_NUM,
                     @intFromPtr(&vring),
@@ -227,7 +227,7 @@ pub const VhostNet = struct {
                     .avail_user_addr = @intFromPtr(self.memory.get_ptr(u8, queue.avail_ring)),
                     .log_guest_addr = 0,
                 };
-                _ = nix.assert(@src(), System.ioctl, .{
+                _ = nix.assert(@src(), System, "ioctl", .{
                     vhost,
                     nix.VHOST_SET_VRING_ADDR,
                     @intFromPtr(&vring),
@@ -239,7 +239,7 @@ pub const VhostNet = struct {
                     .index = @intCast(i),
                     .fd = self.tun,
                 };
-                _ = nix.assert(@src(), System.ioctl, .{
+                _ = nix.assert(@src(), System, "ioctl", .{
                     vhost,
                     nix.VHOST_NET_SET_BACKEND,
                     @intFromPtr(&vring),
