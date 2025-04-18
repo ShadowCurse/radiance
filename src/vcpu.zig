@@ -67,7 +67,7 @@ fn set_thread_handler(comptime System: type) void {
         .mask = std.mem.zeroes(nix.sigset_t),
         .restorer = null,
     };
-    _ = nix.assert(@src(), System.sigaction, .{ VCPU_SIGNAL, &sigact, null });
+    _ = nix.assert(@src(), System, "sigaction", .{ VCPU_SIGNAL, &sigact, null });
 }
 
 pub fn kick_threads(comptime System: type) void {
@@ -82,7 +82,7 @@ pub fn new(
     exit_event: EventFd,
     vcpu_mmap_size: u32,
 ) Self {
-    const fd = nix.assert(@src(), System.ioctl, .{
+    const fd = nix.assert(@src(), System, "ioctl", .{
         vm.fd,
         nix.KVM_CREATE_VCPU,
         index,
@@ -93,7 +93,7 @@ pub fn new(
     const flags = nix.MAP{
         .TYPE = .SHARED,
     };
-    const kvm_run = nix.assert(@src(), System.mmap, .{
+    const kvm_run = nix.assert(@src(), System, "mmap", .{
         null,
         size,
         prot,
@@ -117,7 +117,7 @@ pub fn init(self: *const Self, comptime System: type, preferred_target: nix.kvm_
     if (0 < self.index) {
         kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
     }
-    _ = nix.assert(@src(), System.ioctl, .{
+    _ = nix.assert(@src(), System, "ioctl", .{
         self.fd,
         nix.KVM_ARM_VCPU_INIT,
         @intFromPtr(&kvi),
@@ -133,7 +133,7 @@ pub fn set_reg(
 ) void {
     log.debug(@src(), "setting reg: 0x{x} to 0x{x}", .{ reg_id, value });
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-    _ = nix.assert(@src(), System.ioctl, .{
+    _ = nix.assert(@src(), System, "ioctl", .{
         self.fd,
         nix.KVM_SET_ONE_REG,
         @intFromPtr(&kor),
@@ -143,7 +143,7 @@ pub fn set_reg(
 pub fn get_reg(self: *const Self, comptime System: type, reg_id: u64) u64 {
     var value: u64 = undefined;
     const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-    _ = nix.assert(@src(), System.ioctl, .{
+    _ = nix.assert(@src(), System, "ioctl", .{
         self.fd,
         nix.KVM_GET_ONE_REG,
         @intFromPtr(&kor),

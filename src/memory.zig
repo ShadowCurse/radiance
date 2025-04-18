@@ -35,7 +35,7 @@ pub fn init(comptime System: type, size: usize) Self {
         .ANONYMOUS = true,
         .NORESERVE = true,
     };
-    const mem = nix.assert(@src(), System.mmap, .{
+    const mem = nix.assert(@src(), System, "mmap", .{
         null,
         size,
         prot,
@@ -98,7 +98,7 @@ pub fn is_aligned(addr: u64, align_to: u64) bool {
 /// the executable code starts and a size of the kernel.
 /// https://github.com/torvalds/linux/blob/master/Documentation/arch/arm64/booting.rst
 pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) struct { u64, u64 } {
-    const fd = nix.assert(@src(), System.open, .{
+    const fd = nix.assert(@src(), System, "open", .{
         path,
         .{
             .CLOEXEC = true,
@@ -106,7 +106,7 @@ pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) s
         },
         0,
     });
-    const meta = nix.assert(@src(), System.statx, .{fd});
+    const meta = nix.assert(@src(), System, "statx", .{fd});
 
     const prot = nix.PROT.READ | nix.PROT.WRITE;
     const flags = nix.MAP{
@@ -114,7 +114,7 @@ pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) s
         .FIXED = true,
         .NORESERVE = true,
     };
-    const file_mem = nix.assert(@src(), System.mmap, .{
+    const file_mem = nix.assert(@src(), System, "mmap", .{
         self.mem.ptr,
         meta.size,
         prot,

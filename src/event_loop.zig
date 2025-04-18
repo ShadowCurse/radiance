@@ -23,7 +23,7 @@ const Self = @This();
 const MAX_EVENTS = 16;
 
 pub fn new(comptime System: type) Self {
-    const epollfd = nix.assert(@src(), System.epoll_create1, .{0});
+    const epollfd = nix.assert(@src(), System, "epoll_create1", .{0});
 
     return Self{
         .exit = false,
@@ -64,7 +64,8 @@ pub fn add_event(
 
     nix.assert(
         @src(),
-        System.epoll_ctl,
+        System,
+        "epoll_ctl",
         .{ self.epollfd, nix.EPOLL_CTL_ADD, fd, &event },
     );
 }
@@ -78,7 +79,8 @@ pub fn remove_event(
         if (ec.fd == fd) {
             nix.assert(
                 @src(),
-                System.epoll_ctl,
+                System,
+                "epoll_ctl",
                 .{ self.epollfd, nix.EPOLL_CTL_DEL, fd, null },
             );
             return;
@@ -91,7 +93,8 @@ pub fn run(self: *Self, comptime System: type) void {
     while (!self.exit) {
         const nfds = nix.assert(
             @src(),
-            System.epoll_wait,
+            System,
+            "epoll_wait",
             .{ self.epollfd, &self.events, -1 },
         );
         log.assert(@src(), 0 < nfds, "epoll_wait returned {}", .{nfds});

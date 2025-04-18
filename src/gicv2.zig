@@ -37,7 +37,7 @@ pub fn new(comptime System: type, vm: *const Vm) void {
         .fd = 0,
         .flags = 0,
     };
-    _ = nix.assert(@src(), System.ioctl, .{
+    _ = nix.assert(@src(), System, "ioctl", .{
         vm.fd,
         nix.KVM_CREATE_DEVICE,
         @intFromPtr(&device),
@@ -95,7 +95,7 @@ fn set_attributes(
         .addr = addr,
     };
     log.debug(@src(), "Setting device attributes: {any}", .{kda});
-    _ = nix.assert(@src(), System.ioctl, .{
+    _ = nix.assert(@src(), System, "ioctl", .{
         fd,
         nix.KVM_SET_DEVICE_ATTR,
         @intFromPtr(&kda),

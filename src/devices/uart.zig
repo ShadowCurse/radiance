@@ -118,7 +118,7 @@ pub fn new(
         .gsi = mmio_info.irq,
     };
 
-    _ = nix.assert(@src(), System.ioctl, .{
+    _ = nix.assert(@src(), System, "ioctl", .{
         vm.fd,
         nix.KVM_IRQFD,
         @intFromPtr(&kvm_irqfd),
@@ -166,7 +166,7 @@ pub fn event_read_input(self: *Self) void {
 }
 pub fn read_input(self: *Self, comptime System: type) void {
     var buff: [8]u8 = undefined;
-    const n = nix.assert(@src(), System.read, .{ self.in, &buff });
+    const n = nix.assert(@src(), System, "read", .{ self.in, &buff });
     if (n <= 0) {
         return;
     }
@@ -257,7 +257,7 @@ pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
                         self.received_data_interrupt(System);
                     } else |_| {}
                 } else {
-                    _ = nix.assert(@src(), System.write, .{ self.out, data });
+                    _ = nix.assert(@src(), System, "write", .{ self.out, data });
 
                     // Because we cannot block the driver, the THRE interrupt is sent
                     // irrespective of whether we are able to write the byte or not

@@ -135,7 +135,7 @@ pub fn VirtioContext(
                 .fd = @intCast(self.irq_evt.fd),
                 .gsi = irq,
             };
-            _ = nix.assert(@src(), System.ioctl, .{
+            _ = nix.assert(@src(), System, "ioctl", .{
                 vm.fd,
                 nix.KVM_IRQFD,
                 @intFromPtr(&kvm_irqfd),
@@ -149,7 +149,7 @@ pub fn VirtioContext(
                     .fd = queue_event.fd,
                     .flags = nix.KVM_IOEVENTFD_FLAG_NR_DATAMATCH,
                 };
-                _ = nix.assert(@src(), System.ioctl, .{
+                _ = nix.assert(@src(), System, "ioctl", .{
                     vm.fd,
                     nix.KVM_IOEVENTFD,
                     @intFromPtr(&kvm_ioeventfd),
@@ -167,7 +167,8 @@ pub fn VirtioContext(
             };
             const mem = nix.assert(
                 @src(),
-                System.mmap,
+                System,
+                "mmap",
                 .{ null, MMIO_LEN, prot, flags, -1, 0 },
             );
             // Memory will be at the offset INTERRUPT_STATUS_OFFSET in VIRTIO region

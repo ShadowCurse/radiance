@@ -13,9 +13,9 @@ len: u16,
 capacity: u32,
 
 pub fn init(comptime System: type) Self {
-    const memfd = nix.assert(@src(), System.memfd_create, .{ "iov_ring", nix.FD_CLOEXEC });
-    nix.assert(@src(), nix.ftruncate, .{ memfd, HOST_PAGE_SIZE });
-    const mem = nix.assert(@src(), System.mmap, .{
+    const memfd = nix.assert(@src(), System, "memfd_create", .{ "iov_ring", nix.FD_CLOEXEC });
+    nix.assert(@src(), System, "ftruncate", .{ memfd, HOST_PAGE_SIZE });
+    const mem = nix.assert(@src(), System, "mmap", .{
         null,
         HOST_PAGE_SIZE * 2,
         nix.PROT.NONE,
@@ -26,7 +26,7 @@ pub fn init(comptime System: type) Self {
         -1,
         0,
     });
-    _ = nix.assert(@src(), System.mmap, .{
+    _ = nix.assert(@src(), System, "mmap", .{
         mem.ptr,
         HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,
@@ -37,7 +37,7 @@ pub fn init(comptime System: type) Self {
         memfd,
         0,
     });
-    _ = nix.assert(@src(), System.mmap, .{
+    _ = nix.assert(@src(), System, "mmap", .{
         mem.ptr + HOST_PAGE_SIZE,
         HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,

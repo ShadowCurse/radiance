@@ -45,7 +45,7 @@ pub const VirtioNet = struct {
         memory: *Memory,
         mmio_info: MmioDeviceInfo,
     ) Self {
-        const tun = nix.assert(@src(), System.open, .{
+        const tun = nix.assert(@src(), System, "open", .{
             "/dev/net/tun",
             .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
             0,
@@ -60,13 +60,13 @@ pub const VirtioNet = struct {
             .{ tap_name, @as(u32, nix.IFNAMESIZE) },
         );
         @memcpy(ifreq.name[0..tap_name.len], tap_name);
-        _ = nix.assert(@src(), System.ioctl, .{
+        _ = nix.assert(@src(), System, "ioctl", .{
             tun,
             nix.TUNSETIFF,
             @intFromPtr(&ifreq),
         });
         const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
-        _ = nix.assert(@src(), System.ioctl, .{
+        _ = nix.assert(@src(), System, "ioctl", .{
             tun,
             nix.TUNSETVNETHDRSZ,
             @intFromPtr(&size),
@@ -131,7 +131,7 @@ pub const VirtioNet = struct {
         if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
             tun_flags |= nix.TUN_F_TSO6;
         }
-        _ = nix.assert(@src(), System.ioctl, .{
+        _ = nix.assert(@src(), System, "ioctl", .{
             self.tun,
             nix.TUNSETOFFLOAD,
             tun_flags,
@@ -188,7 +188,7 @@ pub const VirtioNet = struct {
             self.tx_chain.add_chain(self.memory, dc);
 
             const iov_slice = self.tx_chain.slice();
-            _ = nix.assert(@src(), System.writev, .{ self.tun, iov_slice });
+            _ = nix.assert(@src(), System, "writev", .{ self.tun, iov_slice });
             self.tx_chain.finish_used(self.memory, queue);
         }
 
