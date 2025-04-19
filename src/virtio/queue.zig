@@ -187,15 +187,11 @@ const TestSystem = struct {
         _ = offset;
         return M[0..length];
     }
-    pub fn munmap(m: []align(memory.HOST_PAGE_SIZE) const u8) void {
-        _ = m;
-    }
 };
 test "test_queue_pop_desc_chain" {
     const expect = std.testing.expect;
 
     var memory = Memory.init(TestSystem, 0x1000);
-    defer memory.deinit(TestSystem);
 
     memory.guest_addr = 0;
     @memset(memory.mem, 0);
@@ -239,7 +235,6 @@ test "test_queue_add_used_desc" {
     const expect = std.testing.expect;
 
     var memory = Memory.init(TestSystem, 0x1000);
-    defer memory.deinit(TestSystem);
 
     memory.guest_addr = 0;
     @memset(memory.mem, 0);

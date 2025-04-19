@@ -50,10 +50,6 @@ pub fn init(comptime System: type, size: usize) Self {
     return Self{ .guest_addr = DRAM_START, .mem = mem };
 }
 
-pub fn deinit(self: *const Self, comptime System: type) void {
-    System.munmap(self.mem);
-}
-
 pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
     const offset = addr - self.guest_addr;
     const end_of_type = offset + @sizeOf(T);
