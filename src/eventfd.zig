@@ -11,10 +11,6 @@ pub fn new(comptime System: type, init: u32, flags: u32) Self {
     return Self{ .fd = fd };
 }
 
-pub fn deinit(self: *Self, comptime System: type) void {
-    _ = nix.assert(@src(), System, "close", .{self.fd});
-}
-
 pub fn read(self: *Self, comptime System: type) u64 {
     var buf: u64 = undefined;
     const buf_slice = std.mem.asBytes(&buf);
