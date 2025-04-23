@@ -133,6 +133,10 @@ pub fn main() !void {
             mmio_info,
         );
     }
+    defer {
+        for (virtio_blocks) |*block|
+            block.sync(nix.System);
+    }
 
     const virtio_nets = try permanent_alloc.alloc(VirtioNet, virtio_net_count);
     const vhost_nets = try permanent_alloc.alloc(VhostNet, vhost_net_count);
