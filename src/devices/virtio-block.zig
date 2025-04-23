@@ -58,7 +58,7 @@ pub const VirtioBlock = struct {
             null,
             statx.size,
             if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
-            .{ .TYPE = .PRIVATE },
+            .{ .TYPE = if (read_only) .PRIVATE else .SHARED },
             fd,
             0,
         });
@@ -144,6 +144,11 @@ pub const VirtioBlock = struct {
         }
     }
 
+    pub fn sync(self: *Self, comptime System: type) void {
+        if (!self.read_only)
+            nix.assert(@src(), System, "msync", .{ self.file_mem, nix.MSF.ASYNC });
+    }
+
     pub fn event_process_queue(self: *Self) void {
         self.process_queue(nix.System);
     }
@@ -182,9 +187,7 @@ pub const VirtioBlock = struct {
             const status_desc = data_desc;
 
             if (segments_n == 0) {
-                if (!self.read_only) {
-                    nix.assert(@src(), System, "msync", .{ self.file_mem, nix.MSF.ASYNC });
-                }
+                self.sync(System);
 
                 const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
                 status_ptr.* = nix.VIRTIO_BLK_S_OK;
@@ -203,8 +206,7 @@ pub const VirtioBlock = struct {
                         }
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
-                        // TODO maybe add a msync with SYNC call at the end of VM lifetime
-                        nix.assert(@src(), System, "msync", .{ self.file_mem, nix.MSF.ASYNC });
+                        self.sync(System);
                     },
                     nix.VIRTIO_BLK_T_GET_ID => {
                         log.assert(
