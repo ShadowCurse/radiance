@@ -24,6 +24,9 @@ pub const System = struct {
     pub const accept = std.posix.accept;
     pub const ioctl = std.os.linux.ioctl;
     pub const msync = std.posix.msync;
+    pub const io_uring_setup = std.os.linux.io_uring_setup;
+    pub const io_uring_register = std.os.linux.io_uring_register;
+    pub const io_uring_enter = std.os.linux.io_uring_enter;
 
     pub fn statx(fd: fd_t) !Statx {
         var stx = std.mem.zeroes(Statx);
@@ -48,6 +51,16 @@ pub const System = struct {
 
     pub const spawn_thread = std.Thread.spawn;
 };
+
+pub const io_uring_params = std.os.linux.io_uring_params;
+pub const io_uring_sqe = std.os.linux.io_uring_sqe;
+pub const io_uring_cqe = std.os.linux.io_uring_cqe;
+
+pub const IORING_OFF_SQ_RING = std.os.linux.IORING_OFF_SQ_RING;
+pub const IORING_OFF_CQ_RING = std.os.linux.IORING_OFF_CQ_RING;
+pub const IORING_OFF_SQES = std.os.linux.IORING_OFF_SQES;
+pub const IORING_FEAT_SINGLE_MMAP = std.os.linux.IORING_FEAT_SINGLE_MMAP;
+pub const IORING_REGISTER = std.os.linux.IORING_REGISTER;
 
 pub const KVMIO = 0xAE;
 pub const _IOC_NRBITS = 8;
