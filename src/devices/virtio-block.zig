@@ -25,7 +25,7 @@ pub const QUEUE_SIZE = 256;
 // but it needs to have 1 descriptor for header
 // and 1 for the ack location.
 pub const MAX_SEGMENTS = QUEUE_SIZE - 2;
-pub const QUEUE_SIZES = .{ QUEUE_SIZE, QUEUE_SIZE };
+pub const QUEUE_SIZES = .{QUEUE_SIZE};
 
 pub const VirtioBlock = struct {
     read_only: bool,
