@@ -153,7 +153,8 @@ pub const VirtioBlock = struct {
         self.process_queue(nix.System);
     }
     pub fn process_queue(self: *Self, comptime System: type) void {
-        _ = self.virtio_context.queue_events[self.virtio_context.selected_queue].read(System);
+        const queue_event = &self.virtio_context.queue_events[self.virtio_context.selected_queue];
+        _ = queue_event.read(System);
 
         var segments: [MAX_SEGMENTS][]volatile u8 = undefined;
         var segments_n: u32 = 0;
@@ -171,7 +172,6 @@ pub const VirtioBlock = struct {
             var offset = header.sector << SECTOR_SHIFT;
 
             var data_desc = desc_chain.next().?;
-
             while ((data_desc.flags & nix.VRING_DESC_F_NEXT) != 0) {
                 log.assert(
                     @src(),
@@ -186,52 +186,42 @@ pub const VirtioBlock = struct {
             }
             const status_desc = data_desc;
 
-            if (segments_n == 0) {
-                self.sync(System);
-
-                const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
-                status_ptr.* = nix.VIRTIO_BLK_S_OK;
-            } else {
-                switch (header.type) {
-                    nix.VIRTIO_BLK_T_IN => {
-                        for (segments[0..segments_n]) |segment| {
-                            @memcpy(segment, self.file_mem[offset .. offset + segment.len]);
-                            offset += segment.len;
-                        }
-                    },
-                    nix.VIRTIO_BLK_T_OUT => {
-                        for (segments[0..segments_n]) |segment| {
-                            @memcpy(self.file_mem[offset .. offset + segment.len], segment);
-                            offset += segment.len;
-                        }
-                    },
-                    nix.VIRTIO_BLK_T_FLUSH => {
-                        self.sync(System);
-                    },
-                    nix.VIRTIO_BLK_T_GET_ID => {
-                        log.assert(
-                            @src(),
-                            segments_n == 1,
-                            "Descriptor chain has more than 1 data descriptor for VIRTIO_BLK_T_GET_ID request",
-                            .{},
-                        );
-                        const segment = segments[0];
-                        @memcpy(segment, &self.block_id);
-                        total_segments_len = nix.VIRTIO_BLK_ID_BYTES;
-                    },
-                    else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
-                }
-                const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
-                status_ptr.* = nix.VIRTIO_BLK_S_OK;
-
-                self.virtio_context.queues[self.virtio_context.selected_queue]
-                    .add_used_desc(self.memory, header_desc_index, total_segments_len);
+            switch (header.type) {
+                nix.VIRTIO_BLK_T_IN => {
+                    for (segments[0..segments_n]) |segment| {
+                        @memcpy(segment, self.file_mem[offset .. offset + segment.len]);
+                        offset += segment.len;
+                    }
+                },
+                nix.VIRTIO_BLK_T_OUT => {
+                    for (segments[0..segments_n]) |segment| {
+                        @memcpy(self.file_mem[offset .. offset + segment.len], segment);
+                        offset += segment.len;
+                    }
+                },
+                nix.VIRTIO_BLK_T_FLUSH => {
+                    self.sync(System);
+                },
+                nix.VIRTIO_BLK_T_GET_ID => {
+                    log.assert(
+                        @src(),
+                        segments_n == 1,
+                        "Descriptor chain has more than 1 data descriptor for VIRTIO_BLK_T_GET_ID request",
+                        .{},
+                    );
+                    const segment = segments[0];
+                    @memcpy(segment, &self.block_id);
+                    total_segments_len = nix.VIRTIO_BLK_ID_BYTES;
+                },
+                else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
             }
+            const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
+            status_ptr.* = nix.VIRTIO_BLK_S_OK;
+
+            queue.add_used_desc(self.memory, header_desc_index, total_segments_len);
         }
 
-        if (self.virtio_context.queues[self.virtio_context.selected_queue]
-            .send_notification(self.memory))
-        {
+        if (queue.send_notification(self.memory)) {
             self.virtio_context.irq_evt.write(System, 1);
         }
     }
