@@ -42,8 +42,9 @@ pub const UartConfig = struct {
 };
 
 pub const DriveConfig = struct {
-    read_only: bool = false,
     path: []const u8 = "",
+    read_only: bool = false,
+    io_uring: bool = false,
     rootfs: bool = false,
 };
 
