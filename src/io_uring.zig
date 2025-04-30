@@ -31,8 +31,10 @@ const SubmitQueue = struct {
         const tail = self.ring_tail.*;
         const index = tail & self.ring_mask.*;
         self.ring_array[index] = index;
+
         @atomicStore(u32, self.ring_tail, tail +% 1, .release);
         self.to_submit += 1;
+
         return &self.queue[index];
     }
 };
@@ -47,9 +49,11 @@ const CompleteQueue = struct {
         const head = @atomicLoad(u32, self.ring_head, .acquire);
         if (head == self.ring_tail.*)
             return null;
+
         const index = head & self.ring_mask.*;
         const cqe = &self.queue[index];
         @atomicStore(u32, self.ring_head, head +% 1, .release);
+
         return cqe;
     }
 };
@@ -183,9 +187,10 @@ pub fn submit(self: *Self, comptime System: type) void {
         0,
         null,
     });
-    log.debug(
+    log.assert(
         @src(),
-        "submitted: {d} out of {d}",
+        submitted == self.submit_queue.to_submit,
+        "io_uring submitted {d} out of {d} requestst",
         .{ submitted, self.submit_queue.to_submit },
     );
     self.submit_queue.to_submit = 0;
@@ -198,11 +203,15 @@ pub fn process_event(self: *Self, comptime System: type) void {
     _ = self.eventfd.read(System);
 
     while (self.complete_queue.read()) |cqe| {
+        log.assert(
+            @src(),
+            cqe.err() == .SUCCESS,
+            "io_uring completion contains error. cqe: {any}",
+            .{cqe},
+        );
         const entry_idx: EntryIdx = @bitCast(cqe.user_data);
         const callback_idx = entry_idx.device_idx;
         const callback = self.callbacks[callback_idx];
-
-        log.debug(@src(), "io_uring completion entry_idx: {any}", .{entry_idx});
         callback.callback(callback.parameter, cqe);
     }
 }
