@@ -11,6 +11,7 @@ const Pmem = @import("devices/pmem.zig");
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
+const VirtioBlockIoUring = @import("devices/virtio_block_io_uring.zig").VirtioBlockIoUring;
 const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
@@ -24,6 +25,7 @@ const Memory = @import("memory.zig");
 const Mmio = @import("mmio.zig");
 const Vcpu = @import("vcpu.zig");
 const Vm = @import("vm.zig");
+const IoUring = @import("io_uring.zig");
 
 pub const std_options = std.Options{
     .log_level = .info,
@@ -49,9 +51,21 @@ pub fn main() !void {
         }
     }
 
-    const permanent_memory_size = @sizeOf(Vcpu) * config.machine.vcpus +
+    var virtio_block_count: u32 = 0;
+    var virtio_block_io_uring_count: u32 = 0;
+    for (config.drives.drives.slice()) |*drive_config| {
+        if (drive_config.io_uring) {
+            virtio_block_io_uring_count += 1;
+        } else {
+            virtio_block_count += 1;
+        }
+    }
+
+    const permanent_memory_size =
+        @sizeOf(Vcpu) * config.machine.vcpus +
         @sizeOf(std.Thread) * config.machine.vcpus +
-        @sizeOf(VirtioBlock) * @as(u32, @intCast(config.drives.drives.len)) +
+        @sizeOf(VirtioBlock) * virtio_block_count +
+        @sizeOf(VirtioBlockIoUring) * virtio_block_io_uring_count +
         @sizeOf(VirtioNet) * virtio_net_count +
         @sizeOf(VhostNet) * vhost_net_count;
 
@@ -121,29 +135,56 @@ pub fn main() !void {
     ) else undefined;
     var rtc = Rtc.new();
 
-    const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, config.drives.drives.len);
-    const vb_infos = virtio_device_infos[0..config.drives.drives.len];
-    for (virtio_blocks, config.drives.drives.slice(), vb_infos) |*block, *drive, mmio_info| {
-        block.* = VirtioBlock.new(
-            nix.System,
-            &vm,
-            drive.path,
-            drive.read_only,
-            &memory,
-            mmio_info,
-        );
+    var io_uring: IoUring = undefined;
+    if (virtio_block_io_uring_count != 0)
+        io_uring = IoUring.init(nix.System, 256);
+
+    const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, virtio_block_count);
+    const virtio_io_uring_blocks = try permanent_alloc.alloc(VirtioBlockIoUring, virtio_block_io_uring_count);
+    var virtio_block_index: u8 = 0;
+    var virtio_block_io_uring_index: u8 = 0;
+    const block_infos = virtio_device_infos[0 .. virtio_block_count + virtio_block_io_uring_count];
+    for (config.drives.drives.slice(), block_infos) |*drive_config, mmio_info| {
+        if (drive_config.io_uring) {
+            const block = &virtio_io_uring_blocks[virtio_block_io_uring_index];
+            virtio_block_io_uring_index += 1;
+            block.* = VirtioBlockIoUring.new(
+                nix.System,
+                &vm,
+                drive_config.path,
+                drive_config.read_only,
+                &memory,
+                mmio_info,
+            );
+            block.io_uring_device = io_uring.add_event(
+                @ptrCast(&VirtioBlockIoUring.event_process_io_uring_event),
+                block,
+            );
+        } else {
+            const block = &virtio_blocks[virtio_block_index];
+            virtio_block_index += 1;
+            block.* = VirtioBlock.new(
+                nix.System,
+                &vm,
+                drive_config.path,
+                drive_config.read_only,
+                &memory,
+                mmio_info,
+            );
+        }
     }
     defer {
         for (virtio_blocks) |*block|
+            block.sync(nix.System);
+        for (virtio_io_uring_blocks) |*block|
             block.sync(nix.System);
     }
 
     const virtio_nets = try permanent_alloc.alloc(VirtioNet, virtio_net_count);
     const vhost_nets = try permanent_alloc.alloc(VhostNet, vhost_net_count);
-
     var virtio_net_index: u8 = 0;
     var vhost_net_index: u8 = 0;
-    const net_infos = virtio_device_infos[config.drives.drives.len..];
+    const net_infos = virtio_device_infos[virtio_block_count + virtio_block_io_uring_count ..];
     for (config.networks.networks.slice(), net_infos) |*net_config, mmio_info| {
         if (net_config.vhost) {
             vhost_nets[vhost_net_index] = VhostNet.new(
@@ -178,11 +219,18 @@ pub fn main() !void {
         .read_ptr = @ptrCast(&Rtc.read),
         .write_ptr = @ptrCast(&Rtc.write),
     });
-    for (virtio_blocks) |*virtio_block| {
+    for (virtio_blocks) |*block| {
         mmio.add_device_virtio(.{
-            .ptr = virtio_block,
+            .ptr = block,
             .read_ptr = @ptrCast(&VirtioBlock.read),
             .write_ptr = @ptrCast(&VirtioBlock.write_default),
+        });
+    }
+    for (virtio_io_uring_blocks) |*block| {
+        mmio.add_device_virtio(.{
+            .ptr = block,
+            .read_ptr = @ptrCast(&VirtioBlockIoUring.read),
+            .write_ptr = @ptrCast(&VirtioBlockIoUring.write_default),
         });
     }
     for (virtio_nets) |*virtio_net| {
@@ -280,11 +328,26 @@ pub fn main() !void {
         @ptrCast(&Uart.event_read_input),
         &uart,
     );
+    if (virtio_block_io_uring_count != 0)
+        el.add_event(
+            nix.System,
+            io_uring.eventfd.fd,
+            @ptrCast(&IoUring.event_process_event),
+            @ptrCast(&io_uring),
+        );
     for (virtio_blocks) |*block| {
         el.add_event(
             nix.System,
             block.virtio_context.queue_events[0].fd,
             @ptrCast(&VirtioBlock.event_process_queue),
+            block,
+        );
+    }
+    for (virtio_io_uring_blocks) |*block| {
+        el.add_event(
+            nix.System,
+            block.virtio_context.queue_events[0].fd,
+            @ptrCast(&VirtioBlockIoUring.event_process_queue),
             block,
         );
     }

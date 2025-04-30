@@ -24,6 +24,7 @@ pub const System = struct {
     pub const accept = std.posix.accept;
     pub const ioctl = std.os.linux.ioctl;
     pub const msync = std.posix.msync;
+    pub const fsync = std.posix.fsync;
     pub const io_uring_setup = std.os.linux.io_uring_setup;
     pub const io_uring_register = std.os.linux.io_uring_register;
     pub const io_uring_enter = std.os.linux.io_uring_enter;
