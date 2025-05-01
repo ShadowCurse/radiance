@@ -7,12 +7,14 @@ fd: nix.fd_t,
 submit_queue: SubmitQueue,
 complete_queue: CompleteQueue,
 eventfd: EventFd,
-callbacks: [16]EventCallback = undefined,
+callbacks: [MAX_DEVICES]DeviceCallback = undefined,
 callbacks_num: u8 = 0,
+
+const MAX_DEVICES = 16;
 
 const CallbackFn = *const fn (*anyopaque, *const nix.io_uring_cqe) void;
 const CallbackParam = *anyopaque;
-const EventCallback = struct {
+const DeviceCallback = struct {
     callback: CallbackFn,
     parameter: CallbackParam,
 };
@@ -158,11 +160,17 @@ pub fn init(comptime System: type, entries: u32) Self {
     };
 }
 
-pub fn add_event(
+pub fn add_device(
     self: *Self,
     callback: CallbackFn,
     parameter: CallbackParam,
 ) Device {
+    log.assert(
+        @src(),
+        self.callbacks_num < MAX_DEVICES,
+        "Trying to attach more devices to io_uring than maxinum: {d}",
+        .{@as(u32, MAX_DEVICES)},
+    );
     const idx = self.callbacks_num;
     self.callbacks[idx] = .{
         .callback = callback,
