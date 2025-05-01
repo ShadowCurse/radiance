@@ -10,8 +10,9 @@ const gdb = @import("gdb.zig");
 const Pmem = @import("devices/pmem.zig");
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
-const VirtioBlock = @import("devices/virtio-block.zig").VirtioBlock;
-const VirtioBlockIoUring = @import("devices/virtio_block_io_uring.zig").VirtioBlockIoUring;
+const _virtio_block = @import("devices/virtio-block.zig");
+const VirtioBlock = _virtio_block.VirtioBlock;
+const VirtioBlockIoUring = _virtio_block.VirtioBlockIoUring;
 const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
@@ -156,7 +157,7 @@ pub fn main() !void {
                 &memory,
                 mmio_info,
             );
-            block.io_uring_device = io_uring.add_event(
+            block.io_uring_device = io_uring.add_device(
                 @ptrCast(&VirtioBlockIoUring.event_process_io_uring_event),
                 block,
             );
