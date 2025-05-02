@@ -32,10 +32,13 @@ last_address: u64,
 virtio_address_start: u64,
 
 num_devices: u8,
-devices: [2]MmioDevice,
+devices: [MAX_MMIO_DEVICES]MmioDevice,
 
 virtio_num_devices: u8,
-virtio_devices: [8]MmioDevice,
+virtio_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
+
+const MAX_MMIO_DEVICES = 2;
+const MAX_VIRTIO_DEVICES = 8;
 
 const Self = @This();
 
@@ -97,11 +100,23 @@ pub fn allocate_virtio(self: *Self) MmioDeviceInfo {
 }
 
 pub fn add_device(self: *Self, device: MmioDevice) void {
+    log.assert(
+        @src(),
+        self.num_devices < MAX_MMIO_DEVICES,
+        "Trying to attach more devices to mmio bus than maximum: {d}",
+        .{@as(u32, MAX_MMIO_DEVICES)},
+    );
     self.devices[self.num_devices] = device;
     self.num_devices += 1;
 }
 
 pub fn add_device_virtio(self: *Self, device: MmioDevice) void {
+    log.assert(
+        @src(),
+        self.virtio_num_devices < MAX_VIRTIO_DEVICES,
+        "Trying to attach more virtio devices to mmio bus than maximum: {d}",
+        .{@as(u32, MAX_VIRTIO_DEVICES)},
+    );
     self.virtio_devices[self.virtio_num_devices] = device;
     self.virtio_num_devices += 1;
 }
