@@ -75,11 +75,10 @@ pub fn main() !void {
     const permanent_alloc = permanent_memory.allocator();
 
     var memory = Memory.init(nix.System, config.machine.memory_mb << 20);
-    const load_result = memory.load_linux_kernel(nix.System, config.kernel.path);
-    const kernel_load_address = load_result[0];
-    const kernel_size = load_result[1];
+    const load_result =
+        memory.load_linux_kernel(nix.System, config.kernel.path);
 
-    var guest_memory = allocator.GuestMemory.init(&memory, kernel_size);
+    var guest_memory = allocator.GuestMemory.init(&memory, load_result.size);
     const tmp_alloc = guest_memory.allocator();
 
     const kvm = Kvm.new(nix.System);
@@ -304,7 +303,7 @@ pub fn main() !void {
     );
 
     // configure vcpus
-    vcpus[0].set_reg(nix.System, u64, Vcpu.PC, kernel_load_address);
+    vcpus[0].set_reg(nix.System, u64, Vcpu.PC, load_result.start);
     vcpus[0].set_reg(nix.System, u64, Vcpu.REGS0, @as(u64, fdt_addr));
 
     for (vcpus) |*vcpu| {

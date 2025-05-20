@@ -93,7 +93,11 @@ pub fn is_aligned(addr: u64, align_to: u64) bool {
 /// Returns the guest memory address where
 /// the executable code starts and a size of the kernel.
 /// https://github.com/torvalds/linux/blob/master/Documentation/arch/arm64/booting.rst
-pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) struct { u64, u64 } {
+pub const LoadResult = struct {
+    start: u64,
+    size: u64,
+};
+pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) LoadResult {
     const fd = nix.assert(@src(), System, "open", .{
         path,
         .{
@@ -132,5 +136,5 @@ pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) s
         text_offset = 0x80000;
     }
 
-    return .{ DRAM_START + text_offset, meta.size };
+    return .{ .start = DRAM_START + text_offset, .size = meta.size };
 }
