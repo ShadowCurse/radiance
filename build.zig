@@ -15,6 +15,13 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const host_page_size =
+        b.option(usize, "host_page_size", "Page size on the host system") orelse
+        std.heap.pageSize();
+
+    const options = b.addOptions();
+    options.addOption(usize, "host_page_size", host_page_size);
+
     {
         const exe = b.addExecutable(.{
             .name = "radiance",
@@ -24,6 +31,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
+        exe.root_module.addOptions("build_options", options);
 
         // This declares intent for the executable to be installed into the
         // standard location when the user invokes the "install" step (the default
