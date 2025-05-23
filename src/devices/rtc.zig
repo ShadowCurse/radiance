@@ -75,7 +75,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
             log.assert(
                 @src(),
                 false,
-                "invalid rtc write: offset: {x} data: {}",
+                "invalid rtc write: offset: 0x{x} data: 0x{x}",
                 .{ offset, val.* },
             );
         },
@@ -102,7 +102,7 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
         0xFF8 => @as(u32, 0x05),
         0xFFC => @as(u32, 0xB1),
         else => {
-            log.assert(@src(), false, "invalid rtc read: offset: {x}", .{offset});
+            log.assert(@src(), false, "invalid rtc read: offset: 0x{x}", .{offset});
             unreachable;
         },
     };
