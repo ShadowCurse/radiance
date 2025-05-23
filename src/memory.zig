@@ -2,7 +2,6 @@ const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 
-pub const GUEST_PAGE_SIZE = 0x1000;
 pub const HOST_PAGE_SIZE = std.heap.page_size_min;
 
 /// Start of RAM on 64 bit ARM.

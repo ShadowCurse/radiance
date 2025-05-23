@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const allocator = @import("allocator.zig");
@@ -30,6 +31,7 @@ const IoUring = @import("io_uring.zig");
 
 pub const std_options = std.Options{
     .log_level = .info,
+    .page_size_min = build_options.host_page_size,
 };
 
 const Args = struct {

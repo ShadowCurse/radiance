@@ -2,11 +2,10 @@ const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
+const Mmio = @import("../mmio.zig");
 const Vm = @import("../vm.zig");
 const EventFd = @import("../eventfd.zig");
 const Queue = @import("queue.zig").Queue;
-
-const MMIO_LEN = @import("../mmio.zig").MMIO_DEVICE_SIZE;
 
 // The VIRTIO space allocation strategy is:
 //            Page without memory backing                       Page with memory backing
@@ -169,7 +168,7 @@ pub fn VirtioContext(
                 @src(),
                 System,
                 "mmap",
-                .{ null, MMIO_LEN, prot, flags, -1, 0 },
+                .{ null, Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE, prot, flags, -1, 0 },
             );
             // Memory will be at the offset INTERRUPT_STATUS_OFFSET in VIRTIO region
             // Set Interrupt status to always be 1
