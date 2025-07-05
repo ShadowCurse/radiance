@@ -5,95 +5,92 @@ pub fn comptime_err(
     comptime format: []const u8,
     comptime args: anytype,
 ) void {
+    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, src, args);
-    @compileError(std.fmt.comptimePrint("[{s}:{s}:{}:{}] " ++ format, t));
+    const t = fill_struct(T, header, args);
+    @compileError(std.fmt.comptimePrint("{s} " ++ format, t));
 }
 
 pub fn assert(
-    src: std.builtin.SourceLocation,
+    comptime src: std.builtin.SourceLocation,
     ok: bool,
     comptime format: []const u8,
     args: anytype,
 ) void {
     if (!ok) {
         @branchHint(.cold);
+        const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
         const T = make_struct(@TypeOf(args));
-        const t = fill_struct(T, src, args);
-        std.debug.panic("[{s}:{s}:{}:{}] " ++ format, t);
+        const t = fill_struct(T, header, args);
+        std.debug.panic("{s} " ++ format, t);
     }
 }
 
 pub fn info(
-    src: std.builtin.SourceLocation,
+    comptime src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
+    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, src, args);
-    std.log.info("[{s}:{s}:{}:{}] " ++ format, t);
+    const t = fill_struct(T, header, args);
+    std.log.info("{s} " ++ format, t);
 }
 
 pub fn debug(
-    src: std.builtin.SourceLocation,
+    comptime src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
+    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, src, args);
-    std.log.debug("[{s}:{s}:{}:{}] " ++ format, t);
+    const t = fill_struct(T, header, args);
+    std.log.debug("{s} " ++ format, t);
 }
 
 pub fn warn(
-    src: std.builtin.SourceLocation,
+    comptime src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
+    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, src, args);
-    std.log.warn("[{s}:{s}:{}:{}] " ++ format, t);
+    const t = fill_struct(T, header, args);
+    std.log.warn("{s} " ++ format, t);
 }
 
 pub fn err(
-    src: std.builtin.SourceLocation,
+    comptime src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
+    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, src, args);
-    std.log.err("[{s}:{s}:{}:{}] " ++ format, t);
+    const t = fill_struct(T, header, args);
+    std.log.err("{s} " ++ format, t);
 }
 
-fn fill_struct(
-    comptime T: type,
-    src: std.builtin.SourceLocation,
-    args: anytype,
-) T {
+fn fill_struct(comptime T: type, comptime header: [:0]const u8, args: anytype) T {
     const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
     var t: T = undefined;
 
-    @field(t, "0") = src.file;
-    @field(t, "1") = src.fn_name;
-    @field(t, "2") = src.line;
-    @field(t, "3") = src.column;
+    @field(t, "0") = header;
 
     // need to inline so the loop would be unrolled
     // because these fields are assigned at runtime
     // but we need to generate indexes at comptime
     inline for (args_fields, 0..) |_, i| {
-        const t_index = std.fmt.comptimePrint("{}", .{4 + i});
+        const t_index = std.fmt.comptimePrint("{}", .{1 + i});
         const args_index = std.fmt.comptimePrint("{}", .{i});
         @field(t, t_index) = @field(args, args_index);
     }
     return t;
 }
 
-fn make_struct(
-    comptime T: type,
-) type {
+fn make_struct(comptime T: type) type {
     const type_fields = comptime @typeInfo(T).@"struct".fields;
-    var fields: [type_fields.len + 4]std.builtin.Type.StructField = undefined;
-    // file
+    var fields: [type_fields.len + 1]std.builtin.Type.StructField = undefined;
+    // header
     fields[0] = .{
         .name = "0",
         .type = [:0]const u8,
@@ -101,31 +98,7 @@ fn make_struct(
         .is_comptime = false,
         .alignment = @alignOf([:0]const u8),
     };
-    // fn_name
-    fields[1] = .{
-        .name = "1",
-        .type = [:0]const u8,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = @alignOf([:0]const u8),
-    };
-    // line
-    fields[2] = .{
-        .name = "2",
-        .type = u32,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = @alignOf(u32),
-    };
-    // column
-    fields[3] = .{
-        .name = "3",
-        .type = u32,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = @alignOf(u32),
-    };
-    for (type_fields, 4..) |f, i| {
+    for (type_fields, 1..) |f, i| {
         var ff = f;
         ff.name = std.fmt.comptimePrint("{}", .{i});
         ff.is_comptime = false;
