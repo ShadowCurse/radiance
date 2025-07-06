@@ -30,8 +30,12 @@ const Vm = @import("vm.zig");
 const IoUring = @import("io_uring.zig");
 
 pub const std_options = std.Options{
-    .log_level = .info,
     .page_size_min = build_options.host_page_size,
+};
+
+pub const log_options = log.Options{
+    .level = .Info,
+    .colors = true,
 };
 
 const Args = struct {
