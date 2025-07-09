@@ -40,6 +40,36 @@ pub const DeviceStatus = packed struct(u8) {
     _: u2 = 0,
     need_reset: bool = false,
     failed: bool = false,
+
+    pub fn update(self: *DeviceStatus, new_status: u8) VirtioAction {
+        const current_status: u8 = @bitCast(self.*);
+        const diff: DeviceStatus = @bitCast(~current_status & new_status);
+        if ((new_status == 0) or
+            (diff.acknowledge and
+                current_status == 0) or
+            (diff.driver and
+                self.acknowledge) or
+            (diff.features_ok and
+                self.acknowledge and
+                self.driver))
+        {
+            self.* = @bitCast(new_status);
+        } else if ((diff.driver_ok and
+            self.acknowledge and
+            self.driver and
+            self.features_ok))
+        {
+            self.* = @bitCast(new_status);
+            return .ActivateDevice;
+        } else {
+            log.warn(
+                @src(),
+                "invalid virtio driver status transition: {any} -> {any}: {any}",
+                .{ self, @as(DeviceStatus, @bitCast(new_status)), diff },
+            );
+        }
+        return .NoAction;
+    }
 };
 
 pub const VENDOR_ID: u32 = 0;
@@ -190,36 +220,6 @@ pub fn VirtioContext(
             );
         }
 
-        fn update_device_status(self: *Self, new_status: u8) VirtioAction {
-            const current_status: u8 = @bitCast(self.device_status);
-            const diff: DeviceStatus = @bitCast(~current_status & new_status);
-            if ((new_status == 0) or
-                (diff.acknowledge and
-                    current_status == 0) or
-                (diff.driver and
-                    self.device_status.acknowledge) or
-                (diff.features_ok and
-                    self.device_status.acknowledge and
-                    self.device_status.driver))
-            {
-                self.device_status = @bitCast(new_status);
-            } else if ((diff.driver_ok and
-                self.device_status.acknowledge and
-                self.device_status.driver and
-                self.device_status.features_ok))
-            {
-                self.device_status = @bitCast(new_status);
-                return .ActivateDevice;
-            } else {
-                log.warn(
-                    @src(),
-                    "invalid virtio driver status transition: {any} -> {any}: {any}",
-                    .{ self.device_status, @as(DeviceStatus, @bitCast(new_status)), diff },
-                );
-            }
-            return .NoAction;
-        }
-
         pub fn read(self: *Self, offset: u64, data: []u8) VirtioAction {
             const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
             switch (offset) {
@@ -285,7 +285,7 @@ pub fn VirtioContext(
                 0x64 => {
                     // There is no interrupt status to update
                 },
-                0x70 => return self.update_device_status(data[0]),
+                0x70 => return self.device_status.update(data[0]),
                 0x80 => self.queues[self.selected_queue].set_desc_table(false, data_u32.*),
                 0x84 => self.queues[self.selected_queue].set_desc_table(true, data_u32.*),
                 0x90 => self.queues[self.selected_queue].set_avail_ring(false, data_u32.*),
