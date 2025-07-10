@@ -377,13 +377,24 @@ test "dump_and_parse" {
         \\enabled = false
         \\
         \\[[drives]]
-        \\read_only = false
         \\path = "drive_1_path"
+        \\read_only = false
+        \\io_uring = false
+        \\pci = false
         \\rootfs = true
         \\
         \\[[drives]]
-        \\read_only = true
         \\path = "drive_2_path"
+        \\read_only = true
+        \\io_uring = true
+        \\pci = false
+        \\rootfs = false
+        \\
+        \\[[drives]]
+        \\path = "drive_3_path"
+        \\read_only = true
+        \\io_uring = false
+        \\pci = true
         \\rootfs = false
         \\
         \\[[networks]]
@@ -404,11 +415,22 @@ test "dump_and_parse" {
     drives.drives.append(.{
         .path = "drive_1_path",
         .read_only = false,
+        .io_uring = false,
+        .pci = false,
         .rootfs = true,
     }) catch unreachable;
     drives.drives.append(.{
         .path = "drive_2_path",
         .read_only = true,
+        .io_uring = true,
+        .pci = false,
+        .rootfs = false,
+    }) catch unreachable;
+    drives.drives.append(.{
+        .path = "drive_3_path",
+        .read_only = true,
+        .io_uring = false,
+        .pci = true,
         .rootfs = false,
     }) catch unreachable;
 
