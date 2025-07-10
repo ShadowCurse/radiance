@@ -26,7 +26,7 @@ const TX_INDEX = 1;
 
 pub const VirtioNet = struct {
     memory: *Memory,
-    virtio_context: VIRTIO_CONTEXT,
+    context: VIRTIO_CONTEXT,
     tun: nix.fd_t,
 
     rx_chains: RxChains,
@@ -76,8 +76,7 @@ pub const VirtioNet = struct {
             System,
             vm,
             QueueSizes,
-            mmio_info.irq,
-            mmio_info.addr,
+            mmio_info,
         );
 
         virtio_context.avail_features =
@@ -101,7 +100,7 @@ pub const VirtioNet = struct {
 
         return Self{
             .memory = memory,
-            .virtio_context = virtio_context,
+            .context = virtio_context,
             .tun = tun,
             .rx_chains = rx_chains,
             .tx_chain = tx_chain,
@@ -109,8 +108,6 @@ pub const VirtioNet = struct {
     }
 
     pub fn activate(self: *Self, comptime System: type) void {
-        self.virtio_context.set_memory(System);
-
         // TUN_F_CSUM - L4 packet checksum offload
         // TUN_F_TSO4 - TCP Segmentation Offload - TSO for IPv4 packets
         // TUN_F_TSO6 - TSO for IPv6 packets
@@ -119,16 +116,16 @@ pub const VirtioNet = struct {
         // TUN_F_USO4 - UDP Segmentation offload - USO for IPv4 packets
         // TUN_F_USO6 - USO for IPv6 packets
         var tun_flags: u32 = 0;
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_CSUM) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_CSUM) != 0) {
             tun_flags |= nix.TUN_F_CSUM;
         }
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_UFO) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_UFO) != 0) {
             tun_flags |= nix.TUN_F_UFO;
         }
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO4) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO4) != 0) {
             tun_flags |= nix.TUN_F_TSO4;
         }
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
             tun_flags |= nix.TUN_F_TSO6;
         }
         _ = nix.assert(@src(), System, "ioctl", .{
@@ -142,12 +139,12 @@ pub const VirtioNet = struct {
         self.write(nix.System, offset, data);
     }
     pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
-        switch (self.virtio_context.write(offset, data)) {
+        switch (self.context.write(System, offset, data)) {
             .NoAction => {},
             .ActivateDevice => {
                 // Only VIRTIO_MMIO_INT_VRING notification type is supported.
-                if (self.virtio_context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
-                    for (&self.virtio_context.queues) |*q| {
+                if (self.context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
+                    for (&self.context.queues) |*q| {
                         q.notification_suppression = true;
                     }
                 }
@@ -161,7 +158,7 @@ pub const VirtioNet = struct {
     }
 
     pub fn read(self: *Self, offset: u64, data: []u8) void {
-        switch (self.virtio_context.read(offset, data)) {
+        switch (self.context.read(offset, data)) {
             .NoAction => {},
             else => |action| {
                 log.err(@src(), "unhandled read virtio action: {}", .{action});
@@ -173,7 +170,7 @@ pub const VirtioNet = struct {
         self.process_rx(nix.System);
     }
     pub fn process_rx(self: *Self, comptime System: type) void {
-        _ = self.virtio_context.queue_events[RX_INDEX].read(System);
+        _ = self.context.queue_events[RX_INDEX].read(System);
         self.process_tap(System);
     }
 
@@ -181,8 +178,8 @@ pub const VirtioNet = struct {
         self.process_tx(nix.System);
     }
     pub fn process_tx(self: *Self, comptime System: type) void {
-        _ = self.virtio_context.queue_events[TX_INDEX].read(System);
-        const queue = &self.virtio_context.queues[TX_INDEX];
+        _ = self.context.queue_events[TX_INDEX].read(System);
+        const queue = &self.context.queues[TX_INDEX];
 
         while (queue.pop_desc_chain(self.memory)) |dc| {
             self.tx_chain.add_chain(self.memory, dc);
@@ -193,7 +190,7 @@ pub const VirtioNet = struct {
         }
 
         if (queue.send_notification(self.memory)) {
-            self.virtio_context.irq_evt.write(System, 1);
+            self.context.irq_evt.write(System, 1);
         }
     }
 
@@ -204,7 +201,7 @@ pub const VirtioNet = struct {
         if (!self.activated) {
             return;
         }
-        const queue = &self.virtio_context.queues[RX_INDEX];
+        const queue = &self.context.queues[RX_INDEX];
 
         while (queue.pop_desc_chain(self.memory)) |dc| {
             self.rx_chains.add_chain(self.memory, dc);
@@ -225,7 +222,7 @@ pub const VirtioNet = struct {
                 break;
             }
 
-            const iov_slice = if (self.virtio_context.acked_features &
+            const iov_slice = if (self.context.acked_features &
                 (1 << nix.VIRTIO_NET_F_MRG_RXBUF) != 0)
                 self.rx_chains.all_chains_slice()
             else
@@ -245,7 +242,7 @@ pub const VirtioNet = struct {
         }
 
         if (queue.send_notification(self.memory)) {
-            self.virtio_context.irq_evt.write(System, 1);
+            self.context.irq_evt.write(System, 1);
         }
     }
 };

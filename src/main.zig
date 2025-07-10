@@ -12,9 +12,10 @@ const Pmem = @import("devices/pmem.zig");
 const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const _virtio_block = @import("devices/virtio-block.zig");
-const VirtioBlock = _virtio_block.VirtioBlock;
-const VirtioBlockPci = _virtio_block.VirtioBlockPci;
-const VirtioBlockIoUring = _virtio_block.VirtioBlockIoUring;
+const PciVirtioBlock = _virtio_block.PciVirtioBlock;
+const MmioVirtioBlock = _virtio_block.MmioVirtioBlock;
+const PciVirtioBlockIoUring = _virtio_block.PciVirtioBlockIoUring;
+const MmioVirtioBlockIoUring = _virtio_block.MmioVirtioBlockIoUring;
 const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
@@ -76,9 +77,9 @@ pub fn main() !void {
     const permanent_memory_size =
         @sizeOf(Vcpu) * config.machine.vcpus +
         @sizeOf(std.Thread) * config.machine.vcpus +
-        @sizeOf(VirtioBlock) * virtio_block_count +
-        @sizeOf(VirtioBlockPci) * virtio_block_pci_count +
-        @sizeOf(VirtioBlockIoUring) * virtio_block_io_uring_count +
+        @sizeOf(MmioVirtioBlock) * virtio_block_count +
+        @sizeOf(PciVirtioBlock) * virtio_block_pci_count +
+        @sizeOf(MmioVirtioBlockIoUring) * virtio_block_io_uring_count +
         @sizeOf(VirtioNet) * virtio_net_count +
         @sizeOf(VhostNet) * vhost_net_count;
 
@@ -155,9 +156,9 @@ pub fn main() !void {
     if (virtio_block_io_uring_count != 0)
         io_uring = IoUring.init(nix.System, 256);
 
-    const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, virtio_block_count);
-    const virtio_pci_blocks = try permanent_alloc.alloc(VirtioBlockPci, virtio_block_pci_count);
-    const virtio_io_uring_blocks = try permanent_alloc.alloc(VirtioBlockIoUring, virtio_block_io_uring_count);
+    const virtio_blocks = try permanent_alloc.alloc(MmioVirtioBlock, virtio_block_count);
+    const virtio_pci_blocks = try permanent_alloc.alloc(PciVirtioBlock, virtio_block_pci_count);
+    const virtio_io_uring_blocks = try permanent_alloc.alloc(MmioVirtioBlockIoUring, virtio_block_io_uring_count);
     var virtio_block_index: u8 = 0;
     var virtio_block_pci_index: u8 = 0;
     var virtio_block_io_uring_index: u8 = 0;
@@ -169,7 +170,7 @@ pub fn main() !void {
             block_infos_index += 1;
             const block = &virtio_io_uring_blocks[virtio_block_io_uring_index];
             virtio_block_io_uring_index += 1;
-            block.* = VirtioBlockIoUring.new(
+            block.* = MmioVirtioBlockIoUring.new(
                 nix.System,
                 &vm,
                 drive_config.path,
@@ -178,7 +179,7 @@ pub fn main() !void {
                 mmio_info,
             );
             block.io_uring_device = io_uring.add_device(
-                @ptrCast(&VirtioBlockIoUring.event_process_io_uring_event),
+                @ptrCast(&MmioVirtioBlockIoUring.event_process_io_uring_event),
                 block,
             );
         } else if (drive_config.pci) {
@@ -191,7 +192,7 @@ pub fn main() !void {
                 @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
                 pci_virtio_device_info.bar_addr,
             );
-            block.* = VirtioBlockPci.new(
+            block.* = PciVirtioBlock.new(
                 nix.System,
                 &vm,
                 drive_config.path,
@@ -204,7 +205,7 @@ pub fn main() !void {
             block_infos_index += 1;
             const block = &virtio_blocks[virtio_block_index];
             virtio_block_index += 1;
-            block.* = VirtioBlock.new(
+            block.* = MmioVirtioBlock.new(
                 nix.System,
                 &vm,
                 drive_config.path,
@@ -265,22 +266,22 @@ pub fn main() !void {
     for (virtio_blocks) |*block| {
         mmio.add_device_virtio(.{
             .ptr = block,
-            .read_ptr = @ptrCast(&VirtioBlock.read),
-            .write_ptr = @ptrCast(&VirtioBlock.write_default),
+            .read_ptr = @ptrCast(&MmioVirtioBlock.read),
+            .write_ptr = @ptrCast(&MmioVirtioBlock.write_default),
         });
     }
     for (virtio_pci_blocks) |*block| {
         mmio.add_device_pci(.{
             .ptr = block,
-            .read_ptr = @ptrCast(&VirtioBlockPci.read),
-            .write_ptr = @ptrCast(&VirtioBlockPci.write_default),
+            .read_ptr = @ptrCast(&PciVirtioBlock.read),
+            .write_ptr = @ptrCast(&PciVirtioBlock.write_default),
         });
     }
     for (virtio_io_uring_blocks) |*block| {
         mmio.add_device_virtio(.{
             .ptr = block,
-            .read_ptr = @ptrCast(&VirtioBlockIoUring.read),
-            .write_ptr = @ptrCast(&VirtioBlockIoUring.write_default),
+            .read_ptr = @ptrCast(&MmioVirtioBlockIoUring.read),
+            .write_ptr = @ptrCast(&MmioVirtioBlockIoUring.write_default),
         });
     }
     for (virtio_nets) |*virtio_net| {
@@ -388,8 +389,8 @@ pub fn main() !void {
     for (virtio_blocks) |*block| {
         el.add_event(
             nix.System,
-            block.virtio_context.queue_events[0].fd,
-            @ptrCast(&VirtioBlock.event_process_queue),
+            block.context.queue_events[0].fd,
+            @ptrCast(&MmioVirtioBlock.event_process_queue),
             block,
         );
     }
@@ -397,28 +398,28 @@ pub fn main() !void {
         el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
-            @ptrCast(&VirtioBlockPci.event_process_queue),
+            @ptrCast(&PciVirtioBlock.event_process_queue),
             block,
         );
     }
     for (virtio_io_uring_blocks) |*block| {
         el.add_event(
             nix.System,
-            block.virtio_context.queue_events[0].fd,
-            @ptrCast(&VirtioBlockIoUring.event_process_queue),
+            block.context.queue_events[0].fd,
+            @ptrCast(&MmioVirtioBlockIoUring.event_process_queue),
             block,
         );
     }
     for (virtio_nets) |*net| {
         el.add_event(
             nix.System,
-            net.virtio_context.queue_events[0].fd,
+            net.context.queue_events[0].fd,
             @ptrCast(&VirtioNet.event_process_rx),
             net,
         );
         el.add_event(
             nix.System,
-            net.virtio_context.queue_events[1].fd,
+            net.context.queue_events[1].fd,
             @ptrCast(&VirtioNet.event_process_tx),
             net,
         );

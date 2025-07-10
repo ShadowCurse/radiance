@@ -2,8 +2,8 @@ const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
-const Mmio = @import("../mmio.zig");
 const Vm = @import("../vm.zig");
+const Mmio = @import("../mmio.zig");
 const EventFd = @import("../eventfd.zig");
 const Queue = @import("queue.zig").Queue;
 
@@ -141,8 +141,7 @@ pub fn VirtioContext(
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
-            irq: u32,
-            addr: u64,
+            info: Mmio.MmioDeviceInfo,
         ) Self {
             var queue_events: [NUM_QUEUES]EventFd = undefined;
             for (&queue_events) |*qe| {
@@ -157,12 +156,12 @@ pub fn VirtioContext(
                 .queue_events = queue_events,
                 .irq_evt = .new(System, 0, nix.EFD_NONBLOCK),
                 .vm = vm,
-                .addr = addr,
+                .addr = info.addr,
             };
 
             const kvm_irqfd: nix.kvm_irqfd = .{
                 .fd = @intCast(self.irq_evt.fd),
-                .gsi = irq,
+                .gsi = info.irq,
             };
             _ = nix.assert(@src(), System, "ioctl", .{
                 vm.fd,
@@ -174,7 +173,7 @@ pub fn VirtioContext(
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{
                     .datamatch = i,
                     .len = @sizeOf(u32),
-                    .addr = addr + 0x50,
+                    .addr = info.addr + 0x50,
                     .fd = queue_event.fd,
                     .flags = nix.KVM_IOEVENTFD_FLAG_NR_DATAMATCH,
                 };
@@ -263,7 +262,7 @@ pub fn VirtioContext(
             return VirtioAction.NoAction;
         }
 
-        pub fn write(self: *Self, offset: u64, data: []u8) VirtioAction {
+        pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) VirtioAction {
             const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
             switch (offset) {
                 0x14 => self.device_features_word = @truncate(data_u32.*),
@@ -285,7 +284,12 @@ pub fn VirtioContext(
                 0x64 => {
                     // There is no interrupt status to update
                 },
-                0x70 => return self.device_status.update(data[0]),
+                0x70 => {
+                    const action = self.device_status.update(data[0]);
+                    if (action == .ActivateDevice)
+                        self.set_memory(System);
+                    return action;
+                },
                 0x80 => self.queues[self.selected_queue].set_desc_table(false, data_u32.*),
                 0x84 => self.queues[self.selected_queue].set_desc_table(true, data_u32.*),
                 0x90 => self.queues[self.selected_queue].set_avail_ring(false, data_u32.*),
@@ -307,6 +311,10 @@ pub fn VirtioContext(
                 },
             }
             return VirtioAction.NoAction;
+        }
+
+        pub fn notify_current_queue(self: *const Self, comptime System: type) void {
+            self.irq_evt.write(System, 1);
         }
     };
 }
