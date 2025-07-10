@@ -16,7 +16,7 @@ pub const QueueSizes = .{ 256, 256 };
 
 pub const VhostNet = struct {
     memory: *Memory,
-    virtio_context: VIRTIO_CONTEXT,
+    context: VIRTIO_CONTEXT,
 
     tun: nix.fd_t,
     vhost: ?nix.fd_t,
@@ -63,8 +63,7 @@ pub const VhostNet = struct {
             System,
             vm,
             QueueSizes,
-            mmio_info.irq,
-            mmio_info.addr,
+            mmio_info,
         );
 
         virtio_context.avail_features =
@@ -90,7 +89,7 @@ pub const VhostNet = struct {
 
         return Self{
             .memory = memory,
-            .virtio_context = virtio_context,
+            .context = virtio_context,
             .tun = tun,
             .vhost = null,
         };
@@ -100,8 +99,6 @@ pub const VhostNet = struct {
         self: *Self,
         comptime System: type,
     ) void {
-        self.virtio_context.set_memory(System);
-
         // TUN_F_CSUM - L4 packet checksum offload
         // TUN_F_TSO4 - TCP Segmentation Offload - TSO for IPv4 packets
         // TUN_F_TSO6 - TSO for IPv6 packets
@@ -110,22 +107,22 @@ pub const VhostNet = struct {
         // TUN_F_USO4 - UDP Segmentation offload - USO for IPv4 packets
         // TUN_F_USO6 - USO for IPv6 packets
         var tun_flags: u32 = 0;
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_CSUM) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_CSUM) != 0) {
             tun_flags |= nix.TUN_F_CSUM;
         }
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_UFO) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_UFO) != 0) {
             tun_flags |= nix.TUN_F_UFO;
         }
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO4) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO4) != 0) {
             tun_flags |= nix.TUN_F_TSO4;
         }
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_TSO6) != 0) {
             tun_flags |= nix.TUN_F_TSO6;
         }
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_USO4) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_USO4) != 0) {
             tun_flags |= nix.TUN_F_USO4;
         }
-        if (self.virtio_context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_USO6) != 0) {
+        if (self.context.acked_features & (1 << nix.VIRTIO_NET_F_GUEST_USO6) != 0) {
             tun_flags |= nix.TUN_F_USO6;
         }
         _ = nix.assert(@src(), System, "ioctl", .{
@@ -184,7 +181,7 @@ pub const VhostNet = struct {
         for (0..2) |i| {
             const vring = nix.vhost_vring_file{
                 .index = @intCast(i),
-                .fd = self.virtio_context.irq_evt.fd,
+                .fd = self.context.irq_evt.fd,
             };
             _ = nix.assert(@src(), System, "ioctl", .{
                 vhost,
@@ -193,7 +190,7 @@ pub const VhostNet = struct {
             });
         }
 
-        for (&self.virtio_context.queue_events, 0..) |*queue_event, i| {
+        for (&self.context.queue_events, 0..) |*queue_event, i| {
             const vring = nix.vhost_vring_file{
                 .index = @intCast(i),
                 .fd = queue_event.fd,
@@ -205,7 +202,7 @@ pub const VhostNet = struct {
             });
         }
 
-        for (&self.virtio_context.queues, 0..) |*queue, i| {
+        for (&self.context.queues, 0..) |*queue, i| {
             {
                 const vring = nix.vhost_vring_state{
                     .index = @intCast(i),
@@ -253,7 +250,7 @@ pub const VhostNet = struct {
         self.write(nix.System, offset, data);
     }
     pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
-        switch (self.virtio_context.write(offset, data)) {
+        switch (self.context.write(System, offset, data)) {
             .NoAction => {},
             .ActivateDevice => self.activate(System),
             else => |action| {
@@ -263,7 +260,7 @@ pub const VhostNet = struct {
     }
 
     pub fn read(self: *Self, offset: u64, data: []u8) void {
-        switch (self.virtio_context.read(offset, data)) {
+        switch (self.context.read(offset, data)) {
             .NoAction => {},
             else => |action| {
                 log.err(@src(), "unhandled read virtio action: {}", .{action});

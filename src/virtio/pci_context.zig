@@ -6,6 +6,7 @@ const Memory = @import("../memory.zig");
 const HOST_PAGE_SIZE = Memory.HOST_PAGE_SIZE;
 
 const Vm = @import("../vm.zig");
+const Mmio = @import("../mmio.zig");
 const Ecam = @import("ecam.zig");
 const Queue = @import("queue.zig").Queue;
 const EventFd = @import("../eventfd.zig");
@@ -89,7 +90,7 @@ pub fn PciVirtioContext(
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
-            bar_addr: u64,
+            info: Mmio.PciDeviceInfo,
         ) Self {
             var queues: [NUM_QUEUES]Queue = undefined;
             for (&queues, queue_sizes) |*q, size| {
@@ -105,7 +106,7 @@ pub fn PciVirtioContext(
 
             for (&self.queue_events, 0..) |*queue_event, i| {
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{
-                    .addr = bar_addr +
+                    .addr = info.bar_addr +
                         Ecam.VIRTIO_PCI_NOTIFY_BAR_OFFSET +
                         i * Ecam.VIRTIO_PCI_NOTIFY_MULTIPLIER,
                     .fd = queue_event.fd,
@@ -373,6 +374,10 @@ pub fn PciVirtioContext(
             );
 
             return VirtioAction.NoAction;
+        }
+
+        pub fn notify_current_queue(self: *const Self, comptime System: type) void {
+            self.queue_irqs[self.selected_queue].write(System, 1);
         }
     };
 }
