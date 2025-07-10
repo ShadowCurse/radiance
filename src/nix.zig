@@ -126,6 +126,30 @@ pub const KVM_DEV_ARM_VGIC_GRP_NR_IRQS = 3;
 pub const KVM_DEV_ARM_VGIC_GRP_CTRL = 4;
 pub const KVM_DEV_ARM_VGIC_CTRL_INIT = 0;
 
+//
+// MSI_TYPER:
+//    [31:26] Reserved
+//    [25:16] lowest SPI assigned to MSI
+//    [15:10] Reserved
+//    [9:0]   Numer of SPIs assigned to MSI
+//
+pub const V2M_MSI_TYPER = 0x008;
+pub const V2M_MSI_TYPER_BASE_SHIFT = 16;
+pub const V2M_MSI_TYPER_BASE_MASK = 0x3FF;
+pub const V2M_MSI_TYPER_NUM_MASK = 0x3FF;
+pub const V2M_MSI_SETSPI_NS = 0x040;
+pub const V2M_MIN_SPI = 32;
+pub const V2M_MAX_SPI = 1019;
+pub const V2M_MSI_IIDR = 0xFCC;
+
+pub fn V2M_MSI_TYPER_BASE_SPI(x: u64) u64 {
+    return (((x) >> V2M_MSI_TYPER_BASE_SHIFT) & V2M_MSI_TYPER_BASE_MASK);
+}
+
+pub fn V2M_MSI_TYPER_NUM_SPI(x: u64) u64 {
+    return ((x) & V2M_MSI_TYPER_NUM_MASK);
+}
+
 pub const KVM_ARM_VCPU_INIT = _IOW(KVMIO, 0xae, kvm_vcpu_init);
 pub const KVM_ARM_PREFERRED_TARGET = _IOR(KVMIO, 0xaf, kvm_vcpu_init);
 pub const KVM_ARM_VCPU_PSCI_0_2 = 2;

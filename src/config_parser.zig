@@ -45,6 +45,7 @@ pub const DriveConfig = struct {
     path: []const u8 = "",
     read_only: bool = false,
     io_uring: bool = false,
+    pci: bool = false,
     rootfs: bool = false,
 };
 

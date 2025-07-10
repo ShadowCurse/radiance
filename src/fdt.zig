@@ -113,7 +113,8 @@ pub const FdtBuilder = struct {
     const FDT_END: u32 = 0x00000009;
 
     const GIC_PHANDLE: u32 = 1;
-    const CLOCK_PHANDLE: u32 = 2;
+    const MSI_PHANDLE: u32 = 2;
+    const CLOCK_PHANDLE: u32 = 3;
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arm%2Cgic.yaml
     const GIC_FDT_IRQ_TYPE_SPI: u32 = 0;
     const GIC_FDT_IRQ_TYPE_PPI: u32 = 1;
@@ -274,6 +275,7 @@ pub fn create_fdt(
     create_timer_node(&fdt_builder);
     create_clock_node(&fdt_builder);
     create_psci_node(&fdt_builder);
+    create_ecam_node(&fdt_builder);
 
     if (uart_device_info) |info|
         create_uart_node(&fdt_builder, info);
@@ -291,6 +293,49 @@ pub fn create_fdt(
     fdt_builder.finish();
 
     return FdtBuilder.fdt_addr(memory.last_addr());
+}
+
+fn create_ecam_node(builder: *FdtBuilder) void {
+    // https://github.com/devicetree-org/dt-schema/tree/main/dtschema/schemas/pci
+    // https://elinux.org/Device_Tree_Usage#PCI_Address_Translation
+    // https://github.com/devicetree-org/dt-schema/blob/main/dtschema/schemas/pci/pci-host-bridge.yaml
+
+    var print_buff: [20]u8 = undefined;
+    const name = std.fmt.bufPrintZ(
+        &print_buff,
+        "pcie@{x}",
+        .{Memory.PCI_CONFIG_START},
+    ) catch unreachable;
+
+    builder.begin_node(name);
+    defer builder.end_node();
+
+    builder.add_property([:0]const u8, "compatible", "pci-host-ecam-generic");
+    builder.add_property([:0]const u8, "device_type", "pci");
+    builder.add_property(u32, "#address-cells", 3);
+    builder.add_property(u32, "#size-cells", 2);
+    builder.add_property(u32, "#interrupt-cells", 1);
+    builder.add_property(u32, "linux,pci-domain", 0);
+    builder.add_property([]const u64, "reg", &.{
+        Memory.PCI_CONFIG_START,
+        Memory.PCI_ECAM_REGION_SIZE,
+    });
+    builder.add_property([]const u32, "bus-range", &.{ 0, 0 });
+    builder.add_property([]const u32, "ranges", &.{
+        // 64bit addresses olny
+        0x300_0000,
+        Memory.PCI_START >> 32, // PCI address
+        Memory.PCI_START & 0xffff_ffff,
+        Memory.PCI_START >> 32, // CPU address
+        Memory.PCI_START & 0xffff_ffff,
+        Memory.PCI_SIZE >> 32, // Range size
+        Memory.PCI_SIZE & 0xffff_ffff,
+    });
+    builder.add_property(void, "dma-coherent", {});
+    builder.add_property([]const u32, "msi-map", &.{ 0, FdtBuilder.MSI_PHANDLE, 0, 0x10000 });
+    builder.add_property(u32, "msi-parent", FdtBuilder.MSI_PHANDLE);
+    builder.add_property(void, "interrupt-map", {});
+    builder.add_property(void, "interrupt-map-mask", {});
 }
 
 fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, mpidrs: []const u64) void {
@@ -432,7 +477,28 @@ fn create_gic_fdt(builder: *FdtBuilder) void {
         FdtBuilder.IRQ_TYPE_LEVEL_HI,
     };
 
+    // https://github.com/devicetree-org/dt-schema/tree/main/dtschema/schemas/pci
     builder.add_property([]const u32, "interrupts", &gic_intr);
+    {
+        var print_buff: [20]u8 = undefined;
+        const name = std.fmt.bufPrintZ(
+            &print_buff,
+            "v2m@{x}",
+            .{Memory.GICV2M_MSI_ADDR},
+        ) catch unreachable;
+
+        builder.begin_node(name);
+        defer builder.end_node();
+
+        builder.add_property([:0]const u8, "compatible", "arm,gic-v2m-frame");
+        builder.add_property(void, "msi-controller", {});
+        builder.add_property(
+            []const u64,
+            "reg",
+            &.{ Memory.GICV2M_MSI_ADDR, Memory.GICV2M_MSI_LEN },
+        );
+        builder.add_property(u32, "phandle", FdtBuilder.MSI_PHANDLE);
+    }
 }
 
 fn create_clock_node(builder: *FdtBuilder) void {
