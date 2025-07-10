@@ -4,10 +4,32 @@ const nix = @import("nix.zig");
 
 pub const HOST_PAGE_SIZE = std.heap.page_size_min;
 
-/// Start of RAM on 64 bit ARM.
-pub const DRAM_START: u64 = 0x8000_0000; // 2 GB.
+/// Address for gicv2m MSI registers.
+pub const GICV2M_MSI_ADDR = 0x80000;
+pub const GICV2M_MSI_LEN = 0x1000;
+
+// The GICv2 controller needs memory to place the
+// irq distributor data and cpu interrupt handling data.
+// We place it just before the MMIO region as it is conveniently aligned and
+// it is simple to calculate GICv2 addresses.
+pub const GICV2_CPU_ADDRESS: u64 = GICV2_DISTRIBUTOR_ADDRESS - nix.KVM_VGIC_V2_CPU_SIZE;
+pub const GICV2_DISTRIBUTOR_ADDRESS: u64 = MMIO_START - nix.KVM_VGIC_V2_DIST_SIZE;
+
 /// GIC is bellow, MMIO devices are here.
 pub const MMIO_START: u64 = 0x4000_0000; // 1 GB
+/// Start of RAM on 64 bit ARM.
+pub const DRAM_START: u64 = 0x8000_0000; // 2 GB.
+
+// The 1TB version seems to be so far, it crashes the kernel.
+// The PCI will be mapped there
+pub const PCI_START = 1 << 39; // 512 GB
+// The size of the memory area reserved for MMIO 64-bit accesses.
+pub const PCI_SIZE = 1 << 30; // 1 GB
+pub const PCI_BAR_SIZE = 256 << 20; // 256 MB
+
+pub const PCI_CONFIG_SIZE = 1 << 30; // 1 GB
+pub const PCI_CONFIG_START = PCI_START - PCI_CONFIG_SIZE;
+pub const PCI_ECAM_REGION_SIZE = 256 << 20; // 256 MB
 
 const arm64_image_header = packed struct {
     code0: u32,

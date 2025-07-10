@@ -4,7 +4,12 @@ const log = @import("../log.zig");
 
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
-const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
+const mmio = @import("../mmio.zig");
+const MmioDeviceInfo = mmio.MmioDeviceInfo;
+const PciDeviceInfo = mmio.PciDeviceInfo;
+
+const _pci = @import("../virtio/pci_context.zig");
+const PciVirtioContext = _pci.PciVirtioContext;
 
 const Memory = @import("../memory.zig");
 const HOST_PAGE_SIZE = Memory.HOST_PAGE_SIZE;
@@ -479,5 +484,180 @@ pub const VirtioBlockIoUring = struct {
 
         if (queue.send_notification(self.memory))
             self.virtio_context.irq_evt.write(System, 1);
+    }
+};
+
+pub const VirtioBlockPci = struct {
+    read_only: bool,
+    memory: *Memory,
+    context: CONTEXT,
+    file_mem: []align(HOST_PAGE_SIZE) u8,
+    block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
+
+    const Self = @This();
+    const CONTEXT = PciVirtioContext(QUEUE_SIZES.len, Config);
+
+    pub fn new(
+        comptime System: type,
+        vm: *Vm,
+        file_path: []const u8,
+        read_only: bool,
+        memory: *Memory,
+        pci_info: PciDeviceInfo,
+    ) Self {
+        const fd = nix.assert(@src(), System, "open", .{
+            file_path,
+            .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
+            0,
+        });
+        defer System.close(fd);
+
+        const statx = nix.assert(@src(), System, "statx", .{fd});
+        const file_mem = nix.assert(@src(), System, "mmap", .{
+            null,
+            statx.size,
+            if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
+            .{ .TYPE = if (read_only) .PRIVATE else .SHARED },
+            fd,
+            0,
+        });
+
+        const nsectors = statx.size >> SECTOR_SHIFT;
+        const block_id = create_block_id(&statx);
+
+        var context = CONTEXT.new(
+            System,
+            vm,
+            QUEUE_SIZES,
+            pci_info.bar_addr,
+        );
+        context.avail_features =
+            (1 << nix.VIRTIO_F_VERSION_1) |
+            (1 << nix.VIRTIO_RING_F_EVENT_IDX) |
+            (1 << nix.VIRTIO_BLK_F_SEG_MAX);
+        if (read_only) {
+            context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
+        }
+        context.config.capacity = nsectors;
+        context.config.seg_max = MAX_SEGMENTS;
+
+        return Self{
+            .read_only = read_only,
+            .memory = memory,
+            .context = context,
+            .file_mem = file_mem,
+            .block_id = block_id,
+        };
+    }
+
+    pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+        self.write(nix.System, offset, data);
+    }
+    pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+        switch (self.context.write(System, offset, data)) {
+            .NoAction => {},
+            .ActivateDevice => {
+                // Only VIRTIO_MMIO_INT_VRING notification type is supported.
+                if (self.context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
+                    for (&self.context.queues) |*q| {
+                        q.notification_suppression = true;
+                    }
+                }
+            },
+            else => |action| {
+                log.err(@src(), "unhandled write virtio action: {}", .{action});
+            },
+        }
+    }
+
+    pub fn read(self: *Self, offset: u64, data: []u8) void {
+        switch (self.context.read(offset, data)) {
+            .NoAction => {},
+            else => |action| {
+                log.err(@src(), "unhandled read virtio action: {}", .{action});
+            },
+        }
+    }
+
+    pub fn sync(self: *Self, comptime System: type) void {
+        if (!self.read_only)
+            nix.assert(@src(), System, "msync", .{ self.file_mem, nix.MSF.ASYNC });
+    }
+
+    pub fn event_process_queue(self: *Self) void {
+        self.process_queue(nix.System);
+    }
+    pub fn process_queue(self: *Self, comptime System: type) void {
+        const queue_event = &self.context.queue_events[self.context.selected_queue];
+        _ = queue_event.read(System);
+
+        var segments: [MAX_SEGMENTS][]volatile u8 = undefined;
+        var segments_n: u32 = 0;
+        var total_segments_len: u32 = 0;
+
+        const queue = &self.context.queues[self.context.selected_queue];
+        while (queue.pop_desc_chain(self.memory)) |dc| {
+            segments_n = 0;
+            total_segments_len = 0;
+
+            var desc_chain = dc;
+            const header_desc_index = desc_chain.index.?;
+            const header_desc = desc_chain.next().?;
+            const header = self.memory.get_ptr(nix.virtio_blk_outhdr, header_desc.addr);
+            var offset = header.sector << SECTOR_SHIFT;
+
+            var data_desc = desc_chain.next().?;
+            while ((data_desc.flags & nix.VRING_DESC_F_NEXT) != 0) {
+                log.assert(
+                    @src(),
+                    segments_n <= MAX_SEGMENTS,
+                    "Got descriptor chain with more data segments than MAX_SEGMENTS({d})",
+                    .{@as(u32, MAX_SEGMENTS)},
+                );
+                segments[segments_n] = self.memory.get_slice(u8, data_desc.len, data_desc.addr);
+                total_segments_len += data_desc.len;
+                segments_n += 1;
+                data_desc = desc_chain.next().?;
+            }
+            const status_desc = data_desc;
+
+            switch (header.type) {
+                nix.VIRTIO_BLK_T_IN => {
+                    for (segments[0..segments_n]) |segment| {
+                        @memcpy(segment, self.file_mem[offset .. offset + segment.len]);
+                        offset += segment.len;
+                    }
+                },
+                nix.VIRTIO_BLK_T_OUT => {
+                    for (segments[0..segments_n]) |segment| {
+                        @memcpy(self.file_mem[offset .. offset + segment.len], segment);
+                        offset += segment.len;
+                    }
+                },
+                nix.VIRTIO_BLK_T_FLUSH => {
+                    self.sync(System);
+                },
+                nix.VIRTIO_BLK_T_GET_ID => {
+                    log.assert(
+                        @src(),
+                        segments_n == 1,
+                        "Descriptor chain has more than 1 data descriptor for VIRTIO_BLK_T_GET_ID request",
+                        .{},
+                    );
+                    const segment = segments[0];
+                    @memcpy(segment, &self.block_id);
+                    total_segments_len = nix.VIRTIO_BLK_ID_BYTES;
+                },
+                else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
+            }
+            const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
+            status_ptr.* = nix.VIRTIO_BLK_S_OK;
+
+            queue.add_used_desc(self.memory, header_desc_index, total_segments_len);
+        }
+
+        if (queue.send_notification(self.memory)) {
+            self.context.queue_irqs[0].write(System, 1);
+        }
     }
 };

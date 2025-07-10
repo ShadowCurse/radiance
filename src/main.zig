@@ -13,10 +13,12 @@ const Uart = @import("devices/uart.zig");
 const Rtc = @import("devices/rtc.zig");
 const _virtio_block = @import("devices/virtio-block.zig");
 const VirtioBlock = _virtio_block.VirtioBlock;
+const VirtioBlockPci = _virtio_block.VirtioBlockPci;
 const VirtioBlockIoUring = _virtio_block.VirtioBlockIoUring;
 const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
+const Ecam = @import("virtio/ecam.zig");
 const EventLoop = @import("event_loop.zig");
 const EventFd = @import("eventfd.zig");
 const CmdLine = @import("cmdline.zig");
@@ -59,10 +61,13 @@ pub fn main() !void {
     }
 
     var virtio_block_count: u32 = 0;
+    var virtio_block_pci_count: u32 = 0;
     var virtio_block_io_uring_count: u32 = 0;
     for (config.drives.drives.slice()) |*drive_config| {
         if (drive_config.io_uring) {
             virtio_block_io_uring_count += 1;
+        } else if (drive_config.pci) {
+            virtio_block_pci_count += 1;
         } else {
             virtio_block_count += 1;
         }
@@ -72,6 +77,7 @@ pub fn main() !void {
         @sizeOf(Vcpu) * config.machine.vcpus +
         @sizeOf(std.Thread) * config.machine.vcpus +
         @sizeOf(VirtioBlock) * virtio_block_count +
+        @sizeOf(VirtioBlockPci) * virtio_block_pci_count +
         @sizeOf(VirtioBlockIoUring) * virtio_block_io_uring_count +
         @sizeOf(VirtioNet) * virtio_net_count +
         @sizeOf(VhostNet) * vhost_net_count;
@@ -121,12 +127,16 @@ pub fn main() !void {
     }
 
     // create mmio devices
-    var mmio = Mmio.new();
+    var ecam: Ecam = .{};
+    var mmio = Mmio.new(&ecam);
+
     const uart_device_info = if (config.uart.enabled) mmio.allocate() else undefined;
     const rtc_device_info = mmio.allocate();
     mmio.start_mmio_opt();
 
-    const virtio_device_infos_num = config.drives.drives.len + config.networks.networks.len;
+    const virtio_device_infos_num =
+        config.drives.drives.len - virtio_block_pci_count +
+        config.networks.networks.len;
     var virtio_device_infos = try tmp_alloc.alloc(Mmio.MmioDeviceInfo, virtio_device_infos_num);
     for (0..virtio_device_infos_num) |i| {
         virtio_device_infos[i] = mmio.allocate_virtio();
@@ -146,12 +156,17 @@ pub fn main() !void {
         io_uring = IoUring.init(nix.System, 256);
 
     const virtio_blocks = try permanent_alloc.alloc(VirtioBlock, virtio_block_count);
+    const virtio_pci_blocks = try permanent_alloc.alloc(VirtioBlockPci, virtio_block_pci_count);
     const virtio_io_uring_blocks = try permanent_alloc.alloc(VirtioBlockIoUring, virtio_block_io_uring_count);
     var virtio_block_index: u8 = 0;
+    var virtio_block_pci_index: u8 = 0;
     var virtio_block_io_uring_index: u8 = 0;
     const block_infos = virtio_device_infos[0 .. virtio_block_count + virtio_block_io_uring_count];
-    for (config.drives.drives.slice(), block_infos) |*drive_config, mmio_info| {
+    var block_infos_index: u8 = 0;
+    for (config.drives.drives.slice()) |*drive_config| {
         if (drive_config.io_uring) {
+            const mmio_info = block_infos[block_infos_index];
+            block_infos_index += 1;
             const block = &virtio_io_uring_blocks[virtio_block_io_uring_index];
             virtio_block_io_uring_index += 1;
             block.* = VirtioBlockIoUring.new(
@@ -166,7 +181,27 @@ pub fn main() !void {
                 @ptrCast(&VirtioBlockIoUring.event_process_io_uring_event),
                 block,
             );
+        } else if (drive_config.pci) {
+            const block = &virtio_pci_blocks[virtio_block_pci_index];
+            virtio_block_pci_index += 1;
+            const pci_virtio_device_info = mmio.allocate_pci();
+            ecam.add_header(
+                _virtio_block.TYPE_BLOCK,
+                @intFromEnum(Ecam.PciClass.MassStorage),
+                @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
+                pci_virtio_device_info.bar_addr,
+            );
+            block.* = VirtioBlockPci.new(
+                nix.System,
+                &vm,
+                drive_config.path,
+                drive_config.read_only,
+                &memory,
+                pci_virtio_device_info,
+            );
         } else {
+            const mmio_info = block_infos[block_infos_index];
+            block_infos_index += 1;
             const block = &virtio_blocks[virtio_block_index];
             virtio_block_index += 1;
             block.* = VirtioBlock.new(
@@ -181,6 +216,8 @@ pub fn main() !void {
     }
     defer {
         for (virtio_blocks) |*block|
+            block.sync(nix.System);
+        for (virtio_pci_blocks) |*block|
             block.sync(nix.System);
         for (virtio_io_uring_blocks) |*block|
             block.sync(nix.System);
@@ -230,6 +267,13 @@ pub fn main() !void {
             .ptr = block,
             .read_ptr = @ptrCast(&VirtioBlock.read),
             .write_ptr = @ptrCast(&VirtioBlock.write_default),
+        });
+    }
+    for (virtio_pci_blocks) |*block| {
+        mmio.add_device_pci(.{
+            .ptr = block,
+            .read_ptr = @ptrCast(&VirtioBlockPci.read),
+            .write_ptr = @ptrCast(&VirtioBlockPci.write_default),
         });
     }
     for (virtio_io_uring_blocks) |*block| {
@@ -346,6 +390,14 @@ pub fn main() !void {
             nix.System,
             block.virtio_context.queue_events[0].fd,
             @ptrCast(&VirtioBlock.event_process_queue),
+            block,
+        );
+    }
+    for (virtio_pci_blocks) |*block| {
+        el.add_event(
+            nix.System,
+            block.context.queue_events[0].fd,
+            @ptrCast(&VirtioBlockPci.event_process_queue),
             block,
         );
     }

@@ -2,6 +2,9 @@ const log = @import("log.zig");
 const Memory = @import("memory.zig");
 const Gicv2 = @import("gicv2.zig");
 
+const Ecam = @import("virtio/ecam.zig");
+const Gicv2Mmio = @import("gicv2.zig").Gicv2Mmio;
+
 const VIRTIO_INTERRUPT_STATUS_OFFSET = @import("virtio/context.zig").INTERRUPT_STATUS_OFFSET;
 
 pub const MMIO_MEM_START: u64 = Memory.MMIO_START;
@@ -33,6 +36,7 @@ pub const MmioDeviceInfo = struct {
 
 last_irq: u16,
 last_address: u64,
+last_bar_address: u64,
 virtio_address_start: u64,
 
 num_devices: u8,
@@ -41,20 +45,29 @@ devices: [MAX_MMIO_DEVICES]MmioDevice,
 virtio_num_devices: u8,
 virtio_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
 
+pci_num_devices: u8,
+pci_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
+
+ecam: *Ecam,
+
 const MAX_MMIO_DEVICES = 2;
 const MAX_VIRTIO_DEVICES = 8;
 
 const Self = @This();
 
-pub fn new() Self {
-    return Self{
+pub fn new(ecam: *Ecam) Self {
+    return .{
         .last_irq = Gicv2.IRQ_BASE,
         .last_address = MMIO_MEM_START,
+        .last_bar_address = Memory.PCI_START,
         .virtio_address_start = MMIO_MEM_START,
         .num_devices = 0,
         .devices = undefined,
         .virtio_num_devices = 0,
         .virtio_devices = undefined,
+        .pci_num_devices = 0,
+        .pci_devices = undefined,
+        .ecam = ecam,
     };
 }
 
@@ -105,6 +118,20 @@ pub fn allocate_virtio(self: *Self) MmioDeviceInfo {
     };
 }
 
+pub const PciDeviceInfo = struct {
+    bar_addr: u64,
+};
+pub fn allocate_pci(self: *Self) PciDeviceInfo {
+    const addr = self.last_bar_address;
+    self.last_bar_address += Memory.PCI_BAR_SIZE;
+    log.debug(
+        @src(),
+        "allocate pci region: addr: 0x{x}, len: 0x{x}",
+        .{ addr, @as(u32, Memory.PCI_BAR_SIZE) },
+    );
+    return .{ .bar_addr = addr };
+}
+
 pub fn add_device(self: *Self, device: MmioDevice) void {
     log.assert(
         @src(),
@@ -127,8 +154,30 @@ pub fn add_device_virtio(self: *Self, device: MmioDevice) void {
     self.virtio_num_devices += 1;
 }
 
+pub fn add_device_pci(self: *Self, device: MmioDevice) void {
+    log.assert(
+        @src(),
+        self.pci_num_devices < MAX_VIRTIO_DEVICES,
+        "Trying to attach more ci devices to mmio bus than maximum: {d}",
+        .{@as(u32, MAX_VIRTIO_DEVICES)},
+    );
+    self.pci_devices[self.pci_num_devices] = device;
+    self.pci_num_devices += 1;
+}
+
 pub fn write(self: *Self, addr: u64, data: []u8) void {
-    if (addr < self.virtio_address_start) {
+    if (addr < Memory.GICV2M_MSI_ADDR + Memory.GICV2M_MSI_LEN) {
+        const offset = addr - Memory.GICV2M_MSI_ADDR;
+        Gicv2.write(offset, data);
+    } else if (Memory.PCI_START <= addr) {
+        const index = (addr - Memory.PCI_START) / Memory.PCI_BAR_SIZE;
+        const offset = (addr - Memory.PCI_START) - Memory.PCI_BAR_SIZE * index;
+        const device = self.pci_devices[index];
+        device.write(offset, data);
+    } else if (Memory.PCI_CONFIG_START <= addr) {
+        const offset = addr - Memory.PCI_CONFIG_START;
+        self.ecam.write(offset, data);
+    } else if (addr < self.virtio_address_start) {
         const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE;
         const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_ALLOCATED_REGION_SIZE * index;
         const device = self.devices[index];
@@ -144,7 +193,18 @@ pub fn write(self: *Self, addr: u64, data: []u8) void {
 }
 
 pub fn read(self: *Self, addr: u64, data: []u8) void {
-    if (addr < self.virtio_address_start) {
+    if (addr < Memory.GICV2M_MSI_ADDR + Memory.GICV2M_MSI_LEN) {
+        const offset = addr - Memory.GICV2M_MSI_ADDR;
+        Gicv2.read(offset, data);
+    } else if (Memory.PCI_START <= addr) {
+        const index = (addr - Memory.PCI_START) / Memory.PCI_BAR_SIZE;
+        const offset = (addr - Memory.PCI_START) - Memory.PCI_BAR_SIZE * index;
+        const device = self.pci_devices[index];
+        device.read(offset, data);
+    } else if (Memory.PCI_CONFIG_START <= addr) {
+        const offset = addr - Memory.PCI_CONFIG_START;
+        self.ecam.read(offset, data);
+    } else if (addr < self.virtio_address_start) {
         const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE;
         const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_ALLOCATED_REGION_SIZE * index;
         const device = self.devices[index];
