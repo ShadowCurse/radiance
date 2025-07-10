@@ -11,7 +11,7 @@ pub fn new(comptime System: type, init: u32, flags: u32) Self {
     return Self{ .fd = fd };
 }
 
-pub fn read(self: *Self, comptime System: type) u64 {
+pub fn read(self: *const Self, comptime System: type) u64 {
     var buf: u64 = undefined;
     const buf_slice = std.mem.asBytes(&buf);
     const n = nix.assert(@src(), System, "read", .{ self.fd, buf_slice });
@@ -24,7 +24,7 @@ pub fn read(self: *Self, comptime System: type) u64 {
     return buf;
 }
 
-pub fn write(self: *Self, comptime System: type, val: u64) void {
+pub fn write(self: *const Self, comptime System: type, val: u64) void {
     const buf_slice = std.mem.asBytes(&val);
     const n = nix.assert(@src(), System, "write", .{ self.fd, buf_slice });
     log.assert(
