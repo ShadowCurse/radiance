@@ -45,6 +45,16 @@ pub fn comptime_err(
         @compileError(std.fmt.comptimePrint("{s} " ++ format, t));
 }
 
+pub fn comptime_assert(
+    comptime src: std.builtin.SourceLocation,
+    comptime ok: bool,
+    comptime format: []const u8,
+    comptime args: anytype,
+) void {
+    if (comptime !options.asserts) return;
+    if (!ok) comptime_err(src, format, args);
+}
+
 pub fn assert(
     comptime src: std.builtin.SourceLocation,
     ok: bool,
