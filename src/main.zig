@@ -45,7 +45,35 @@ const Args = struct {
     config_path: []const u8,
 };
 
+// All of these types are allocated from a single arena. In order to easily determine
+// the size of that arena it is better to have all of them be easily allocated one right
+// after another.
+fn check_aligments() void {
+    inline for (.{
+        Vcpu,
+        std.Thread,
+        MmioVirtioBlock,
+        PciVirtioBlock,
+        MmioVirtioBlockIoUring,
+        VirtioNet,
+        VhostNet,
+    }) |t| {
+        log.comptime_assert(
+            @src(),
+            @alignOf(t) == 8 and @sizeOf(t) % 8 == 0,
+            "{s} aligment must be 8 and size must be a multiple of 8. Alignment: {d} Size: {d}",
+            .{
+                @typeName(t),
+                @alignOf(t),
+                @sizeOf(t),
+            },
+        );
+    }
+}
+
 pub fn main() !void {
+    comptime check_aligments();
+
     const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
     const config_parse_result = try config_parser.parse_file(nix.System, args.config_path);
