@@ -101,10 +101,10 @@ const SubmissionsRing = struct {
 const MmioContext = VirtioContext(QUEUE_SIZES.len, TYPE_BLOCK, Config);
 const PciContext = PciVirtioContext(QUEUE_SIZES.len, Config);
 
-pub const MmioVirtioBlock = VirtioBlock(MmioContext);
-pub const PciVirtioBlock = VirtioBlock(PciContext);
+pub const BlockMmio = Block(MmioContext);
+pub const BlockPci = Block(PciContext);
 
-pub fn VirtioBlock(comptime Context: type) type {
+pub fn Block(comptime Context: type) type {
     return struct {
         read_only: bool,
         memory: *Memory,
@@ -197,7 +197,7 @@ pub fn VirtioBlock(comptime Context: type) type {
             }
         }
 
-        pub fn sync(self: *Self, comptime System: type) void {
+        pub fn sync(self: *const Self, comptime System: type) void {
             if (!self.read_only)
                 nix.assert(@src(), System, "msync", .{ self.file_mem, nix.MSF.ASYNC });
         }
@@ -281,10 +281,10 @@ pub fn VirtioBlock(comptime Context: type) type {
     };
 }
 
-pub const MmioVirtioBlockIoUring = VirtioBlockIoUring(MmioContext);
-pub const PciVirtioBlockIoUring = VirtioBlockIoUring(PciContext);
+pub const BlockMmioIoUring = BlockIoUring(MmioContext);
+pub const BlockPciIoUring = BlockIoUring(PciContext);
 
-pub fn VirtioBlockIoUring(comptime Context: type) type {
+pub fn BlockIoUring(comptime Context: type) type {
     return struct {
         read_only: bool,
         memory: *Memory,
@@ -372,7 +372,7 @@ pub fn VirtioBlockIoUring(comptime Context: type) type {
             }
         }
 
-        pub fn sync(self: *Self, comptime System: type) void {
+        pub fn sync(self: *const Self, comptime System: type) void {
             if (!self.read_only)
                 nix.assert(@src(), System, "fsync", .{self.file_fd});
         }
