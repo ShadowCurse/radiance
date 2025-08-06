@@ -11,7 +11,7 @@ CONTAINER_TMP_DIR=tmp_rootfs
 if [[ $in_container == "true" ]]
 then
   echo "[CONTAINER] installing packages"
-  apk add openrc openssh util-linux agetty iperf3 fio
+  apk add openrc openssh util-linux agetty iperf3 fio pciutils
   rc-update add sshd
 
   echo "[CONTAINER] resetting root password"
@@ -64,15 +64,15 @@ else
   echo "[HOST] creating tmp dir"
   mkdir -p $TMP_DIR
   sudo mount $ROOTFS_FILE $TMP_DIR
-  cp ./mk_alpine.sh $TMP_DIR
-  cp ./alpine_net.service $TMP_DIR
-  cp ./net_setup.sh $TMP_DIR
-  cp ./$IMAGE.id_rsa.pub $TMP_DIR
+  sudo cp ./mk_alpine.sh $TMP_DIR
+  sudo cp ./alpine_net.service $TMP_DIR
+  sudo cp ./net_setup.sh $TMP_DIR
+  sudo cp ./$IMAGE.id_rsa.pub $TMP_DIR
 
   echo "[HOST] running docker"
   sudo docker run --mount src="$(pwd)"/$TMP_DIR,target=/$CONTAINER_TMP_DIR,type=bind $IMAGE sh /$CONTAINER_TMP_DIR/mk_alpine.sh 0 true
 
   echo "[HOST] unmounting"
   sudo umount $TMP_DIR
-  rm -r $TMP_DIR
+  sudo rm -r $TMP_DIR
 fi
