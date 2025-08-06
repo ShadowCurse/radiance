@@ -13,7 +13,7 @@ then
   echo "[CONTAINER] installing packages"
   export DEBIAN_FRONTEND=noninteractive
   apt update
-  apt install -y --no-install-recommends udev systemd-sysv iproute2 openssh-server iputils-ping iperf3 fio
+  apt install -y --no-install-recommends udev systemd-sysv iproute2 openssh-server iputils-ping iperf3 fio pciutils
   apt autoremove
 
   echo "[CONTAINER] resetting root password"
@@ -66,16 +66,16 @@ else
 
   echo "[HOST] creating tmp dir"
   mkdir -p $TMP_DIR
-  sudo mount $ROOTFS_FILE $TMP_DIR
+  mount $ROOTFS_FILE $TMP_DIR
   cp ./mk_ubuntu.sh $TMP_DIR
   cp ./ubuntu_net.service $TMP_DIR
   cp ./net_setup.sh $TMP_DIR
   cp ./$IMAGE.id_rsa.pub $TMP_DIR
 
   echo "[HOST] running docker"
-  sudo docker run --mount src="$(pwd)"/$TMP_DIR,target=/$CONTAINER_TMP_DIR,type=bind $IMAGE bash /$CONTAINER_TMP_DIR/mk_ubuntu.sh 0 true
+  docker run --mount src="$(pwd)"/$TMP_DIR,target=/$CONTAINER_TMP_DIR,type=bind $IMAGE bash /$CONTAINER_TMP_DIR/mk_ubuntu.sh 0 true
 
   echo "[HOST] unmounting"
-  sudo umount $TMP_DIR
+  umount $TMP_DIR
   rm -r $TMP_DIR
 fi
