@@ -1,12 +1,11 @@
 const std = @import("std");
+const log = @import("../log.zig");
 const nix = @import("../nix.zig");
 
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 const EventFd = @import("../eventfd.zig");
-
-// Impementation of 16550 UART device with baud of 9600
 
 // https://uart16550.readthedocs.io/en/latest/uart16550doc.html
 // From  https://www.lammertbies.nl/comm/info/serial-uart
@@ -22,86 +21,102 @@ const EventFd = @import("../eventfd.zig");
 // base+6   | MSR modem status             | not used                | MSR modem status             | not used
 // base+7   | SCR scratch                  | SCR scratch             | SCR scratch                  | SCR scratch
 
-const FIFO_SIZE: usize = 0x40;
+const IER = packed struct(u8) {
+    receive_data_available: bool = false,
+    transmitter_holding_register_empty: bool = false,
+    _: u6 = 0,
+};
 
-// IER : Interrupt enable register (R/W)
-// Received data available
-const IER_RDA_MASK: u8 = 1 << 0;
-// Transmitter holding register empty
-const IER_THR_EMPTY_MASK: u8 = 1 << 1;
-// The interrupts that are available on 16550 and older models.
-const IER_UART_VALID_MASK: u8 = 0xF;
+const IIR = packed struct(u8) {
+    no_pending_interrupt: bool = false,
+    status: enum(u3) {
+        modem_status_change,
+        transmitter_holding_register_empty,
+        receive_data_available,
+        line_status_change,
+        _,
+    } = .modem_status_change,
+    _: u2 = 0,
+    fifo: enum(u2) {
+        no_fifo,
+        unusable_fifo,
+        unknown,
+        fifo_enabled,
+    } = .no_fifo,
+};
 
-// IIR : Interrupt identification register (RO)
-// No interrupt pending
-const IIR_NO_INT: u8 = 1;
-// Transmitter holding register empty
-const IIR_THR_EMPTY_MASK: u8 = 0b001 << 1;
-// Received data available
-const IIR_RDA_MASK: u8 = 0b010 << 1;
-const IIR_FIFO_MASK: u8 = 0b1100_0000;
+const LCR = packed struct(u8) {
+    data_bits: enum(u2) {
+        @"5bits",
+        @"6bits",
+        @"7bits",
+        @"8bits",
+    } = .@"5bits",
+    stop_bits: enum(u1) {
+        @"1bit",
+        @"2bit",
+    } = .@"1bit",
+    parity_bits: u3 = 0,
+    break_signal: bool = false,
+    dlab: bool = false,
+};
 
-// LCR : Line control register (R/W)
-// 0 -> DLAB : RBR, THR and IER accessible
-// 1 -> DLAB : DLL and DLM accessible
-const LCR_DLAB_MASK: u8 = 0b1000_0000;
+const LSR = packed struct(u8) {
+    data_available: bool = false,
+    overrun_error: bool = false,
+    parity_error: bool = false,
+    framing_error: bool = false,
+    break_signal_recieved: bool = false,
+    thr_empty: bool = false,
+    thr_empty_and_line_is_idle: bool = false,
+    error_data_in_fifo: bool = false,
+};
 
-// LSR : Line status register (RO)
-// Data available
-const LSR_DATA_READY_MASK: u8 = 1 << 0;
-// THR is empty.
-const LSR_THR_EMPTY_MASK: u8 = 1 << 5;
-// THR is empty, and line is idle
-const LSR_IDLE_MASK: u8 = 1 << 6;
+const MCR = packed struct(u8) {
+    data_terminal_ready: bool = false,
+    request_to_send: bool = false,
+    auxiliary_output_1: bool = false,
+    auxiliary_output_2: bool = false,
+    loopback_mode: bool = false,
+    autoflow_control: bool = false,
+    _: u2 = 0,
+};
 
-// MCR : Modem control register (R/W)
-// The following five MCR bits allow direct manipulation of the device and
-// are available on 16550 and older models.
-// Data terminal ready.
-const MCR_DTR_MASK: u8 = 1 << 0;
-// Request to send.
-const MCR_RTS_MASK: u8 = 1 << 1;
-// Auxiliary output 1.
-const MCR_OUT1_MASK: u8 = 1 << 2;
-// Auxiliary output 2.
-const MCR_OUT2_MASK: u8 = 1 << 3;
-// Loopback mode.
-const MCR_LOOP_MASK: u8 = 1 << 4;
+const MSR = packed struct(u8) {
+    change_in_clear_to_send: bool = false,
+    change_in_data_set_ready: bool = false,
+    trailing_edge_ring_indicator: bool = false,
+    change_in_carrier_detect: bool = false,
+    clear_to_send: bool = false,
+    data_set_ready: bool = false,
+    ring_indicator: bool = false,
+    carrier_detect: bool = false,
+};
 
-// MSR : Modem status register (RO)
-// Clear to send.
-const MSR_CTS_MASK: u8 = 1 << 4;
-// Data set ready.
-const MSR_DSR_MASK: u8 = 1 << 5;
-// Ring indicator.
-const MSR_RI_MASK: u8 = 1 << 6;
-// Data carrier detect.
-const MSR_DCD_MASK: u8 = 1 << 7;
+const SCR = packed struct(u8) {
+    _: u8 = 0,
+};
 
 // The following values can be used to set the baud rate to 9600 bps.
 const DEFAULT_BAUD_DIVISOR_HIGH: u8 = 0x00;
 const DEFAULT_BAUD_DIVISOR_LOW: u8 = 0x0C;
 
+const Fifo = std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = 64 });
+
 in: nix.fd_t,
 out: nix.fd_t,
+irq_evt: EventFd,
 
 baud_divisor_low: u8,
 baud_divisor_high: u8,
-IER: u8,
-IIR: u8,
-LCR: u8,
-LSR: u8,
-MCR: u8,
-MSR: u8,
-SCR: u8,
-// The RBR, receiver buffer register contains the byte received if no FIFO is used, or the oldest unread byte with FIFO’s.
-// If FIFO buffering is used, each new read action of the register will return the next byte,
-// until no more bytes are present. Bit 0 in the LSR line status register can be used to check
-// if all received bytes have been read. This bit will change to zero if no more bytes are present.
-// rbr: [FIFO_SIZE]u8,
-fifo: std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = FIFO_SIZE }),
-
-irq_evt: EventFd,
+ier: IER,
+iir: IIR,
+lcr: LCR,
+lsr: LSR,
+mcr: MCR,
+msr: MSR,
+scr: SCR,
+fifo: Fifo,
 
 const Self = @This();
 
@@ -127,27 +142,17 @@ pub fn new(
     return Self{
         .in = in,
         .out = out,
-
+        .irq_evt = irq_evt,
         .baud_divisor_low = DEFAULT_BAUD_DIVISOR_LOW,
         .baud_divisor_high = DEFAULT_BAUD_DIVISOR_HIGH,
-
-        // No interrupts enabled.
-        .IER = 0,
-        .IIR = IIR_NO_INT,
-        // 8 bits word length.
-        .LCR = 0b0000_0011,
-        // This is a virtual device and it should always be ready to received
-        // data.
-        .LSR = LSR_THR_EMPTY_MASK | LSR_IDLE_MASK,
-        // Most UARTs need Auxiliary Output 2 set to '1' to enable interrupts.
-        .MCR = MCR_OUT2_MASK,
-        .MSR = MSR_DSR_MASK | MSR_CTS_MASK | MSR_DCD_MASK,
-        .SCR = 0,
-        .irq_evt = irq_evt,
-        .fifo = std.fifo.LinearFifo(
-            u8,
-            std.fifo.LinearFifoBufferType{ .Static = FIFO_SIZE },
-        ).init(),
+        .ier = .{},
+        .iir = .{ .no_pending_interrupt = true, .fifo = .fifo_enabled },
+        .lcr = .{ .data_bits = .@"8bits" },
+        .lsr = .{ .thr_empty = true, .thr_empty_and_line_is_idle = true },
+        .mcr = .{ .auxiliary_output_2 = true },
+        .msr = .{ .clear_to_send = true, .data_set_ready = true, .carrier_detect = true },
+        .scr = .{},
+        .fifo = Fifo.init(),
     };
 }
 
@@ -167,71 +172,30 @@ pub fn event_read_input(self: *Self) void {
 pub fn read_input(self: *Self, comptime System: type) void {
     var buff: [8]u8 = undefined;
     const n = nix.assert(@src(), System, "read", .{ self.in, &buff });
-    if (n <= 0) {
-        return;
-    }
-    if (n <= self.fifo.writableLength() and !self.in_loop_mode()) {
+    if (n <= self.fifo.writableLength() and !self.mcr.loopback_mode) {
         self.fifo.write(buff[0..n]) catch unreachable;
-        self.LSR |= LSR_DATA_READY_MASK;
+        self.lsr.data_available = true;
         self.received_data_interrupt(System);
     }
 }
 
-fn dlab_set(self: *const Self) bool {
-    return (self.LCR & LCR_DLAB_MASK) != 0;
-}
-
-fn rda_interrupt_enabled(self: *const Self) bool {
-    return (self.IER & IER_RDA_MASK) != 0;
-}
-
-fn thr_interrupt_enabled(self: *const Self) bool {
-    return (self.IER & IER_THR_EMPTY_MASK) != 0;
-}
-
-fn rda_interrupt_set(self: *const Self) bool {
-    return (self.IIR & IIR_RDA_MASK) != 0;
-}
-
-fn thr_interrupt_set(self: *const Self) bool {
-    return (self.IIR & IIR_THR_EMPTY_MASK) != 0;
-}
-
-fn in_loop_mode(self: *const Self) bool {
-    return (self.MCR & MCR_LOOP_MASK) != 0;
-}
-
-fn add_interrupt(self: *Self, interrupt_bits: u8) void {
-    self.IIR &= ~IIR_NO_INT;
-    self.IIR |= interrupt_bits;
-}
-
-fn remove_interrupt(self: *Self, interrupt_bits: u8) void {
-    self.IIR &= ~interrupt_bits;
-    if (self.IIR == 0) {
-        self.IIR = IIR_NO_INT;
-    }
-}
-
-fn thr_empty_interrupt(self: *Self, comptime System: type) void {
-    if (self.thr_interrupt_enabled()) {
-        // Trigger the interrupt only if the identification bit wasn't
-        // set or acknowledged.
-        if ((self.IIR & IIR_THR_EMPTY_MASK) == 0) {
-            self.add_interrupt(IIR_THR_EMPTY_MASK);
-            self.irq_evt.write(System, 1);
-        }
+fn transmitter_interrupt(self: *Self, comptime System: type) void {
+    if (self.ier.transmitter_holding_register_empty and
+        self.iir.status != .transmitter_holding_register_empty)
+    {
+        self.iir.no_pending_interrupt = false;
+        self.iir.status = .transmitter_holding_register_empty;
+        self.irq_evt.write(System, 1);
     }
 }
 
 fn received_data_interrupt(self: *Self, comptime System: type) void {
-    if (self.rda_interrupt_enabled()) {
-        // Trigger the interrupt only if the identification bit wasn't
-        // set or acknowledged.
-        if (self.IIR & IIR_RDA_MASK == 0) {
-            self.add_interrupt(IIR_RDA_MASK);
-            self.irq_evt.write(System, 1);
-        }
+    if (self.ier.receive_data_available and
+        self.iir.status != .receive_data_available)
+    {
+        self.iir.no_pending_interrupt = false;
+        self.iir.status = .receive_data_available;
+        self.irq_evt.write(System, 1);
     }
 }
 
@@ -239,109 +203,87 @@ pub fn write_default(self: *Self, offset: u64, data: []u8) void {
     self.write(nix.System, offset, data);
 }
 pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+    log.assert(@src(), data.len == 1, "Invalid uart wrtie data length: {d} != 1", .{data.len});
     const value = data[0];
     switch (offset) {
         0 => {
-            if (self.dlab_set()) {
+            if (self.lcr.dlab) {
                 self.baud_divisor_low = value;
             } else {
-                if (self.in_loop_mode()) {
-                    // In loopback mode, what is written in the transmit register
-                    // will be immediately found in the receive register, so we
-                    // simulate this behavior by adding in `in_buffer` the
-                    // transmitted bytes and letting the driver know there is some
-                    // pending data to be read, by setting RDA bit and its
-                    // corresponding interrupt.
-                    if (self.fifo.writeItem(value)) |_| {
-                        self.LSR |= LSR_DATA_READY_MASK;
-                        self.received_data_interrupt(System);
-                    } else |_| {}
+                if (self.mcr.loopback_mode) {
+                    self.fifo.writeItem(value) catch return;
+                    self.lsr.data_available = true;
+                    self.received_data_interrupt(System);
                 } else {
                     _ = nix.assert(@src(), System, "write", .{ self.out, data });
-
-                    // Because we cannot block the driver, the THRE interrupt is sent
-                    // irrespective of whether we are able to write the byte or not
-                    self.thr_empty_interrupt(System);
+                    self.transmitter_interrupt(System);
                 }
             }
         },
         // We want to enable only the interrupts that are available for 16550A (and below).
         1 => {
-            if (self.dlab_set()) {
+            if (self.lcr.dlab) {
                 self.baud_divisor_high = value;
             } else {
-                self.IER = value & IER_UART_VALID_MASK;
+                self.ier = @bitCast(value);
             }
         },
-        3 => self.LCR = value,
-        4 => self.MCR = value,
-        7 => self.SCR = value,
+        3 => self.lcr = @bitCast(value),
+        4 => self.mcr = @bitCast(value & 0x1f),
+        7 => self.scr = @bitCast(value),
         else => {},
     }
 }
 
 pub fn read(self: *Self, offset: u64, data: []u8) void {
+    log.assert(@src(), data.len == 1, "Invalid uart read data length: {d} != 1", .{data.len});
     data[0] = switch (offset) {
         0 => blk: {
-            if (self.dlab_set()) {
+            if (self.lcr.dlab) {
                 break :blk self.baud_divisor_low;
             } else {
-                // Here we emulate the reset method for when RDA interrupt
-                // was raised (i.e. read the receive buffer and clear the
-                // interrupt identification register and RDA bit when no
-                // more data is available).
-                self.remove_interrupt(IIR_RDA_MASK);
+                self.iir.status = .modem_status_change;
+                self.iir.no_pending_interrupt = true;
                 const byte = self.fifo.readItem() orelse 0;
                 if (self.fifo.count == 0) {
-                    self.LSR &= ~LSR_DATA_READY_MASK;
+                    self.lsr.data_available = false;
+                    self.lsr.break_signal_recieved = false;
                 }
                 break :blk byte;
             }
         },
         1 => blk: {
-            if (self.dlab_set()) {
+            if (self.lcr.dlab) {
                 break :blk self.baud_divisor_high;
             } else {
-                break :blk self.IER;
+                break :blk @bitCast(self.ier);
             }
         },
         2 => blk: {
-            // We're enabling FIFO capability by setting the serial port to 16550A:
-            // https://elixir.bootlin.com/linux/latest/source/drivers/tty/serial/8250/8250_port.c#L1299.
-            const iir = self.IIR | IIR_FIFO_MASK;
-            // resetting IIR
-            self.IIR = IIR_NO_INT;
-            break :blk iir;
+            const r: u8 = @bitCast(self.iir);
+            if (self.iir.status == .transmitter_holding_register_empty) {
+                self.iir.status = .modem_status_change;
+                self.iir.no_pending_interrupt = true;
+            }
+            break :blk r;
         },
-        3 => self.LCR,
-        4 => self.MCR,
-        5 => self.LSR,
+        3 => @bitCast(self.lcr),
+        4 => @bitCast(self.mcr),
+        5 => @bitCast(self.lsr),
         6 => blk: {
-            if (self.in_loop_mode()) {
-                // In loopback mode, the four modem control inputs (CTS, DSR, RI, DCD) are
-                // internally connected to the four modem control outputs (RTS, DTR, OUT1, OUT2).
-                // This way CTS is controlled by RTS, DSR by DTR, RI by OUT1 and DCD by OUT2.
-                // (so they will basically contain the same value).
-                var msr =
-                    self.MSR & ~(MSR_DSR_MASK | MSR_CTS_MASK | MSR_RI_MASK | MSR_DCD_MASK);
-                if ((self.MCR & MCR_DTR_MASK) != 0) {
-                    msr |= MSR_DSR_MASK;
-                }
-                if ((self.MCR & MCR_RTS_MASK) != 0) {
-                    msr |= MSR_CTS_MASK;
-                }
-                if ((self.MCR & MCR_OUT1_MASK) != 0) {
-                    msr |= MSR_RI_MASK;
-                }
-                if ((self.MCR & MCR_OUT2_MASK) != 0) {
-                    msr |= MSR_DCD_MASK;
-                }
-                break :blk msr;
+            if (self.mcr.loopback_mode) {
+                const msr: MSR = .{
+                    .clear_to_send = self.mcr.request_to_send,
+                    .data_set_ready = self.mcr.data_terminal_ready,
+                    .ring_indicator = self.mcr.auxiliary_output_1,
+                    .carrier_detect = self.mcr.auxiliary_output_2,
+                };
+                break :blk @bitCast(msr);
             } else {
-                break :blk self.MSR;
+                break :blk @bitCast(self.msr);
             }
         },
-        7 => self.SCR,
+        7 => @bitCast(self.scr),
         else => 0,
     };
 }
