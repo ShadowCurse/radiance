@@ -204,7 +204,7 @@ pub fn main() !void {
         );
     } else undefined;
 
-    var rtc = Rtc.new();
+    var rtc: Rtc = .{};
     mmio.add_device(.{
         .ptr = &rtc,
         .read_ptr = @ptrCast(&Rtc.read),
