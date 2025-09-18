@@ -16,6 +16,7 @@ pub const Options = struct {
     colors: bool = true,
     level: LogLevel = .Info,
     asserts: bool = true,
+    buffer_size: u32 = 256,
 
     const Self = @This();
     pub fn log_enabled(self: Self, level: LogLevel) bool {
@@ -31,12 +32,16 @@ pub const options: Options = if (@hasDecl(root, "log_options"))
 else
     .{};
 
+pub var output_fd: i32 = std.posix.STDERR_FILENO;
+var output_mutex: std.Thread.Mutex.Recursive = .init;
+var buffer: [options.buffer_size]u8 = undefined;
+
 pub fn comptime_err(
     comptime src: std.builtin.SourceLocation,
     comptime format: []const u8,
     comptime args: anytype,
-) void {
-    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
+) noreturn {
+    const header = std.fmt.comptimePrint("[{s}:{}:COMPILE]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
     const t = fill_struct(T, header, args);
     if (comptime options.colors)
@@ -55,6 +60,20 @@ pub fn comptime_assert(
     if (!ok) comptime_err(src, format, args);
 }
 
+pub fn panic(
+    comptime src: std.builtin.SourceLocation,
+    comptime format: []const u8,
+    args: anytype,
+) noreturn {
+    const header = std.fmt.comptimePrint("[{s}:{}:PANIC]", .{ src.file, src.line });
+    const T = make_struct(@TypeOf(args));
+    const t = fill_struct(T, header, args);
+    if (comptime options.colors)
+        std.debug.panic(RED ++ "{s} " ++ format ++ DEFAULT_COLOR, t)
+    else
+        std.debug.panic("{s} " ++ format, t);
+}
+
 pub fn assert(
     comptime src: std.builtin.SourceLocation,
     ok: bool,
@@ -65,7 +84,7 @@ pub fn assert(
 
     if (!ok) {
         @branchHint(.cold);
-        const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
+        const header = std.fmt.comptimePrint("[{s}:{}:ASSERT]", .{ src.file, src.line });
         const T = make_struct(@TypeOf(args));
         const t = fill_struct(T, header, args);
         if (comptime options.colors)
@@ -82,13 +101,13 @@ pub fn info(
 ) void {
     if (comptime !options.log_enabled(.Info)) return;
 
-    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
+    const header = std.fmt.comptimePrint("[{s}:{}:INFO]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
     const t = fill_struct(T, header, args);
     if (comptime options.colors)
-        std.log.info(WHITE ++ "{s} " ++ format ++ DEFAULT_COLOR, t)
+        output(WHITE ++ "{s} " ++ format ++ DEFAULT_COLOR ++ "\n", t)
     else
-        std.log.info("{s} " ++ format, t);
+        output("{s} " ++ format ++ "\n", t);
 }
 
 pub fn debug(
@@ -98,13 +117,13 @@ pub fn debug(
 ) void {
     if (comptime !options.log_enabled(.Debug)) return;
 
-    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
+    const header = std.fmt.comptimePrint("[{s}:{}:DEBUG]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
     const t = fill_struct(T, header, args);
     if (comptime options.colors)
-        std.log.debug(HIGH_WHITE ++ "{s} " ++ format ++ DEFAULT_COLOR, t)
+        output(HIGH_WHITE ++ "{s} " ++ format ++ DEFAULT_COLOR ++ "\n", t)
     else
-        std.log.debug("{s} " ++ format, t);
+        output("{s} " ++ format ++ "\n", t);
 }
 
 pub fn warn(
@@ -114,13 +133,13 @@ pub fn warn(
 ) void {
     if (comptime !options.log_enabled(.Warn)) return;
 
-    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
+    const header = std.fmt.comptimePrint("[{s}:{}:WARN]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
     const t = fill_struct(T, header, args);
     if (comptime options.colors)
-        std.log.warn(YELLOW ++ "{s} " ++ format ++ DEFAULT_COLOR, t)
+        output(YELLOW ++ "{s} " ++ format ++ DEFAULT_COLOR ++ "\n", t)
     else
-        std.log.warn("{s} " ++ format, t);
+        output("{s} " ++ format ++ "\n", t);
 }
 
 pub fn err(
@@ -130,13 +149,32 @@ pub fn err(
 ) void {
     if (comptime !options.log_enabled(.Err)) return;
 
-    const header = std.fmt.comptimePrint("[{s}:{}]", .{ src.file, src.line });
+    const header = std.fmt.comptimePrint("[{s}:{}:ERROR]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
     const t = fill_struct(T, header, args);
     if (comptime options.colors)
-        std.log.err(RED ++ "{s} " ++ format ++ DEFAULT_COLOR, t)
+        output(RED ++ "{s} " ++ format ++ DEFAULT_COLOR ++ "\n", t)
     else
-        std.log.err("{s} " ++ format, t);
+        output("{s} " ++ format ++ "\n", t);
+}
+
+pub fn output(comptime format: []const u8, args: anytype) void {
+    var output_writer: std.fs.File.Writer = .{
+        .interface = std.fs.File.Writer.initInterface(&.{}),
+        .file = .{
+            .handle = output_fd,
+        },
+        .mode = .streaming,
+    };
+    const writer = &output_writer.interface;
+
+    nosuspend {
+        output_mutex.lock();
+        defer output_mutex.unlock();
+
+        writer.print(format, args) catch return;
+        writer.flush() catch return;
+    }
 }
 
 fn fill_struct(comptime T: type, comptime header: [:0]const u8, args: anytype) T {

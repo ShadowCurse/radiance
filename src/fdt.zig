@@ -97,8 +97,9 @@ pub const FdtReserveEntry = packed struct {
 // https://devicetree-specification.readthedocs.io/en/stable/flattened-format.html
 pub const FdtBuilder = struct {
     data: FdtData,
-    strings_map: std.StringHashMap(usize),
-    stored_strings: std.ArrayList(u8),
+    allocator: Allocator,
+    strings_map: std.StringHashMapUnmanaged(usize),
+    stored_strings: std.ArrayListUnmanaged(u8),
 
     /// Maximum size of the device tree blob as specified in
     /// https://www.kernel.org/doc/Documentation/arm64/booting.txt.
@@ -150,8 +151,9 @@ pub const FdtBuilder = struct {
 
         return Self{
             .data = data,
-            .strings_map = .init(allocator),
-            .stored_strings = .init(allocator),
+            .allocator = allocator,
+            .strings_map = .empty,
+            .stored_strings = .empty,
         };
     }
 
@@ -210,9 +212,9 @@ pub const FdtBuilder = struct {
             return offset;
         } else {
             const new_offset = self.stored_strings.items.len;
-            self.stored_strings.appendSlice(s) catch unreachable;
-            self.stored_strings.append(0) catch unreachable;
-            self.strings_map.put(s, new_offset) catch unreachable;
+            self.stored_strings.appendSlice(self.allocator, s) catch unreachable;
+            self.stored_strings.append(self.allocator, 0) catch unreachable;
+            self.strings_map.put(self.allocator, s, new_offset) catch unreachable;
             return new_offset;
         }
     }

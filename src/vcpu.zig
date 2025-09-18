@@ -55,7 +55,7 @@ pub fn sys_reg_id(op0: u64, op1: u64, crn: u64, crm: u64, op2: u64) u64 {
         ((op2 << nix.KVM_REG_ARM64_SYSREG_OP2_SHIFT) & nix.KVM_REG_ARM64_SYSREG_OP2_MASK);
 }
 
-fn signal_handler(s: c_int) callconv(.C) void {
+fn signal_handler(s: c_int) callconv(.c) void {
     _ = s;
     Self.self_ref.?.kvm_run.immediate_exit = 1;
 }
@@ -65,7 +65,6 @@ fn set_thread_handler(comptime System: type) void {
         .handler = .{ .handler = signal_handler },
         .flags = 4,
         .mask = std.mem.zeroes(nix.sigset_t),
-        .restorer = null,
     };
     _ = nix.assert(@src(), System, "sigaction", .{ VCPU_SIGNAL, &sigact, null });
 }

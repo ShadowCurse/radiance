@@ -50,7 +50,7 @@ pub fn main() !void {
                     try utils.Process.start("radiance", &utils.RadianceCmd(config_path), alloc);
 
                 std.log.info("Waiting for radiance to boot", .{});
-                std.time.sleep(utils.RadianceBootTimeDelay);
+                std.Thread.sleep(utils.RadianceBootTimeDelay);
 
                 try utils.Process.run(
                     &(utils.SshCmd ++ .{ "systemd-analyze", ">", "boottime.txt" }),

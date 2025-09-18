@@ -139,14 +139,14 @@ const qfThreadInfo = struct {
 
     fn response(self: *const Self, buffer: []u8, gdb: *GdbServer) ![]const u8 {
         _ = self;
-        var buff = try std.BoundedArray(u8, 16).init(0);
-        const writer = buff.writer();
+        var buff: [16]u8 = undefined;
+        var slice: []u8 = &buff;
         for (0..gdb.vcpu_threads.len) |i| {
-            try std.fmt.formatInt(i, 16, .upper, .{}, writer);
-            try buff.append(',');
+            const str = try std.fmt.bufPrint(slice, "{X},", .{i});
+            slice = slice[str.len..];
         }
-        _ = buff.pop();
-        return fmt_response(buffer, buff.slice());
+        slice = buff[0 .. buff.len - slice.len - 1];
+        return fmt_response(buffer, slice);
     }
 };
 

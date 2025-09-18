@@ -1,5 +1,6 @@
 const std = @import("std");
 const nix = @import("nix.zig");
+const BoundedArray = @import("bounded_array.zig").BoundedArray;
 
 const HOST_PAGE_SIZE = @import("memory.zig").HOST_PAGE_SIZE;
 
@@ -50,13 +51,14 @@ pub const DriveConfig = struct {
 };
 
 pub const DrivesConfigs = struct {
-    drives: std.BoundedArray(DriveConfig, 8) = .{},
+    drives: BoundedArray(DriveConfig, 8) = .empty,
 
     const Self = @This();
 
     fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        if (self.drives.full()) return error.MaxDrivesConfigsReached;
         const new_config = try parse_type(DriveConfig, line_iter);
-        try self.drives.append(new_config);
+        self.drives.append(new_config);
     }
 };
 
@@ -67,13 +69,14 @@ pub const NetConfig = struct {
 };
 
 pub const NetConfigs = struct {
-    networks: std.BoundedArray(NetConfig, 8) = .{},
+    networks: BoundedArray(NetConfig, 8) = .empty,
 
     const Self = @This();
 
     fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        if (self.networks.full()) return error.MaxNetworksConfigsReached;
         const new_config = try parse_type(NetConfig, line_iter);
-        try self.networks.append(new_config);
+        self.networks.append(new_config);
     }
 };
 
@@ -83,13 +86,14 @@ pub const PmemConfig = struct {
 };
 
 pub const PmemConfigs = struct {
-    pmems: std.BoundedArray(PmemConfig, 8) = .{},
+    pmems: BoundedArray(PmemConfig, 8) = .empty,
 
     const Self = @This();
 
     fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
+        if (self.pmems.full()) return error.MaxPmemsConfigsReached;
         const new_config = try parse_type(PmemConfig, line_iter);
-        try self.pmems.append(new_config);
+        self.pmems.append(new_config);
     }
 };
 
@@ -299,7 +303,7 @@ fn dump_section(
         DrivesConfigs, PmemConfigs, NetConfigs => {
             const type_fields = @typeInfo(t_type).@"struct".fields;
             const first_field = type_fields[0];
-            const items = @field(t, first_field.name).slice();
+            const items = @field(t, first_field.name).slice_const();
             for (items) |item| {
                 dump_type(System, name, item, fd);
                 if (!last)
@@ -418,33 +422,33 @@ test "dump_and_parse" {
         .io_uring = false,
         .pci = false,
         .rootfs = true,
-    }) catch unreachable;
+    });
     drives.drives.append(.{
         .path = "drive_2_path",
         .read_only = true,
         .io_uring = true,
         .pci = false,
         .rootfs = false,
-    }) catch unreachable;
+    });
     drives.drives.append(.{
         .path = "drive_3_path",
         .read_only = true,
         .io_uring = false,
         .pci = true,
         .rootfs = false,
-    }) catch unreachable;
+    });
 
     var nets: NetConfigs = .{};
     nets.networks.append(.{
         .mac = null,
         .vhost = true,
         .dev_name = "net_1",
-    }) catch unreachable;
+    });
     nets.networks.append(.{
         .mac = .{ 0x0, 0x2, 0xDE, 0xAD, 0xBE, 0xEF },
         .vhost = false,
         .dev_name = "net_2",
-    }) catch unreachable;
+    });
 
     const config: Config = .{
         .machine = .{
@@ -497,12 +501,12 @@ test "dump_and_parse" {
 
     try std.testing.expect(new_config.config.uart.enabled == config.uart.enabled);
 
-    for (new_config.config.drives.drives.slice(), config.drives.drives.slice()) |nd, od| {
+    for (new_config.config.drives.drives.slice_const(), config.drives.drives.slice_const()) |nd, od| {
         try std.testing.expect(std.mem.eql(u8, nd.path, od.path));
         try std.testing.expect(nd.read_only == od.read_only);
     }
 
-    for (new_config.config.networks.networks.slice(), config.networks.networks.slice()) |nn, on| {
+    for (new_config.config.networks.networks.slice_const(), config.networks.networks.slice_const()) |nn, on| {
         if (nn.mac) |nm| {
             const om = on.mac.?;
             try std.testing.expect(std.mem.eql(u8, &nm, &om));

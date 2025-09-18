@@ -75,14 +75,7 @@ const ECAMAddress = packed struct(u32) {
             @as(u32, self.register_number);
     }
 
-    pub fn format(
-        value: *const ECAMAddress,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: *const ECAMAddress, writer: anytype) !void {
         try writer.print("{d}:{d}:{d}:{d}:{d}:{d}", .{
             value.byte_address,
             value.register_number,
@@ -379,7 +372,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
     log.assert(
         @src(),
         ecam.device_number < self.headers.len,
-        "Write to the config space of the non existing device. Offset: 0x{x}, ECAM: {}",
+        "Write to the config space of the non existing device. Offset: 0x{x}, ECAM: {f}",
         .{ offset, ecam },
     );
 
@@ -388,7 +381,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
         @src(),
         config_offset < @sizeOf(Type0ConfigurationHeader) +
             @sizeOf(VirtioPciDeviceCapabilities),
-        "Write beyond available memory in config space. Offset: 0x{x}, ECAM: {}",
+        "Write beyond available memory in config space. Offset: 0x{x}, ECAM: {f}",
         .{ offset, ecam },
     );
 
@@ -420,7 +413,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
 
     log.debug(
         @src(),
-        "ECAM W: offset: 0x{x} len: {d} ecam: {} data: {any}",
+        "ECAM W: offset: 0x{x} len: {d} ecam: {f} data: {any}",
         .{
             offset,
             data.len,
@@ -444,7 +437,7 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
             config_offset < @sizeOf(Type0ConfigurationHeader) +
                 @sizeOf(VirtioPciDeviceCapabilities) or
                 config_offset == REG64,
-            "Read beyond available memory in config space. Offset: 0x{x}, ECAM: {}",
+            "Read beyond available memory in config space. Offset: 0x{x}, ECAM: {f}",
             .{ offset, ecam },
         );
 
@@ -490,7 +483,7 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
 
     log.debug(
         @src(),
-        "ECAM R: offset: 0x{x} len: {d} ecam: {} data: {any}",
+        "ECAM R: offset: 0x{x} len: {d} ecam: {f} data: {any}",
         .{
             offset,
             data.len,

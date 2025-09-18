@@ -6,6 +6,7 @@ const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
 const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
 const EventFd = @import("../eventfd.zig");
+const RingBuffer = @import("../ring_buffer.zig").RingBuffer;
 
 // https://uart16550.readthedocs.io/en/latest/uart16550doc.html
 // From  https://www.lammertbies.nl/comm/info/serial-uart
@@ -101,8 +102,6 @@ const SCR = packed struct(u8) {
 const DEFAULT_BAUD_DIVISOR_HIGH: u8 = 0x00;
 const DEFAULT_BAUD_DIVISOR_LOW: u8 = 0x0C;
 
-const Fifo = std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = 64 });
-
 in: nix.fd_t,
 out: nix.fd_t,
 irq_evt: EventFd,
@@ -116,7 +115,7 @@ lsr: LSR,
 mcr: MCR,
 msr: MSR,
 scr: SCR,
-fifo: Fifo,
+fifo: RingBuffer(u8, 64),
 
 const Self = @This();
 
@@ -152,7 +151,7 @@ pub fn new(
         .mcr = .{ .auxiliary_output_2 = true },
         .msr = .{ .clear_to_send = true, .data_set_ready = true, .carrier_detect = true },
         .scr = .{},
-        .fifo = Fifo.init(),
+        .fifo = .empty,
     };
 }
 
@@ -172,8 +171,8 @@ pub fn event_read_input(self: *Self) void {
 pub fn read_input(self: *Self, comptime System: type) void {
     var buff: [8]u8 = undefined;
     const n = nix.assert(@src(), System, "read", .{ self.in, &buff });
-    if (n <= self.fifo.writableLength() and !self.mcr.loopback_mode) {
-        self.fifo.write(buff[0..n]) catch unreachable;
+    if (n <= self.fifo.remaining_len() and !self.mcr.loopback_mode) {
+        self.fifo.push_back_slice(buff[0..n]);
         self.lsr.data_available = true;
         self.received_data_interrupt(System);
     }
@@ -211,7 +210,7 @@ pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
                 self.baud_divisor_low = value;
             } else {
                 if (self.mcr.loopback_mode) {
-                    self.fifo.writeItem(value) catch return;
+                    self.fifo.push_back(value);
                     self.lsr.data_available = true;
                     self.received_data_interrupt(System);
                 } else {
@@ -244,8 +243,8 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
             } else {
                 self.iir.status = .modem_status_change;
                 self.iir.no_pending_interrupt = true;
-                const byte = self.fifo.readItem() orelse 0;
-                if (self.fifo.count == 0) {
+                const byte = self.fifo.pop_front() orelse 0;
+                if (self.fifo.len == 0) {
                     self.lsr.data_available = false;
                     self.lsr.break_signal_recieved = false;
                 }
