@@ -75,7 +75,7 @@ pub fn main() !void {
                             alloc,
                         );
                         std.log.info("Waiting for radiance to boot", .{});
-                        std.time.sleep(utils.RadianceBootTimeDelay);
+                        std.Thread.sleep(utils.RadianceBootTimeDelay);
 
                         const fio_cmd = utils.FioCmd(device.path, bs, mode);
                         try utils.Process.run(&(utils.SshCmd ++ fio_cmd), alloc);

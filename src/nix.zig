@@ -53,6 +53,10 @@ pub const System = struct {
     pub const spawn_thread = std.Thread.spawn;
 };
 
+pub const STDIN = std.os.linux.STDIN_FILENO;
+pub const STDOUT = std.os.linux.STDOUT_FILENO;
+pub const STDERR = std.os.linux.STDERR_FILENO;
+
 pub const io_uring_params = std.os.linux.io_uring_params;
 pub const io_uring_sqe = std.os.linux.io_uring_sqe;
 pub const io_uring_cqe = std.os.linux.io_uring_cqe;
@@ -488,7 +492,7 @@ fn clean_return_type(
     );
 }
 
-fn args_fmt(comptime args_type: type) []const u8 {
+pub fn args_fmt(comptime args_type: type) []const u8 {
     var s: []const u8 = "";
     const args_type_info = @typeInfo(args_type);
     inline for (args_type_info.@"struct".fields, 0..) |field, i| {
@@ -502,7 +506,7 @@ fn args_fmt(comptime args_type: type) []const u8 {
     return s;
 }
 
-fn make_struct(comptime T: type, comptime Err: type) type {
+pub fn make_struct(comptime T: type, comptime Err: type) type {
     const type_fields = comptime @typeInfo(T).@"struct".fields;
     var fields: [type_fields.len + 2]std.builtin.Type.StructField = undefined;
     fields[0] = .{
@@ -521,7 +525,7 @@ fn make_struct(comptime T: type, comptime Err: type) type {
     };
     for (type_fields, 2..) |f, i| {
         var ff = f;
-        ff.name = std.fmt.comptimePrint("{}", .{i});
+        ff.name = std.fmt.comptimePrint("{d}", .{i});
         ff.is_comptime = false;
         ff.default_value_ptr = null;
         fields[i] = ff;
@@ -537,12 +541,7 @@ fn make_struct(comptime T: type, comptime Err: type) type {
     });
 }
 
-fn fill_struct(
-    comptime T: type,
-    fn_name: []const u8,
-    e: anytype,
-    args: anytype,
-) T {
+pub fn fill_struct(comptime T: type, fn_name: []const u8, e: anytype, args: anytype) T {
     const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
     var t: T = undefined;
 
@@ -553,8 +552,8 @@ fn fill_struct(
     // because these fields are assigned at runtime
     // but we need to generate indexes at comptime
     inline for (args_fields, 0..) |_, i| {
-        const t_index = std.fmt.comptimePrint("{}", .{2 + i});
-        const args_index = std.fmt.comptimePrint("{}", .{i});
+        const t_index = std.fmt.comptimePrint("{d}", .{2 + i});
+        const args_index = std.fmt.comptimePrint("{d}", .{i});
         @field(t, t_index) = @field(args, args_index);
     }
     return t;
@@ -567,6 +566,9 @@ pub inline fn assert(
     comptime function_name: []const u8,
     args: std.meta.ArgsTuple(@TypeOf(@field(S, function_name))),
 ) clean_return_type(src, @TypeOf(@field(S, function_name))) {
+    // TODO try to optimize compile time execution to set
+    // quota back to default.
+    @setEvalBranchQuota(20000);
     const f = @field(S, function_name);
     const fn_type = @typeInfo(@TypeOf(f));
     const t = if (fn_type.@"fn".return_type) |tt| tt else void;
@@ -579,7 +581,7 @@ pub inline fn assert(
                 log.assert(
                     src,
                     false,
-                    "'{s}' failed with error: {}\nargs:" ++ args_fmt(@TypeOf(args)),
+                    "'{s}' failed with error: {t}\nargs:" ++ args_fmt(@TypeOf(args)),
                     ttt,
                 );
                 unreachable;
@@ -593,7 +595,7 @@ pub inline fn assert(
             log.assert(
                 src,
                 err == .SUCCESS,
-                "'{s}' failed with error: {}\nargs:" ++ args_fmt(@TypeOf(args)),
+                "'{s}' failed with error: {t}\nargs:" ++ args_fmt(@TypeOf(args)),
                 ttt,
             );
             return @intCast(r);

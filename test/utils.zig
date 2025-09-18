@@ -296,6 +296,6 @@ pub const SystemCpuUsage = struct {
 pub fn system_cpu_usage_thread(system_cpu_usage: *SystemCpuUsage, alloc: Allocator, delta: u64, stop: *bool) !void {
     while (!stop.*) {
         try system_cpu_usage.update(alloc);
-        std.time.sleep(delta);
+        std.Thread.sleep(delta);
     }
 }

@@ -43,7 +43,7 @@ pub const log_options = log.Options{
 };
 
 const Args = struct {
-    config_path: []const u8,
+    config_path: ?[]const u8 = null,
 };
 
 // All of these types are allocated from a single arena. In order to easily determine
@@ -77,12 +77,16 @@ pub fn main() !void {
 
     const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
-    const config_parse_result = try config_parser.parse_file(nix.System, args.config_path);
+    if (args.config_path == null) {
+        try args_parser.print_help(Args);
+        return;
+    }
+    const config_parse_result = try config_parser.parse_file(nix.System, args.config_path.?);
     const config = &config_parse_result.config;
 
     var net_mmio_count: u32 = 0;
     var net_vhost_mmio_count: u32 = 0;
-    for (config.networks.networks.slice()) |*net_config| {
+    for (config.networks.networks.slice_const()) |*net_config| {
         if (net_config.vhost) {
             net_vhost_mmio_count += 1;
         } else {
@@ -93,7 +97,7 @@ pub fn main() !void {
     var block_mmio_count: u32 = 0;
     var block_pci_count: u32 = 0;
     var block_mmio_io_uring_count: u32 = 0;
-    for (config.drives.drives.slice()) |*drive_config| {
+    for (config.drives.drives.slice_const()) |*drive_config| {
         if (drive_config.io_uring) {
             block_mmio_io_uring_count += 1;
         } else if (drive_config.pci) {
@@ -150,7 +154,7 @@ pub fn main() !void {
     // attach pmem
     var last_addr = Memory.align_addr(memory.last_addr(), Pmem.ALIGNMENT);
     const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmems.pmems.len);
-    for (config.pmems.pmems.slice(), pmem_infos) |*pmem_config, *info| {
+    for (config.pmems.pmems.slice_const(), pmem_infos) |*pmem_config, *info| {
         info.start = last_addr;
         info.len = Pmem.attach(nix.System, &vm, pmem_config.path, info.start);
         last_addr += info.len;
@@ -180,8 +184,7 @@ pub fn main() !void {
     var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
 
     // configure terminal for uart in/out
-    const stdin = if (config.uart.enabled) std.io.getStdIn() else undefined;
-    const state = if (config.uart.enabled) configure_terminal(nix.System, &stdin) else undefined;
+    const state = if (config.uart.enabled) configure_terminal(nix.System) else undefined;
     var uart: Uart = undefined;
     if (config.uart.enabled) {
         uart = Uart.new(
@@ -198,7 +201,7 @@ pub fn main() !void {
         });
         el.add_event(
             nix.System,
-            stdin.handle,
+            nix.STDIN,
             @ptrCast(&Uart.event_read_input),
             &uart,
         );
@@ -229,7 +232,7 @@ pub fn main() !void {
         &memory,
         &el,
         mmio_block_infos[0..block_mmio_count],
-        config.drives.drives.slice(),
+        config.drives.drives.slice_const(),
     );
     mmio_block_infos = mmio_block_infos[block_mmio_count..];
     defer for (mmio_blocks) |*block|
@@ -243,7 +246,7 @@ pub fn main() !void {
         &el,
         &io_uring,
         mmio_block_infos[0..block_mmio_io_uring_count],
-        config.drives.drives.slice(),
+        config.drives.drives.slice_const(),
     );
     mmio_block_infos = mmio_block_infos[block_mmio_io_uring_count..];
     defer for (mmio_io_uring_blocks) |*block|
@@ -257,7 +260,7 @@ pub fn main() !void {
         &el,
         &ecam,
         block_pci_count,
-        config.drives.drives.slice(),
+        config.drives.drives.slice_const(),
     );
     defer for (pci_blocks) |*block|
         block.sync(nix.System);
@@ -269,7 +272,7 @@ pub fn main() !void {
         &memory,
         &el,
         mmio_net_infos[0..net_mmio_count],
-        config.networks.networks.slice(),
+        config.networks.networks.slice_const(),
     );
     mmio_net_infos = mmio_net_infos[net_mmio_count..];
 
@@ -279,14 +282,14 @@ pub fn main() !void {
         &mmio,
         &memory,
         mmio_net_infos[0..net_vhost_mmio_count],
-        config.networks.networks.slice(),
+        config.networks.networks.slice_const(),
     );
     mmio_net_infos = mmio_net_infos[net_vhost_mmio_count..];
 
     // create kernel cmdline
     var cmdline = try CmdLine.new(tmp_alloc, 128);
     try cmdline.append(config.machine.cmdline);
-    for (config.drives.drives.slice(), 0..) |*drive_config, i| {
+    for (config.drives.drives.slice_const(), 0..) |*drive_config, i| {
         if (drive_config.rootfs) {
             var name_buff: [32]u8 = undefined;
             const mod = if (drive_config.read_only) "ro" else "rw";
@@ -305,7 +308,7 @@ pub fn main() !void {
             try cmdline.append(name);
             break;
         }
-    } else for (config.pmems.pmems.slice(), 0..) |*pm, i| {
+    } else for (config.pmems.pmems.slice_const(), 0..) |*pm, i| {
         if (pm.rootfs) {
             var name_buff: [64]u8 = undefined;
             const name = try std.fmt.bufPrint(
@@ -397,7 +400,7 @@ pub fn main() !void {
     }
 
     log.info(@src(), "Shutting down", .{});
-    if (config.uart.enabled) restore_terminal(nix.System, &stdin, &state);
+    if (config.uart.enabled) restore_terminal(nix.System, &state);
     return;
 }
 
@@ -620,11 +623,11 @@ fn create_net_mmio_vhost(
     }
 }
 
-fn configure_terminal(comptime System: type, stdin: *const std.fs.File) nix.termios {
+fn configure_terminal(comptime System: type) nix.termios {
     var ttystate: nix.termios = undefined;
     var ttysave: nix.termios = undefined;
 
-    _ = System.tcgetattr(stdin.handle, &ttystate);
+    _ = System.tcgetattr(nix.STDIN, &ttystate);
     ttysave = ttystate;
 
     //turn off canonical mode and echo
@@ -634,17 +637,13 @@ fn configure_terminal(comptime System: type, stdin: *const std.fs.File) nix.term
     ttystate.cc[4] = 1;
 
     //set the terminal attributes.
-    _ = System.tcsetattr(stdin.handle, nix.TCSA.NOW, &ttystate);
+    _ = System.tcsetattr(nix.STDIN, nix.TCSA.NOW, &ttystate);
     return ttysave;
 }
 
-fn restore_terminal(
-    comptime System: type,
-    stdin: *const std.fs.File,
-    state: *const nix.termios,
-) void {
+fn restore_terminal(comptime System: type, state: *const nix.termios) void {
     //set the terminal attributes.
-    _ = System.tcsetattr(stdin.handle, nix.TCSA.NOW, state);
+    _ = System.tcsetattr(nix.STDIN, nix.TCSA.NOW, state);
 }
 
 pub const _queue = @import("./virtio/queue.zig");

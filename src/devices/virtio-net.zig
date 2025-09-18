@@ -13,6 +13,7 @@ const Queue = _queue.Queue;
 const DescriptorChain = _queue.DescriptorChain;
 const IovRing = @import("../virtio/iov_ring.zig");
 const RingBuffer = @import("../ring_buffer.zig").RingBuffer;
+const BoundedArray = @import("../bounded_array.zig").BoundedArray;
 
 pub const TYPE_NET: u32 = 1;
 
@@ -261,7 +262,7 @@ const RxChains = struct {
     pub fn init(comptime System: type) Self {
         return .{
             .iovec_ring = .init(System),
-            .chain_infos = .init(System),
+            .chain_infos = .empty,
         };
     }
 
@@ -344,18 +345,18 @@ const RxChains = struct {
 
 const TxChain = struct {
     const Self = @This();
-    iovec_array: std.BoundedArray(nix.iovec_const, 16),
+    iovec_array: BoundedArray(nix.iovec_const, 16),
     head_index: u16,
 
     pub fn init() Self {
         return .{
-            .iovec_array = std.BoundedArray(nix.iovec_const, 16).init(0) catch unreachable,
+            .iovec_array = .empty,
             .head_index = 0,
         };
     }
 
     pub fn slice(self: *const Self) []const nix.iovec_const {
-        return self.iovec_array.slice();
+        return self.iovec_array.slice_const();
     }
 
     pub fn add_chain(self: *Self, memory: *Memory, dc: DescriptorChain) void {
@@ -367,12 +368,12 @@ const TxChain = struct {
                 .base = @volatileCast(iovec_slice.ptr),
                 .len = iovec_slice.len,
             };
-            self.iovec_array.append(iovec) catch unreachable;
+            self.iovec_array.append(iovec);
         }
     }
 
     pub fn finish_used(self: *Self, memory: *Memory, queue: *Queue) void {
         queue.add_used_desc(memory, self.head_index, 0);
-        self.iovec_array.resize(0) catch unreachable;
+        self.iovec_array.reset();
     }
 };

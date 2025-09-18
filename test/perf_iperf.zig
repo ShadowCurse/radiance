@@ -52,7 +52,7 @@ pub fn main() !void {
                 var radinace_process = try utils.Process.start("radiance", &utils.RadianceCmd(ConfigPath), alloc);
 
                 std.log.info("Waiting for radiance to boot", .{});
-                std.time.sleep(utils.RadianceBootTimeDelay);
+                std.Thread.sleep(utils.RadianceBootTimeDelay);
 
                 const iperf_cmd = utils.IperfCmd(mode[0]);
                 try utils.Process.run(&(utils.SshCmd ++ iperf_cmd), alloc);
