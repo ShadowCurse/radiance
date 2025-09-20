@@ -1,27 +1,35 @@
 # Radiance
 
-Experimental KVM based VMM for aarch64 platform.
+Experimental KVM based VMM for `aarch64` platform.
+
+> [!NOTE]
+>
+> Currently only systems with `GICv2`/`m` like Raspberry Pi 4/5 are supported since this
+> is the only `aarch64` hardware I have for development.
 
 Defining characteristics:
 - no external dependencies
 - statically compiled (no libc or musl)
 - no memory allocations after the VM start
 - minimal memory overhead over requested VM memory size
+- support for Block,Net,Pmem,Uart,Rtc devices
+- support for PCI (currently only for Block)
+- optimized MMIO device path which makes MMIO devices as fast as PCI ones.
 
 ### Build:
 ```bash
-    $ zig build -Doptimize=ReleaseFast -j4
+zig build -Doptimize=ReleaseFast
 ```
 
 ### Usage:
 ```bash
 Usage:
-        --config_path: type []const u8
+        --config-path
 ```
 
 #### Example:
 ```bash
-radiance --config_path config.toml
+radiance --config-path config.toml
 ```
 
 ### Example config file:
@@ -29,27 +37,46 @@ radiance --config_path config.toml
 [machine]
 vcpus = 2
 memory_mb = 128
+cmdline = "reboot=k panic=1"
+
+[uart]
+enabled = true
 
 [kernel]
-path = "vmlinux-5.10"
+path = "path_to_kernel"
 
 [[drives]]
+path = "path_to_rootfs"
 read_only = true
-path = "ubuntu-22.04.ext4"
+rootfs = true
+pci = true
+
+[[networks]]
+dev_name = "tap0"
+mac = [AA, BB, CC, DD, EE, FF]
+
+[[pmems]]
+path = "some_file"
 
 ```
 
 ### Rootfs:
+
+> [!NOTE]
+>
+> Generated ssh keys will be owned by root user. To use them with `ssh`
+> change ownership with `chown`.
+
 #### Ubuntu:
 ```bash
-    $ sudo bash mk_ubuntu.sh 300
+sudo bash mk_ubuntu.sh 300
 ```
 This will produce `ubuntu.ext4` rootfs file and
 ssh keys `ubuntu.id_rsa` and `ubuntu.id_rsa.pub`.
 
 #### Alpine:
 ```bash
-    $ sudo bash mk_alpine.sh 100
+sudo bash mk_alpine.sh 100
 ```
 This will produce `alpine.ext4` rootfs file and
 ssh keys `alpine.id_rsa` and `alpine.id_rsa.pub`.
