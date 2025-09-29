@@ -132,7 +132,7 @@ pub fn main() !void {
     // create vm
     var vm = Vm.new(nix.System, &kvm);
     vm.set_memory(nix.System, .{
-        .guest_phys_addr = memory.guest_addr,
+        .guest_phys_addr = Memory.DRAM_START,
         .memory_size = memory.mem.len,
         .userspace_addr = @intFromPtr(memory.mem.ptr),
     });
@@ -646,9 +646,8 @@ fn restore_terminal(comptime System: type, state: *const nix.termios) void {
     _ = System.tcsetattr(nix.STDIN, nix.TCSA.NOW, state);
 }
 
-pub const _queue = @import("./virtio/queue.zig");
-pub const _iov_ring = @import("./virtio/iov_ring.zig");
-pub const _ring_buffer = @import("./ring_buffer.zig");
-test {
-    std.testing.refAllDecls(@This());
+comptime {
+    _ = @import("./virtio/queue.zig");
+    _ = @import("./virtio/iov_ring.zig");
+    _ = @import("./ring_buffer.zig");
 }

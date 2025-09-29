@@ -138,9 +138,9 @@ pub const Queue = struct {
 
         self.next_avail = self.next_avail +% 1;
 
-        const desc_table_slice = memory.get_slice(nix.vring_desc, self.size, self.desc_table);
+        const desc_table = memory.get_slice(nix.vring_desc, self.size, self.desc_table);
         return DescriptorChain{
-            .desc_table = desc_table_slice,
+            .desc_table = desc_table,
             .index = desc_index,
         };
     }
@@ -189,76 +189,50 @@ const TestSystem = struct {
     }
 };
 test "test_queue_pop_desc_chain" {
-    const expect = std.testing.expect;
-
-    var memory = Memory.init(TestSystem, 0x1000);
-
-    memory.guest_addr = 0;
+    const memory = Memory.init(TestSystem, 0x1000);
     @memset(memory.mem, 0);
-
-    const avail_ring_offset: u64 = 0;
-    const desc_table_offset: u64 = avail_ring_offset + @sizeOf(nix.vring_avail) * 4;
-
-    const avail_ring = memory.get_ptr(nix.vring_avail, avail_ring_offset);
 
     var queue = Queue.new(10);
     queue.size = 10;
+    queue.desc_table = Memory.DRAM_START;
+    queue.avail_ring = Memory.DRAM_START + 0x100;
+    queue.used_ring = Memory.DRAM_START + 0x200;
 
-    const avail_ring_offset_hight: u32 = @truncate(avail_ring_offset >> 32);
-    const avail_ring_offset_low: u32 = @truncate(avail_ring_offset);
-    queue.set_avail_ring(true, avail_ring_offset_hight);
-    queue.set_avail_ring(false, avail_ring_offset_low);
+    try std.testing.expectEqual(null, queue.pop_desc_chain(&memory));
 
-    const desc_table_offset_hight: u32 = @truncate(desc_table_offset >> 32);
-    const desc_table_offset_low: u32 = @truncate(desc_table_offset);
-    queue.set_desc_table(true, desc_table_offset_hight);
-    queue.set_desc_table(false, desc_table_offset_low);
-
-    try expect(queue.pop_desc_chain(&memory) == null);
-
+    const avail_ring = memory.get_ptr(nix.vring_avail, queue.avail_ring);
     avail_ring.idx = 10;
-    for (0..10) |i| {
-        @constCast(avail_ring.ring())[i] = @intCast(i);
-    }
+    for (0..10) |i| @constCast(avail_ring.ring())[i] = @intCast(i);
     for (0..10) |i| {
         const dc = queue.pop_desc_chain(&memory);
-        try expect(dc != null);
-        try expect(dc.?.index == @as(u16, @intCast(i)));
-        try expect(@intFromPtr(dc.?.desc_table.ptr) ==
-            @intFromPtr(memory.mem.ptr) + desc_table_offset);
-        try expect(dc.?.desc_table.len == queue.size);
-        try expect(queue.next_avail == i + 1);
+        try std.testing.expect(dc != null);
+        try std.testing.expectEqual(@as(u16, @intCast(i)), dc.?.index);
+        try std.testing.expectEqual(
+            memory.get_ptr(nix.vring_desc, queue.desc_table),
+            &dc.?.desc_table[0],
+        );
+        try std.testing.expectEqual(queue.size, dc.?.desc_table.len);
+        try std.testing.expectEqual(i + 1, queue.next_avail);
     }
 }
 
 test "test_queue_add_used_desc" {
-    const expect = std.testing.expect;
-
     var memory = Memory.init(TestSystem, 0x1000);
-
-    memory.guest_addr = 0;
     @memset(memory.mem, 0);
-
-    const avail_ring_offset: u64 = 0;
-    const desc_table_offset: u64 = avail_ring_offset + @sizeOf(nix.vring_avail) * 4;
-    const used_ring_offset: u64 = desc_table_offset + @sizeOf(nix.vring_desc) * 10;
-
-    const used_ring = memory.get_ptr(nix.vring_used, used_ring_offset);
 
     var queue = Queue.new(10);
     queue.size = 10;
+    queue.desc_table = Memory.DRAM_START;
+    queue.avail_ring = Memory.DRAM_START + 0x100;
+    queue.used_ring = Memory.DRAM_START + 0x200;
 
-    const used_ring_offset_hight: u32 = @truncate(used_ring_offset >> 32);
-    const used_ring_offset_low: u32 = @truncate(used_ring_offset);
-    queue.set_used_ring(true, used_ring_offset_hight);
-    queue.set_used_ring(false, used_ring_offset_low);
-
+    const used_ring = memory.get_ptr(nix.vring_used, queue.used_ring);
     for (0..10) |i| {
         queue.add_used_desc(&memory, @intCast(i), 69);
         const a = used_ring.ring()[i];
-        try expect(a.id == i);
-        try expect(a.len == 69);
-        try expect(queue.next_used == i + 1);
-        try expect(used_ring.idx == i + 1);
+        try std.testing.expectEqual(i, a.id);
+        try std.testing.expectEqual(69, a.len);
+        try std.testing.expectEqual(i + 1, queue.next_used);
+        try std.testing.expectEqual(i + 1, used_ring.idx);
     }
 }

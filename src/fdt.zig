@@ -18,7 +18,7 @@ const FdtData = struct {
 
     pub fn init(memory: *const Memory) Self {
         const fdt_addr = FdtBuilder.fdt_addr(memory.last_addr());
-        const memory_fdt_start = fdt_addr - memory.guest_addr;
+        const memory_fdt_start = fdt_addr - Memory.DRAM_START;
         return .{
             .mem = memory.mem[memory_fdt_start..],
             .len = 0,
@@ -441,8 +441,7 @@ fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, mpidrs: []const u
 
 fn create_memory_fdt(builder: *FdtBuilder, memory: *const Memory) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/usage-model.rst
-    const mem_size = memory.guest_addr + memory.mem.len - Memory.DRAM_START;
-    const mem_reg_prop = [_]u64{ Memory.DRAM_START, mem_size };
+    const mem_reg_prop = [_]u64{ Memory.DRAM_START, memory.mem.len };
 
     builder.begin_node("memory");
     defer builder.end_node();
