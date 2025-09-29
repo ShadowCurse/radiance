@@ -48,6 +48,7 @@ pub const BlockConfig = struct {
     io_uring: bool = false,
     pci: bool = false,
     rootfs: bool = false,
+    id: ?[nix.VIRTIO_BLK_ID_BYTES]u8 = null,
 };
 
 pub const BlockConfigs = struct {
@@ -225,6 +226,19 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
         inline for (type_fields) |field| {
             if (std.mem.eql(u8, field.name, field_name)) {
                 switch (field.type) {
+                    ?[nix.VIRTIO_BLK_ID_BYTES]u8 => {
+                        var array: [nix.VIRTIO_BLK_ID_BYTES]u8 = .{0} ** nix.VIRTIO_BLK_ID_BYTES;
+                        var i: usize = 0;
+                        const val_array = std.mem.trim(u8, field_value, "[]");
+                        var val_iter = std.mem.splitScalar(u8, val_array, ',');
+                        while (val_iter.next()) |value| : (i += 1) {
+                            const v = std.mem.trim(u8, value, " ");
+                            const n = try std.fmt.parseInt(u8, v, 16);
+                            array[i] = n;
+                            if (i == array.len) return error.BlockIdOverflow;
+                        }
+                        @field(t, field.name) = array;
+                    },
                     ?[6]u8 => {
                         var array: [6]u8 = undefined;
                         var i: usize = 0;
