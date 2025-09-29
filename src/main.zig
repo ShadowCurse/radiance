@@ -423,9 +423,10 @@ fn create_block_mmio(
 
             block.* = BlockMmio.new(
                 nix.System,
-                vm,
                 config.path,
                 config.read_only,
+                config.id,
+                vm,
                 memory,
                 info,
             );
@@ -464,9 +465,10 @@ fn create_block_mmio_io_uring(
             index += 1;
             block.* = BlockMmioIoUring.new(
                 nix.System,
-                vm,
                 config.path,
                 config.read_only,
+                config.id,
+                vm,
                 memory,
                 info,
             );
@@ -516,9 +518,10 @@ fn create_block_pci(
             );
             block.* = BlockPci.new(
                 nix.System,
-                vm,
                 config.path,
                 config.read_only,
+                config.id,
+                vm,
                 memory,
                 info,
             );

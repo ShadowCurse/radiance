@@ -37,25 +37,6 @@ pub const MAX_SEGMENTS = QUEUE_SIZE - 2;
 pub const MAX_SEGMENTS_IO_URING = 1;
 pub const QUEUE_SIZES = .{QUEUE_SIZE};
 
-fn create_block_id(statx: *const nix.Statx) [nix.VIRTIO_BLK_ID_BYTES]u8 {
-    var block_id = [_]u8{0} ** nix.VIRTIO_BLK_ID_BYTES;
-    var dev_major = statx.dev_major;
-    dev_major = dev_major << 16;
-    dev_major = dev_major << 16;
-    const dev = statx.dev_minor | dev_major;
-
-    var rdev_major = statx.rdev_major;
-    rdev_major = rdev_major << 16;
-    rdev_major = rdev_major << 16;
-    const rdev = statx.rdev_minor | rdev_major;
-
-    _ = std.fmt.bufPrint(&block_id, "{}{}{}", .{ dev, rdev, statx.ino }) catch |e| {
-        log.assert(@src(), false, "block id formatting error: {}", .{e});
-    };
-
-    return block_id;
-}
-
 const SubmissionsRing = struct {
     submissions: [MAX_SUBMISSIONS]Submission =
         .{Submission{}} ** MAX_SUBMISSIONS,
@@ -117,9 +98,10 @@ pub fn Block(comptime Context: type) type {
 
         pub fn new(
             comptime System: type,
-            vm: *Vm,
             file_path: []const u8,
             read_only: bool,
+            id: ?[nix.VIRTIO_BLK_ID_BYTES]u8,
+            vm: *Vm,
             memory: *Memory,
             info: anytype,
         ) Self {
@@ -141,7 +123,7 @@ pub fn Block(comptime Context: type) type {
             });
 
             const nsectors = statx.size >> SECTOR_SHIFT;
-            const block_id = create_block_id(&statx);
+            const block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
 
             var context = Context.new(
                 System,
@@ -297,13 +279,13 @@ pub fn BlockIoUring(comptime Context: type) type {
         context: Context,
 
         const Self = @This();
-        // const VIRTIO_CONTEXT = VirtioContext(QUEUE_SIZES.len, TYPE_BLOCK, Config);
 
         pub fn new(
             comptime System: type,
-            vm: *Vm,
             file_path: []const u8,
             read_only: bool,
+            id: ?[nix.VIRTIO_BLK_ID_BYTES]u8,
+            vm: *Vm,
             memory: *Memory,
             info: anytype,
         ) Self {
@@ -315,7 +297,7 @@ pub fn BlockIoUring(comptime Context: type) type {
 
             const statx = nix.assert(@src(), System, "statx", .{file_fd});
             const nsectors = statx.size >> SECTOR_SHIFT;
-            const block_id = create_block_id(&statx);
+            const block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
 
             var context = Context.new(
                 System,
