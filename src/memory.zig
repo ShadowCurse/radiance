@@ -44,7 +44,6 @@ const arm64_image_header = packed struct {
     res5: u32,
 };
 
-guest_addr: u64,
 mem: []align(HOST_PAGE_SIZE) u8,
 
 const Self = @This();
@@ -65,14 +64,11 @@ pub fn init(comptime System: type, size: usize) Self {
         0,
     });
 
-    log.debug(@src(), "mem size: 0x{x}", .{size});
-    log.debug(@src(), "guest_addr: 0x{x}", .{DRAM_START});
-
-    return Self{ .guest_addr = DRAM_START, .mem = mem };
+    return Self{ .mem = mem };
 }
 
 pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
-    const offset = addr - self.guest_addr;
+    const offset = addr - DRAM_START;
     const end_of_type = offset + @sizeOf(T);
     log.assert(
         @src(),
@@ -84,7 +80,7 @@ pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
 }
 
 pub fn get_slice(self: *const Self, comptime T: type, len: u64, addr: u64) []volatile T {
-    const offset = addr - self.guest_addr;
+    const offset = addr - DRAM_START;
     const end_of_slice = offset + @sizeOf(T) * len;
     log.assert(
         @src(),
@@ -99,7 +95,7 @@ pub fn get_slice(self: *const Self, comptime T: type, len: u64, addr: u64) []vol
 }
 
 pub fn last_addr(self: *const Self) u64 {
-    return self.guest_addr + self.mem.len - 1;
+    return DRAM_START + self.mem.len - 1;
 }
 
 pub fn align_addr(addr: u64, align_to: u64) u64 {
