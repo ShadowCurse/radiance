@@ -8,11 +8,11 @@ enabled = false
 [kernel]
 path = "resources/vmlinux-6.12"
 
-[[drives]]
+[[block]]
 read_only = false
 path = "resources/ubuntu.ext4"
 rootfs = true
 
-[[networks]]
+[[network]]
 dev_name = "tap0"
 mac = [06, 00, AC, 10, 00, 02]

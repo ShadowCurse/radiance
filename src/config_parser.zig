@@ -42,7 +42,7 @@ pub const UartConfig = struct {
     }
 };
 
-pub const DriveConfig = struct {
+pub const BlockConfig = struct {
     path: []const u8 = "",
     read_only: bool = false,
     io_uring: bool = false,
@@ -50,15 +50,15 @@ pub const DriveConfig = struct {
     rootfs: bool = false,
 };
 
-pub const DrivesConfigs = struct {
-    drives: BoundedArray(DriveConfig, 8) = .empty,
+pub const BlockConfigs = struct {
+    configs: BoundedArray(BlockConfig, 8) = .empty,
 
     const Self = @This();
 
     fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
-        if (self.drives.full()) return error.MaxDrivesConfigsReached;
-        const new_config = try parse_type(DriveConfig, line_iter);
-        self.drives.append(new_config);
+        if (self.configs.full()) return error.MaxDrivesConfigsReached;
+        const new_config = try parse_type(BlockConfig, line_iter);
+        self.configs.append(new_config);
     }
 };
 
@@ -69,14 +69,14 @@ pub const NetConfig = struct {
 };
 
 pub const NetConfigs = struct {
-    networks: BoundedArray(NetConfig, 8) = .empty,
+    configs: BoundedArray(NetConfig, 8) = .empty,
 
     const Self = @This();
 
     fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
-        if (self.networks.full()) return error.MaxNetworksConfigsReached;
+        if (self.configs.full()) return error.MaxNetworksConfigsReached;
         const new_config = try parse_type(NetConfig, line_iter);
-        self.networks.append(new_config);
+        self.configs.append(new_config);
     }
 };
 
@@ -86,14 +86,14 @@ pub const PmemConfig = struct {
 };
 
 pub const PmemConfigs = struct {
-    pmems: BoundedArray(PmemConfig, 8) = .empty,
+    configs: BoundedArray(PmemConfig, 8) = .empty,
 
     const Self = @This();
 
     fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
-        if (self.pmems.full()) return error.MaxPmemsConfigsReached;
+        if (self.configs.full()) return error.MaxPmemsConfigsReached;
         const new_config = try parse_type(PmemConfig, line_iter);
-        self.pmems.append(new_config);
+        self.configs.append(new_config);
     }
 };
 
@@ -112,9 +112,9 @@ pub const Config = struct {
     machine: MachineConfig = .{},
     kernel: KernelConfig = .{},
     uart: UartConfig = .{},
-    drives: DrivesConfigs = .{},
-    networks: NetConfigs = .{},
-    pmems: PmemConfigs = .{},
+    block: BlockConfigs = .{},
+    network: NetConfigs = .{},
+    pmem: PmemConfigs = .{},
     gdb: ?GdbConfig = null,
 };
 
@@ -300,7 +300,7 @@ fn dump_section(
 ) void {
     const t_type = @TypeOf(t);
     switch (t_type) {
-        DrivesConfigs, PmemConfigs, NetConfigs => {
+        BlockConfigs, PmemConfigs, NetConfigs => {
             const type_fields = @typeInfo(t_type).@"struct".fields;
             const first_field = type_fields[0];
             const items = @field(t, first_field.name).slice_const();
@@ -415,22 +415,22 @@ test "dump_and_parse" {
         \\
     ;
 
-    var drives: DrivesConfigs = .{};
-    drives.drives.append(.{
+    var drives: BlockConfigs = .{};
+    drives.configs.append(.{
         .path = "drive_1_path",
         .read_only = false,
         .io_uring = false,
         .pci = false,
         .rootfs = true,
     });
-    drives.drives.append(.{
+    drives.configs.append(.{
         .path = "drive_2_path",
         .read_only = true,
         .io_uring = true,
         .pci = false,
         .rootfs = false,
     });
-    drives.drives.append(.{
+    drives.configs.append(.{
         .path = "drive_3_path",
         .read_only = true,
         .io_uring = false,
@@ -439,12 +439,12 @@ test "dump_and_parse" {
     });
 
     var nets: NetConfigs = .{};
-    nets.networks.append(.{
+    nets.configs.append(.{
         .mac = null,
         .vhost = true,
         .dev_name = "net_1",
     });
-    nets.networks.append(.{
+    nets.configs.append(.{
         .mac = .{ 0x0, 0x2, 0xDE, 0xAD, 0xBE, 0xEF },
         .vhost = false,
         .dev_name = "net_2",
@@ -461,8 +461,8 @@ test "dump_and_parse" {
         .uart = .{
             .enabled = false,
         },
-        .drives = drives,
-        .networks = nets,
+        .block = drives,
+        .network = nets,
         .gdb = .{
             .socket_path = "gdb_sock",
         },
@@ -501,12 +501,12 @@ test "dump_and_parse" {
 
     try std.testing.expect(new_config.config.uart.enabled == config.uart.enabled);
 
-    for (new_config.config.drives.drives.slice_const(), config.drives.drives.slice_const()) |nd, od| {
+    for (new_config.config.block.configs.slice_const(), config.block.configs.slice_const()) |nd, od| {
         try std.testing.expect(std.mem.eql(u8, nd.path, od.path));
         try std.testing.expect(nd.read_only == od.read_only);
     }
 
-    for (new_config.config.networks.networks.slice_const(), config.networks.networks.slice_const()) |nn, on| {
+    for (new_config.config.network.configs.slice_const(), config.network.configs.slice_const()) |nn, on| {
         if (nn.mac) |nm| {
             const om = on.mac.?;
             try std.testing.expect(std.mem.eql(u8, &nm, &om));
