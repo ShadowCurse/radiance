@@ -86,7 +86,7 @@ pub fn main() !void {
 
     var net_mmio_count: u32 = 0;
     var net_vhost_mmio_count: u32 = 0;
-    for (config.networks.networks.slice_const()) |*net_config| {
+    for (config.network.configs.slice_const()) |*net_config| {
         if (net_config.vhost) {
             net_vhost_mmio_count += 1;
         } else {
@@ -97,10 +97,10 @@ pub fn main() !void {
     var block_mmio_count: u32 = 0;
     var block_pci_count: u32 = 0;
     var block_mmio_io_uring_count: u32 = 0;
-    for (config.drives.drives.slice_const()) |*drive_config| {
-        if (drive_config.io_uring) {
+    for (config.block.configs.slice_const()) |*block_config| {
+        if (block_config.io_uring) {
             block_mmio_io_uring_count += 1;
-        } else if (drive_config.pci) {
+        } else if (block_config.pci) {
             block_pci_count += 1;
         } else {
             block_mmio_count += 1;
@@ -153,8 +153,8 @@ pub fn main() !void {
 
     // attach pmem
     var last_addr = Memory.align_addr(memory.last_addr(), Pmem.ALIGNMENT);
-    const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmems.pmems.len);
-    for (config.pmems.pmems.slice_const(), pmem_infos) |*pmem_config, *info| {
+    const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmem.configs.len);
+    for (config.pmem.configs.slice_const(), pmem_infos) |*pmem_config, *info| {
         info.start = last_addr;
         info.len = Pmem.attach(nix.System, &vm, pmem_config.path, info.start);
         last_addr += info.len;
@@ -232,7 +232,7 @@ pub fn main() !void {
         &memory,
         &el,
         mmio_block_infos[0..block_mmio_count],
-        config.drives.drives.slice_const(),
+        config.block.configs.slice_const(),
     );
     mmio_block_infos = mmio_block_infos[block_mmio_count..];
     defer for (mmio_blocks) |*block|
@@ -246,7 +246,7 @@ pub fn main() !void {
         &el,
         &io_uring,
         mmio_block_infos[0..block_mmio_io_uring_count],
-        config.drives.drives.slice_const(),
+        config.block.configs.slice_const(),
     );
     mmio_block_infos = mmio_block_infos[block_mmio_io_uring_count..];
     defer for (mmio_io_uring_blocks) |*block|
@@ -260,7 +260,7 @@ pub fn main() !void {
         &el,
         &ecam,
         block_pci_count,
-        config.drives.drives.slice_const(),
+        config.block.configs.slice_const(),
     );
     defer for (pci_blocks) |*block|
         block.sync(nix.System);
@@ -272,7 +272,7 @@ pub fn main() !void {
         &memory,
         &el,
         mmio_net_infos[0..net_mmio_count],
-        config.networks.networks.slice_const(),
+        config.network.configs.slice_const(),
     );
     mmio_net_infos = mmio_net_infos[net_mmio_count..];
 
@@ -282,21 +282,21 @@ pub fn main() !void {
         &mmio,
         &memory,
         mmio_net_infos[0..net_vhost_mmio_count],
-        config.networks.networks.slice_const(),
+        config.network.configs.slice_const(),
     );
     mmio_net_infos = mmio_net_infos[net_vhost_mmio_count..];
 
     // create kernel cmdline
     var cmdline = try CmdLine.new(tmp_alloc, 128);
     try cmdline.append(config.machine.cmdline);
-    for (config.drives.drives.slice_const(), 0..) |*drive_config, i| {
-        if (drive_config.rootfs) {
+    for (config.block.configs.slice_const(), 0..) |*block_config, i| {
+        if (block_config.rootfs) {
             var name_buff: [32]u8 = undefined;
-            const mod = if (drive_config.read_only) "ro" else "rw";
+            const mod = if (block_config.read_only) "ro" else "rw";
             var letter: u8 = 'a' + @as(u8, @intCast(i));
             // pci block will be initialized after mmio ones
-            if (drive_config.pci) {
-                // There can only be less than 256 drives
+            if (block_config.pci) {
+                // There can only be less than 256 blocks
                 letter += @intCast(block_mmio_info_count);
             }
             const name = try std.fmt.bufPrint(
@@ -308,7 +308,7 @@ pub fn main() !void {
             try cmdline.append(name);
             break;
         }
-    } else for (config.pmems.pmems.slice_const(), 0..) |*pm, i| {
+    } else for (config.pmem.configs.slice_const(), 0..) |*pm, i| {
         if (pm.rootfs) {
             var name_buff: [64]u8 = undefined;
             const name = try std.fmt.bufPrint(
@@ -411,7 +411,7 @@ fn create_block_mmio(
     memory: *Memory,
     event_loop: *EventLoop,
     mmio_infos: []const Mmio.MmioDeviceInfo,
-    configs: []const config_parser.DriveConfig,
+    configs: []const config_parser.BlockConfig,
 ) ![]const BlockMmio {
     const blocks = try alloc.alloc(BlockMmio, mmio_infos.len);
     var index: u8 = 0;
@@ -453,7 +453,7 @@ fn create_block_mmio_io_uring(
     event_loop: *EventLoop,
     io_uring: *IoUring,
     mmio_infos: []const Mmio.MmioDeviceInfo,
-    configs: []const config_parser.DriveConfig,
+    configs: []const config_parser.BlockConfig,
 ) ![]const BlockMmioIoUring {
     const blocks = try alloc.alloc(BlockMmioIoUring, mmio_infos.len);
     var index: u8 = 0;
@@ -498,7 +498,7 @@ fn create_block_pci(
     event_loop: *EventLoop,
     ecam: *Ecam,
     pci_blocks_count: u32,
-    configs: []const config_parser.DriveConfig,
+    configs: []const config_parser.BlockConfig,
 ) ![]const BlockPci {
     const blocks = try alloc.alloc(BlockPci, pci_blocks_count);
     var index: u8 = 0;
