@@ -28,56 +28,12 @@ pub const Config = extern struct {
     seg_max: u32,
 };
 pub const QUEUE_SIZE = 256;
+pub const QUEUE_SIZES = .{QUEUE_SIZE};
+
 // Request can take the whole queue of descriptors
 // but it needs to have 1 descriptor for header
 // and 1 for the ack location.
 pub const MAX_SEGMENTS = QUEUE_SIZE - 2;
-// For io_uring there is no VIRTIO_BLK_F_SEG_MAX feature
-// so there should only be 1 segment maximum.
-pub const MAX_SEGMENTS_IO_URING = 1;
-pub const QUEUE_SIZES = .{QUEUE_SIZE};
-
-const SubmissionsRing = struct {
-    submissions: [MAX_SUBMISSIONS]Submission =
-        .{Submission{}} ** MAX_SUBMISSIONS,
-    submission_idx: u32 = 0,
-
-    // Each request consists of 3 descriptors, so
-    // the maximum number of them which can fit in
-    // the chain is QUEUE_SIZE / 3
-    const MAX_SUBMISSIONS = @divFloor(QUEUE_SIZE, 3);
-    const Submission = struct {
-        submitted: bool = false,
-        queue: u1 = 0,
-        desc_index: u16 = 0,
-        len: u32 = 0,
-    };
-
-    pub fn add(
-        self: *SubmissionsRing,
-        queue: u1,
-        desc_index: u16,
-        len: u32,
-    ) u32 {
-        for (0..MAX_SUBMISSIONS) |i| {
-            const offset: u32 = @intCast(i);
-            const idx = (self.submission_idx + offset) % MAX_SUBMISSIONS;
-            if (self.submissions[idx].submitted)
-                continue;
-
-            self.submissions[idx] = .{
-                .submitted = true,
-                .queue = queue,
-                .desc_index = desc_index,
-                .len = len,
-            };
-            self.submission_idx = (idx + 1) % MAX_SUBMISSIONS;
-            return idx;
-        }
-        log.assert(@src(), false, "The submission ring is full", .{});
-        unreachable;
-    }
-};
 
 const MmioContext = VirtioContext(QUEUE_SIZES.len, TYPE_BLOCK, Config);
 const PciContext = PciVirtioContext(QUEUE_SIZES.len, Config);
@@ -263,6 +219,51 @@ pub fn Block(comptime Context: type) type {
     };
 }
 
+const SubmissionsRing = struct {
+    submissions: [MAX_SUBMISSIONS]Submission = .{Submission{}} ** MAX_SUBMISSIONS,
+    submission_idx: u32 = 0,
+
+    // Each request consists of 3 descriptors, so
+    // the maximum number of them which can fit in
+    // the chain is QUEUE_SIZE / 3
+    const MAX_SUBMISSIONS = @divFloor(QUEUE_SIZE, 3);
+    const Submission = struct {
+        submitted: bool = false,
+        queue: u1 = 0,
+        desc_index: u16 = 0,
+        len: u32 = 0,
+    };
+
+    pub fn add(
+        self: *SubmissionsRing,
+        queue: u1,
+        desc_index: u16,
+        len: u32,
+    ) u32 {
+        for (0..MAX_SUBMISSIONS) |i| {
+            const offset: u32 = @intCast(i);
+            const idx = (self.submission_idx + offset) % MAX_SUBMISSIONS;
+            if (self.submissions[idx].submitted)
+                continue;
+
+            self.submissions[idx] = .{
+                .submitted = true,
+                .queue = queue,
+                .desc_index = desc_index,
+                .len = len,
+            };
+            self.submission_idx = (idx + 1) % MAX_SUBMISSIONS;
+            return idx;
+        }
+        log.assert(@src(), false, "The submission ring is full", .{});
+        unreachable;
+    }
+};
+
+// For io_uring there is no VIRTIO_BLK_F_SEG_MAX feature
+// so there should only be 1 segment maximum.
+pub const MAX_SEGMENTS_IO_URING = 1;
+
 pub const BlockMmioIoUring = BlockIoUring(MmioContext);
 pub const BlockPciIoUring = BlockIoUring(PciContext);
 
@@ -439,9 +440,13 @@ pub fn BlockIoUring(comptime Context: type) type {
                         const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
                         status_ptr.* = nix.VIRTIO_BLK_S_OK;
 
-                        queue.add_used_desc(self.memory, header_desc_index, nix.VIRTIO_BLK_ID_BYTES);
+                        queue.add_used_desc(
+                            self.memory,
+                            header_desc_index,
+                            nix.VIRTIO_BLK_ID_BYTES,
+                        );
                         if (queue.send_notification(self.memory))
-                            self.context.irq_evt.write(System, 1);
+                            self.context.notify_current_queue(System);
                         continue;
                     },
                     else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
@@ -473,7 +478,7 @@ pub fn BlockIoUring(comptime Context: type) type {
             queue.add_used_desc(self.memory, submission_info.desc_index, submission_info.len);
 
             if (queue.send_notification(self.memory))
-                self.context.irq_evt.write(System, 1);
+                self.context.notify_current_queue(System);
         }
     };
 }
