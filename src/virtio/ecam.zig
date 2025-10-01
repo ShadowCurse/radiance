@@ -11,6 +11,7 @@ const NUM_CONFIGURATION_REGISTERS: usize = 1024;
 const VIRTIO_VENDOR_ID = 0x1af4;
 const VIRTIO_PCI_DEVICE_BASE_ID = 0x1040;
 
+// headers: []Type0ConfigurationHeader,
 headers: [32]Type0ConfigurationHeader =
     .{Type0ConfigurationHeader{
         .reg0 = .{
@@ -277,7 +278,7 @@ const VirtioPciDeviceCapabilities = extern struct {
 
 const ReadBarSize = struct {
     sizes: [6]u32 = .{0} ** 6,
-    reads: [6]bool = .{false} ** 6,
+    reads: u6 = 0,
 };
 
 const Self = @This();
@@ -397,10 +398,9 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
                 "Write to the bar{d} is not 4 bytes: {any}",
                 .{ bar_idx, data },
             );
-            const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
-            if (data_u32.* == 0xffff_ffff) {
-                self.headers_meta[ecam.device_number].reads[bar_idx] = true;
-            }
+            const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
+            if (data_u32.* == 0xffff_ffff)
+                self.headers_meta[ecam.device_number].reads |= @as(u6, 1) << @truncate(bar_idx);
         } else {
             const bytes = std.mem.asBytes(header);
             @memcpy(bytes[config_offset..][0..data.len], data);
@@ -453,11 +453,12 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
                     "Read to the bar{d} is not 4 bytes: {any}",
                     .{ bar_idx, data },
                 );
-                const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                 const header_meta = &self.headers_meta[ecam.device_number];
-                if (header_meta.reads[bar_idx]) {
+                const bar_read_mask: u6 = @as(u6, 1) << @truncate(bar_idx);
+                if (header_meta.reads & bar_read_mask != 0) {
                     data_u32.* = header_meta.sizes[bar_idx];
-                    header_meta.reads[bar_idx] = false;
+                    header_meta.reads &= ~bar_read_mask;
                     break :blk;
                 }
             }
@@ -470,8 +471,7 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
             }
         } else {
             if (config_offset == REG64) {
-                const d: *u32 = @alignCast(@ptrCast(data.ptr));
-                // d.* = 0x1000;
+                const d: *u32 = @ptrCast(@alignCast(data.ptr));
                 d.* = 0xffff_ffff;
             } else {
                 const capability_offset = config_offset - @sizeOf(Type0ConfigurationHeader);
