@@ -25,7 +25,7 @@ headers: [32]Type0ConfigurationHeader =
             },
         },
     }} ++ .{Type0ConfigurationHeader{}} ** 31,
-headers_meta: [32]ReadBarSize = .{ReadBarSize{}} ** 32,
+headers_meta: [32]HeaderBarSizes = .{HeaderBarSizes{}} ** 32,
 num_devices: u32 = 1,
 // Same for all virtio devices
 virtio_device_capability: VirtioPciDeviceCapabilities = .{},
@@ -276,9 +276,13 @@ const VirtioPciDeviceCapabilities = extern struct {
     data: u32 = 0,
 };
 
-const ReadBarSize = struct {
-    sizes: [6]u32 = .{0} ** 6,
-    reads: u6 = 0,
+pub const HeaderBarSizes = struct {
+    sizes: [6]Size = .{Size{}} ** 6,
+
+    pub const Size = packed struct(u32) {
+        read: bool = false,
+        size: u31 = 0,
+    };
 };
 
 const Self = @This();
@@ -361,7 +365,7 @@ pub fn add_header(
         };
     self.headers_meta[self.num_devices] =
         .{
-            .sizes = .{Memory.PCI_BAR_SIZE} ++ .{0} ** 5,
+            .sizes = .{HeaderBarSizes.Size{ .size = Memory.PCI_BAR_SIZE }} ++ .{} ** 5,
         };
     self.num_devices += 1;
 }
@@ -400,7 +404,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
             );
             const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
             if (data_u32.* == 0xffff_ffff)
-                self.headers_meta[ecam.device_number].reads |= @as(u6, 1) << @truncate(bar_idx);
+                self.headers_meta[ecam.device_number].sizes[bar_idx].read = true;
         } else {
             const bytes = std.mem.asBytes(header);
             @memcpy(bytes[config_offset..][0..data.len], data);
@@ -455,10 +459,9 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
                 );
                 const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                 const header_meta = &self.headers_meta[ecam.device_number];
-                const bar_read_mask: u6 = @as(u6, 1) << @truncate(bar_idx);
-                if (header_meta.reads & bar_read_mask != 0) {
-                    data_u32.* = header_meta.sizes[bar_idx];
-                    header_meta.reads &= ~bar_read_mask;
+                if (header_meta.sizes[bar_idx].read) {
+                    data_u32.* = header_meta.sizes[bar_idx].size;
+                    header_meta.sizes[bar_idx].read = false;
                     break :blk;
                 }
             }
