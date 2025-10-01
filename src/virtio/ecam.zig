@@ -3,32 +3,19 @@ const log = @import("../log.zig");
 const pci_context = @import("pci_context.zig");
 const Memory = @import("../memory.zig");
 
-const VENDOR_ID_INTEL: u16 = 0x8086;
-const DEVICE_ID_INTEL_VIRT_PCIE_HOST: u16 = 0x0d57;
+const Allocator = std.mem.Allocator;
+
 const NUM_DEVICE_IDS: usize = 32;
 const NUM_CONFIGURATION_REGISTERS: usize = 1024;
 
 const VIRTIO_VENDOR_ID = 0x1af4;
 const VIRTIO_PCI_DEVICE_BASE_ID = 0x1040;
 
-// headers: []Type0ConfigurationHeader,
-headers: [32]Type0ConfigurationHeader =
-    .{Type0ConfigurationHeader{
-        .reg0 = .{
-            .vendor_id = VENDOR_ID_INTEL,
-            .device_id = DEVICE_ID_INTEL_VIRT_PCIE_HOST,
-        },
-        .reg2 = .{
-            .class_code = .{
-                .sub_class_code = @intFromEnum(PciBridgeSubclass.HostBridge),
-                .base_class_code = @intFromEnum(PciClass.BridgeDevice),
-            },
-        },
-    }} ++ .{Type0ConfigurationHeader{}} ** 31,
-headers_meta: [32]HeaderBarSizes = .{HeaderBarSizes{}} ** 32,
-num_devices: u32 = 1,
+headers: []Type0ConfigurationHeader,
+headers_meta: []HeaderBarSizes,
+num_devices: u32,
 // Same for all virtio devices
-virtio_device_capability: VirtioPciDeviceCapabilities = .{},
+virtio_device_capability: VirtioPciDeviceCapabilities,
 
 pub const PciClass = enum(u8) {
     TooOld,
@@ -287,24 +274,17 @@ pub const HeaderBarSizes = struct {
 
 const Self = @This();
 
-pub fn init() Self {
-    var self: Self = .{};
-    self.headers[0] =
-        .{
-            .reg0 = .{
-                .vendor_id = VENDOR_ID_INTEL,
-                .device_id = DEVICE_ID_INTEL_VIRT_PCIE_HOST,
-            },
-            .reg2 = .{
-                .class_code = .{
-                    .sub_class_code = 0,
-                    .base_class_code = 6,
-                },
-            },
-        };
-    self.headers_meta[0] = .{};
-
-    return self;
+pub fn init(alloc: Allocator, pci_devices: u32) !Self {
+    const headers = try alloc.alloc(Type0ConfigurationHeader, pci_devices);
+    for (headers) |*h| h.* = .{};
+    const headers_meta = try alloc.alloc(HeaderBarSizes, pci_devices);
+    for (headers_meta) |*h| h.* = .{};
+    return .{
+        .headers = headers,
+        .headers_meta = headers_meta,
+        .num_devices = 0,
+        .virtio_device_capability = .{},
+    };
 }
 
 pub fn add_header(

@@ -59,10 +59,12 @@ fn check_aligments() void {
         BlockPciIoUring,
         VirtioNet,
         VhostNet,
+        Ecam.Type0ConfigurationHeader,
+        Ecam.HeaderBarSizes,
     }) |t| {
         log.comptime_assert(
             @src(),
-            @alignOf(t) == 8 and @sizeOf(t) % 8 == 0,
+            @alignOf(t) <= 8 and @sizeOf(t) % 8 == 0,
             "{s} aligment must be 8 and size must be a multiple of 8. Alignment: {d} Size: {d}",
             .{
                 @typeName(t),
@@ -85,6 +87,8 @@ pub fn main() !void {
     const config_parse_result = try config_parser.parse_file(nix.System, args.config_path.?);
     const config = &config_parse_result.config;
 
+    var pci_devices: u32 = 0;
+
     var net_mmio_count: u32 = 0;
     var net_vhost_mmio_count: u32 = 0;
     for (config.network.configs.slice_const()) |*net_config| {
@@ -101,6 +105,7 @@ pub fn main() !void {
     var block_pci_io_uring_count: u32 = 0;
     for (config.block.configs.slice_const()) |*block_config| {
         if (block_config.pci) {
+            pci_devices += 1;
             if (block_config.io_uring) block_pci_io_uring_count += 1 else block_pci_count += 1;
         } else {
             if (block_config.io_uring) block_mmio_io_uring_count += 1 else block_mmio_count += 1;
@@ -115,7 +120,9 @@ pub fn main() !void {
         @sizeOf(BlockMmioIoUring) * block_mmio_io_uring_count +
         @sizeOf(BlockPciIoUring) * block_pci_io_uring_count +
         @sizeOf(VirtioNet) * net_mmio_count +
-        @sizeOf(VhostNet) * net_vhost_mmio_count;
+        @sizeOf(VhostNet) * net_vhost_mmio_count +
+        @sizeOf(Ecam.Type0ConfigurationHeader) * pci_devices +
+        @sizeOf(Ecam.HeaderBarSizes) * pci_devices;
 
     log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
     var permanent_memory = allocator.PermanentMemory.init(nix.System, permanent_memory_size);
@@ -162,7 +169,7 @@ pub fn main() !void {
     }
 
     // create mmio devices
-    var ecam: Ecam = .{};
+    var ecam: Ecam = try .init(permanent_alloc, pci_devices);
     var mmio = Mmio.new(&ecam);
     var el = EventLoop.new(nix.System);
 
