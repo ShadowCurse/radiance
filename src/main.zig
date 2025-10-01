@@ -56,6 +56,7 @@ fn check_aligments() void {
         BlockMmio,
         BlockPci,
         BlockMmioIoUring,
+        BlockPciIoUring,
         VirtioNet,
         VhostNet,
     }) |t| {
@@ -97,13 +98,12 @@ pub fn main() !void {
     var block_mmio_count: u32 = 0;
     var block_pci_count: u32 = 0;
     var block_mmio_io_uring_count: u32 = 0;
+    var block_pci_io_uring_count: u32 = 0;
     for (config.block.configs.slice_const()) |*block_config| {
-        if (block_config.io_uring) {
-            block_mmio_io_uring_count += 1;
-        } else if (block_config.pci) {
-            block_pci_count += 1;
+        if (block_config.pci) {
+            if (block_config.io_uring) block_pci_io_uring_count += 1 else block_pci_count += 1;
         } else {
-            block_mmio_count += 1;
+            if (block_config.io_uring) block_mmio_io_uring_count += 1 else block_mmio_count += 1;
         }
     }
 
@@ -113,6 +113,7 @@ pub fn main() !void {
         @sizeOf(BlockMmio) * block_mmio_count +
         @sizeOf(BlockPci) * block_pci_count +
         @sizeOf(BlockMmioIoUring) * block_mmio_io_uring_count +
+        @sizeOf(BlockPciIoUring) * block_pci_io_uring_count +
         @sizeOf(VirtioNet) * net_mmio_count +
         @sizeOf(VhostNet) * net_vhost_mmio_count;
 
@@ -215,7 +216,7 @@ pub fn main() !void {
     });
 
     var io_uring: IoUring = undefined;
-    if (block_mmio_io_uring_count != 0) {
+    if (block_mmio_io_uring_count != 0 or block_pci_io_uring_count != 0) {
         io_uring = IoUring.init(nix.System, 256);
         el.add_event(
             nix.System,
@@ -263,6 +264,20 @@ pub fn main() !void {
         config.block.configs.slice_const(),
     );
     defer for (pci_blocks) |*block|
+        block.sync(nix.System);
+
+    const pci_io_uring_blocks = try create_block_pci_io_uring(
+        permanent_alloc,
+        &vm,
+        &mmio,
+        &memory,
+        &el,
+        &io_uring,
+        &ecam,
+        block_pci_io_uring_count,
+        config.block.configs.slice_const(),
+    );
+    defer for (pci_io_uring_blocks) |*block|
         block.sync(nix.System);
 
     try create_net_mmio(
@@ -534,6 +549,60 @@ fn create_block_pci(
                 nix.System,
                 block.context.queue_events[0].fd,
                 @ptrCast(&BlockPci.event_process_queue),
+                block,
+            );
+        }
+    }
+    return blocks;
+}
+
+fn create_block_pci_io_uring(
+    alloc: Allocator,
+    vm: *Vm,
+    mmio: *Mmio,
+    memory: *Memory,
+    event_loop: *EventLoop,
+    io_uring: *IoUring,
+    ecam: *Ecam,
+    block_count: u32,
+    configs: []const config_parser.BlockConfig,
+) ![]const BlockPciIoUring {
+    const blocks = try alloc.alloc(BlockPciIoUring, block_count);
+    var index: u8 = 0;
+    for (configs) |*config| {
+        if (config.io_uring and config.pci) {
+            const block = &blocks[index];
+            index += 1;
+
+            const info = mmio.allocate_pci();
+            ecam.add_header(
+                block_devices.TYPE_BLOCK,
+                @intFromEnum(Ecam.PciClass.MassStorage),
+                @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
+                info.bar_addr,
+            );
+            block.* = BlockPciIoUring.new(
+                nix.System,
+                config.path,
+                config.read_only,
+                config.id,
+                vm,
+                memory,
+                info,
+            );
+            block.io_uring_device = io_uring.add_device(
+                @ptrCast(&BlockPciIoUring.event_process_io_uring_event),
+                block,
+            );
+            mmio.add_device_pci(.{
+                .ptr = block,
+                .read_ptr = @ptrCast(&BlockPciIoUring.read),
+                .write_ptr = @ptrCast(&BlockPciIoUring.write_default),
+            });
+            event_loop.add_event(
+                nix.System,
+                block.context.queue_events[0].fd,
+                @ptrCast(&BlockPciIoUring.event_process_queue),
                 block,
             );
         }
