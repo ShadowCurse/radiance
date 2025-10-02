@@ -304,7 +304,7 @@ const RxChains = struct {
             .{ @as(usize, @sizeOf(nix.virtio_net_hdr_v1)), self.iovec_ring.slice()[0].len },
         );
         var net_hdr_v1: *volatile nix.virtio_net_hdr_v1 =
-            @alignCast(@ptrCast(self.iovec_ring.slice()[0].base));
+            @ptrCast(@alignCast(self.iovec_ring.slice()[0].base));
 
         const used_ring = memory.get_ptr(nix.vring_used, queue.used_ring);
         const used_ring_ring = used_ring.ring();

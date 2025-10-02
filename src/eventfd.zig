@@ -13,7 +13,7 @@ pub fn new(comptime System: type, init: u32, flags: u32) Self {
 
 pub fn read(self: *const Self, comptime System: type) u64 {
     var buf: u64 = undefined;
-    const buf_slice = std.mem.asBytes(&buf);
+    const buf_slice: []u8 = @ptrCast(&buf);
     const n = nix.assert(@src(), System, "read", .{ self.fd, buf_slice });
     log.assert(
         @src(),
@@ -25,7 +25,7 @@ pub fn read(self: *const Self, comptime System: type) u64 {
 }
 
 pub fn write(self: *const Self, comptime System: type, val: u64) void {
-    const buf_slice = std.mem.asBytes(&val);
+    const buf_slice: []const u8 = @ptrCast(&val);
     const n = nix.assert(@src(), System, "write", .{ self.fd, buf_slice });
     log.assert(
         @src(),

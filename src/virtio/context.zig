@@ -106,9 +106,7 @@ pub fn VirtioContext(
     comptime DEVICE_TYPE: u32,
     comptime CONFIG: type,
 ) type {
-    if (NUM_QUEUES == 0) {
-        unreachable;
-    }
+    if (NUM_QUEUES == 0) unreachable;
 
     return struct {
         // There are 2 32 bits in 64 bit
@@ -248,7 +246,7 @@ pub fn VirtioContext(
                 0xfc => data_u32.* = 0,
                 0x100...0xfff => {
                     const new_offset = offset - 0x100;
-                    const config_blob_slice = std.mem.asBytes(&self.config);
+                    const config_blob_slice: []const u8 = @ptrCast(&self.config);
                     @memcpy(data, config_blob_slice[new_offset .. new_offset + data.len]);
                 },
                 else => {
@@ -298,7 +296,7 @@ pub fn VirtioContext(
                 0xa4 => self.queues[self.selected_queue].set_used_ring(true, data_u32.*),
                 0x100...0xfff => {
                     const new_offset = offset - 0x100;
-                    const config_blob_slice = std.mem.asBytes(&self.config);
+                    const config_blob_slice: []u8 = @ptrCast(&self.config);
                     @memcpy(config_blob_slice[new_offset .. new_offset + data.len], data);
                     return VirtioAction.ConfigWrite;
                 },

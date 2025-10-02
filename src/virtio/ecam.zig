@@ -386,12 +386,12 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
             if (data_u32.* == 0xffff_ffff)
                 self.headers_meta[ecam.device_number].sizes[bar_idx].read = true;
         } else {
-            const bytes = std.mem.asBytes(header);
+            const bytes: []u8 = @ptrCast(header);
             @memcpy(bytes[config_offset..][0..data.len], data);
         }
     } else {
         const capability_offset = config_offset - @sizeOf(Type0ConfigurationHeader);
-        const bytes = std.mem.asBytes(&self.virtio_device_capability);
+        const bytes: []u8 = @ptrCast(&self.virtio_device_capability);
         @memcpy(bytes[capability_offset..][0..data.len], data);
     }
 
@@ -412,56 +412,56 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
 
     if (self.headers.len <= ecam.device_number) {
         @memset(data, 0xff);
-    } else {
-        const REG64 = @sizeOf(u32) * 64;
+        return;
+    }
 
-        const config_offset = ecam.offset();
-        log.assert(
-            @src(),
-            config_offset < @sizeOf(Type0ConfigurationHeader) +
-                @sizeOf(VirtioPciDeviceCapabilities) or
-                config_offset == REG64,
-            "Read beyond available memory in config space. Offset: 0x{x}, ECAM: {f}",
-            .{ offset, ecam },
-        );
+    const config_offset = ecam.offset();
+    // PCI spec 7.6.1 Extended Capabilities begin at offset 0x100. Absence of
+    // extended capabilities indicated by 0x0.
+    if (config_offset == 0x100) {
+        @memset(data, 0x0);
+        return;
+    }
 
-        const header = &self.headers[ecam.device_number];
-        if (config_offset < @sizeOf(Type0ConfigurationHeader)) blk: {
-            if (@offsetOf(Type0ConfigurationHeader, "bar0") <= config_offset and
-                config_offset <= @offsetOf(Type0ConfigurationHeader, "bar5"))
-            {
-                const bar_idx = ecam.register() - 4;
-                log.assert(
-                    @src(),
-                    data.len == 4,
-                    "Read to the bar{d} is not 4 bytes: {any}",
-                    .{ bar_idx, data },
-                );
-                const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
-                const header_meta = &self.headers_meta[ecam.device_number];
-                if (header_meta.sizes[bar_idx].read) {
-                    data_u32.* = header_meta.sizes[bar_idx].size;
-                    header_meta.sizes[bar_idx].read = false;
-                    break :blk;
-                }
-            }
-            // ROM is never present, so always return 0
-            if (config_offset == @offsetOf(Type0ConfigurationHeader, "reg12"))
-                @memset(data, 0)
-            else {
-                const bytes = std.mem.asBytes(header);
-                @memcpy(data, bytes[config_offset..][0..data.len]);
-            }
-        } else {
-            if (config_offset == REG64) {
-                const d: *u32 = @ptrCast(@alignCast(data.ptr));
-                d.* = 0xffff_ffff;
-            } else {
-                const capability_offset = config_offset - @sizeOf(Type0ConfigurationHeader);
-                const bytes = std.mem.asBytes(&self.virtio_device_capability);
-                @memcpy(data, bytes[capability_offset..][0..data.len]);
+    log.assert(
+        @src(),
+        config_offset < @sizeOf(Type0ConfigurationHeader) +
+            @sizeOf(VirtioPciDeviceCapabilities),
+        "Read beyond available memory in config space. Offset: 0x{x}, ECAM: {f}",
+        .{ offset, ecam },
+    );
+
+    const header = &self.headers[ecam.device_number];
+    if (config_offset < @sizeOf(Type0ConfigurationHeader)) blk: {
+        if (@offsetOf(Type0ConfigurationHeader, "bar0") <= config_offset and
+            config_offset <= @offsetOf(Type0ConfigurationHeader, "bar5"))
+        {
+            const bar_idx = ecam.register() - 4;
+            log.assert(
+                @src(),
+                data.len == 4,
+                "Read to the bar{d} is not 4 bytes: {any}",
+                .{ bar_idx, data },
+            );
+            const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
+            const header_meta = &self.headers_meta[ecam.device_number];
+            if (header_meta.sizes[bar_idx].read) {
+                data_u32.* = header_meta.sizes[bar_idx].size;
+                header_meta.sizes[bar_idx].read = false;
+                break :blk;
             }
         }
+        // ROM is never present, so always return 0
+        if (config_offset == @offsetOf(Type0ConfigurationHeader, "reg12"))
+            @memset(data, 0)
+        else {
+            const bytes: []const u8 = @ptrCast(header);
+            @memcpy(data, bytes[config_offset..][0..data.len]);
+        }
+    } else {
+        const capability_offset = config_offset - @sizeOf(Type0ConfigurationHeader);
+        const bytes: []const u8 = @ptrCast(&self.virtio_device_capability);
+        @memcpy(data, bytes[capability_offset..][0..data.len]);
     }
 
     log.debug(
