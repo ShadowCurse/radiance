@@ -33,7 +33,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
         "Invalid RTC write data len: {d} != 4",
         .{data.len},
     );
-    const val: u32 = @as(*const u32, @alignCast(@ptrCast(data.ptr))).*;
+    const val: u32 = @as(*const u32, @ptrCast(@alignCast(data.ptr))).*;
 
     switch (offset) {
         RTCMR => self.match = val,
@@ -62,7 +62,7 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
         "Invalid RTC write data len: {d} != 4",
         .{data.len},
     );
-    const val: *u32 = @alignCast(@ptrCast(data.ptr));
+    const val: *u32 = @ptrCast(@alignCast(data.ptr));
     val.* = switch (offset) {
         RTCDR => now() + self.time_offset,
         RTCMR => self.match,

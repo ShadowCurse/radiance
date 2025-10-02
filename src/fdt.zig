@@ -48,14 +48,14 @@ const FdtData = struct {
             void => {},
             u32, u64 => {
                 const b = @byteSwap(item);
-                const bytes = std.mem.asBytes(&b);
+                const bytes: []const u8 = @ptrCast(&b);
                 @memcpy(self.mem[self.len .. self.len + bytes.len], bytes);
                 self.len += bytes.len;
             },
             []const u32, []const u64 => {
                 for (item) |i| {
                     const b = @byteSwap(i);
-                    const bytes = std.mem.asBytes(&b);
+                    const bytes: []const u8 = @ptrCast(&b);
                     @memcpy(self.mem[self.len .. self.len + bytes.len], bytes);
                     self.len += bytes.len;
                 }
@@ -131,7 +131,7 @@ pub const FdtBuilder = struct {
 
         // Allocation 40 bytes. This is a size of FdtHeader struct.
         const header: FdtHeader = .{};
-        data.append([]const u8, std.mem.asBytes(&header));
+        data.append([]const u8, @ptrCast(&header));
 
         // The memory reservation block shall be aligned to an 8-byte boundary
         data.align_self(8);

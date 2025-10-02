@@ -5,6 +5,7 @@ const log = @import("../log.zig");
 const Memory = @import("../memory.zig");
 const HOST_PAGE_SIZE = Memory.HOST_PAGE_SIZE;
 
+const Gicv2 = @import("../gicv2.zig");
 const Vm = @import("../vm.zig");
 const Mmio = @import("../mmio.zig");
 const Ecam = @import("ecam.zig");
@@ -52,9 +53,7 @@ pub fn PciVirtioContext(
     comptime NUM_QUEUES: usize,
     comptime CONFIG: type,
 ) type {
-    if (NUM_QUEUES == 0) {
-        unreachable;
-    }
+    if (NUM_QUEUES == 0) unreachable;
 
     return struct {
         // There are 2 32 bits in 64 bit
@@ -120,11 +119,6 @@ pub fn PciVirtioContext(
             return self;
         }
 
-        pub fn register_msix(self: *const Self, comptime System: type) void {
-            _ = self;
-            _ = System;
-        }
-
         pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) VirtioAction {
             var t: []const u8 = "???";
             if (offset < Ecam.VIRTIO_PCI_NOTIFY_BAR_OFFSET) {
@@ -138,7 +132,7 @@ pub fn PciVirtioContext(
                         self.driver_features_word = @truncate(data[0]);
                     },
                     @offsetOf(virtio_pci_common_cfg, "driver_feature") => {
-                        const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                        const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                         switch (self.driver_features_word) {
                             // Set the lower 32-bits of the features bitfield.
                             0 => self.acked_features |= data_u32.*,
@@ -164,7 +158,7 @@ pub fn PciVirtioContext(
                         self.selected_queue = @truncate(data[0]);
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_size") => {
-                        const data_u16: *u16 = @alignCast(@ptrCast(data.ptr));
+                        const data_u16: *u16 = @ptrCast(@alignCast(data.ptr));
                         self.queues[self.selected_queue].size = data_u16.*;
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_msix_vector") => {
@@ -175,27 +169,27 @@ pub fn PciVirtioContext(
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_notify_off") => unreachable,
                     @offsetOf(virtio_pci_common_cfg, "queue_desc_lo") => {
-                        const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                        const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                         self.queues[self.selected_queue].set_desc_table(false, data_u32.*);
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_desc_hi") => {
-                        const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                        const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                         self.queues[self.selected_queue].set_desc_table(true, data_u32.*);
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_driver_lo") => {
-                        const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                        const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                         self.queues[self.selected_queue].set_avail_ring(false, data_u32.*);
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_driver_hi") => {
-                        const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                        const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                         self.queues[self.selected_queue].set_avail_ring(true, data_u32.*);
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_device_lo") => {
-                        const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                        const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                         self.queues[self.selected_queue].set_used_ring(false, data_u32.*);
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_device_hi") => {
-                        const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                        const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                         self.queues[self.selected_queue].set_used_ring(true, data_u32.*);
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_notify_data") => unreachable,
@@ -223,7 +217,7 @@ pub fn PciVirtioContext(
                 );
 
                 const table_offset = offset - Ecam.VIRTIO_PCI_MSIX_TABLE_BAR_OFFSET;
-                const table_bytes: []u8 = std.mem.asBytes(&self.msix_table);
+                const table_bytes: []u8 = @ptrCast(&self.msix_table);
                 @memcpy(table_bytes[table_offset..][0..data.len], data);
 
                 const msi = table_offset / @sizeOf(MsixEntry);
@@ -231,28 +225,20 @@ pub fn PciVirtioContext(
                 if (field_offset == @offsetOf(MsixEntry, "vector_control") and
                     self.msix_table[msi].vector_control == 0)
                 {
-                    if (msi == self.config_msi) {
-                        const kvm_irqfd: nix.kvm_irqfd = .{
-                            .fd = @intCast(self.config_irq.fd),
-                            .gsi = self.msix_table[msi].message_data - 32,
-                        };
-                        _ = nix.assert(@src(), System, "ioctl", .{
-                            self.vm.fd,
-                            nix.KVM_IRQFD,
-                            @intFromPtr(&kvm_irqfd),
-                        });
-                    } else {
-                        const queue_irq = &self.queue_irqs[msi - 1];
-                        const kvm_irqfd: nix.kvm_irqfd = .{
-                            .fd = @intCast(queue_irq.fd),
-                            .gsi = self.msix_table[msi].message_data - 32,
-                        };
-                        _ = nix.assert(@src(), System, "ioctl", .{
-                            self.vm.fd,
-                            nix.KVM_IRQFD,
-                            @intFromPtr(&kvm_irqfd),
-                        });
-                    }
+                    const kvm_irqfd: nix.kvm_irqfd = .{
+                        .fd = if (msi == self.config_msi)
+                            @intCast(self.config_irq.fd)
+                        else
+                            @intCast(self.queue_irqs[msi - 1].fd),
+                        // The MSI number provided by the guest is converted to KVM
+                        // usable SPI by decrementing the KVM added offset
+                        .gsi = self.msix_table[msi].message_data - Gicv2.GIC_INTERNAL_OFFSET,
+                    };
+                    _ = nix.assert(@src(), System, "ioctl", .{
+                        self.vm.fd,
+                        nix.KVM_IRQFD,
+                        @intFromPtr(&kvm_irqfd),
+                    });
                 }
             } else {
                 t = "msix_pba";
@@ -287,7 +273,7 @@ pub fn PciVirtioContext(
                                 1 => self.avail_features >> 32,
                             };
                         const features_u32: u32 = @truncate(features);
-                        const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                        const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                         data_u32.* = features_u32;
                     },
                     @offsetOf(virtio_pci_common_cfg, "driver_feature_select") => unreachable,
@@ -306,7 +292,7 @@ pub fn PciVirtioContext(
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_select") => unreachable,
                     @offsetOf(virtio_pci_common_cfg, "queue_size") => {
-                        const data_u16: *u16 = @alignCast(@ptrCast(data.ptr));
+                        const data_u16: *u16 = @ptrCast(@alignCast(data.ptr));
                         data_u16.* = self.queues[self.selected_queue].max_size;
                     },
                     @offsetOf(virtio_pci_common_cfg, "queue_msix_vector") => {
@@ -335,7 +321,7 @@ pub fn PciVirtioContext(
             } else if (offset < Ecam.VIRTIO_PCI_DEV_CONFIG_BAR_OFFSET + Ecam.VIRTIO_PCI_DEV_CONFIG_BAR_SIZE) {
                 t = "virtio_pci_device_cfg";
                 const config_offset = offset - Ecam.VIRTIO_PCI_DEV_CONFIG_BAR_OFFSET;
-                const bytes = std.mem.asBytes(&self.config);
+                const bytes: []const u8 = @ptrCast(&self.config);
                 @memcpy(data, bytes[config_offset..][0..data.len]);
             } else if (Ecam.VIRTIO_PCI_MSIX_TABLE_BAR_OFFSET <= offset and
                 offset < Ecam.VIRTIO_PCI_MSIX_PBA_BAR_OFFSET)
@@ -349,7 +335,7 @@ pub fn PciVirtioContext(
                     .{data},
                 );
                 const table_offset = offset - Ecam.VIRTIO_PCI_MSIX_TABLE_BAR_OFFSET;
-                const table_bytes: []u8 = std.mem.asBytes(&self.msix_table);
+                const table_bytes: []u8 = @ptrCast(&self.msix_table);
                 @memcpy(data, table_bytes[table_offset..][0..data.len]);
             } else {
                 t = "msix_pba";
@@ -359,7 +345,7 @@ pub fn PciVirtioContext(
                     "Read from the msix pba is not 4 bytes: {any}",
                     .{data},
                 );
-                const data_u32: *u32 = @alignCast(@ptrCast(data.ptr));
+                const data_u32: *u32 = @ptrCast(@alignCast(data.ptr));
                 data_u32.* = 0;
             }
             log.debug(

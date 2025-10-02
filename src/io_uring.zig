@@ -98,9 +98,9 @@ pub fn init(comptime System: type, entries: u32) Self {
         fd,
         nix.IORING_OFF_SQ_RING,
     });
-    const submit_tail: *u32 = @alignCast(@ptrCast(&submit_ring[params.sq_off.tail]));
-    const submit_mask: *u32 = @alignCast(@ptrCast(&submit_ring[params.sq_off.ring_mask]));
-    const submit_array: []u32 = @alignCast(@ptrCast(submit_ring[params.sq_off.array..]));
+    const submit_tail: *u32 = @ptrCast(@alignCast(&submit_ring[params.sq_off.tail]));
+    const submit_mask: *u32 = @ptrCast(@alignCast(&submit_ring[params.sq_off.ring_mask]));
+    const submit_array: []u32 = @ptrCast(@alignCast(submit_ring[params.sq_off.array..]));
 
     const submit_queue_size = params.sq_entries * @sizeOf(nix.io_uring_sqe);
     const submit_queue_entries_u8 = nix.assert(@src(), System, "mmap", .{
@@ -126,12 +126,12 @@ pub fn init(comptime System: type, entries: u32) Self {
             nix.IORING_OFF_CQ_RING,
         });
 
-    const complete_head: *u32 = @alignCast(@ptrCast(&complete_ring[params.cq_off.head]));
-    const complete_tail: *u32 = @alignCast(@ptrCast(&complete_ring[params.cq_off.tail]));
+    const complete_head: *u32 = @ptrCast(@alignCast(&complete_ring[params.cq_off.head]));
+    const complete_tail: *u32 = @ptrCast(@alignCast(&complete_ring[params.cq_off.tail]));
     const complete_mask: *u32 =
-        @alignCast(@ptrCast(&complete_ring[params.cq_off.ring_mask]));
+        @ptrCast(@alignCast(&complete_ring[params.cq_off.ring_mask]));
     const complete_queue_entries: []nix.io_uring_cqe =
-        @alignCast(@ptrCast(complete_ring[params.cq_off.cqes..]));
+        @ptrCast(@alignCast(complete_ring[params.cq_off.cqes..]));
 
     const eventfd = EventFd.new(nix.System, 0, nix.EFD_NONBLOCK);
     _ = nix.assert(@src(), System, "io_uring_register", .{
