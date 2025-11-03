@@ -4,9 +4,6 @@ const log = @import("../log.zig");
 
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
-const mmio = @import("../mmio.zig");
-const MmioDeviceInfo = mmio.MmioDeviceInfo;
-const PciDeviceInfo = mmio.PciDeviceInfo;
 
 const _pci = @import("../virtio/pci_context.zig");
 const PciVirtioContext = _pci.PciVirtioContext;

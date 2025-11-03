@@ -89,7 +89,7 @@ pub fn PciVirtioContext(
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
-            info: Mmio.PciDeviceInfo,
+            info: Mmio.Resources.PciInfo,
         ) Self {
             var queues: [NUM_QUEUES]Queue = undefined;
             for (&queues, queue_sizes) |*q, size| {

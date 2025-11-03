@@ -15,6 +15,93 @@ pub const MMIO_DEVICE_REGION_SIZE: u64 = 0x1000;
 // The region size which will be reserved from a guest physical memory.
 pub const MMIO_DEVICE_ALLOCATED_REGION_SIZE: u64 = Memory.HOST_PAGE_SIZE;
 
+pub const Resources = struct {
+    last_irq: u16 = Gicv2.IRQ_BASE,
+    last_address: u64 = MMIO_MEM_START,
+    last_bar_address: u64 = Memory.PCI_START,
+    virtio_address_start: u64 = MMIO_MEM_START,
+
+    pub const MmioInfo = struct {
+        addr: u64,
+        len: u32,
+        irq: u32,
+    };
+
+    pub fn start_mmio_virtio(self: *Resources) void {
+        self.virtio_address_start = self.last_address;
+    }
+
+    // MMIO devices should be allocated before VIRTIO devices.
+    // Devices are allocated one after another each taking
+    // MMIO_DEVICE_ALLOCATED_REGION_SIZE space in the MMIO region.
+    pub fn allocate_mmio(self: *Resources) MmioInfo {
+        const addr = self.last_address;
+        self.last_address += MMIO_DEVICE_ALLOCATED_REGION_SIZE;
+        const irq = self.last_irq;
+        self.last_irq += 1;
+        log.debug(
+            @src(),
+            "allocate mmio region: addr: 0x{x}, len: 0x{x}, irq: {}",
+            .{ addr, MMIO_DEVICE_ALLOCATED_REGION_SIZE, irq },
+        );
+        return .{
+            .addr = addr,
+            .len = MMIO_DEVICE_REGION_SIZE,
+            .irq = irq,
+        };
+    }
+
+    // VIRTIO devices should be allocated after all MMIO devices
+    // are allocated. VIRTIO MMIO space will be offset from the
+    // beginning of the page by
+    // MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET
+    // and thus will be split between 2 guest physical pages.
+    pub fn allocate_mmio_virtio(self: *Resources) MmioInfo {
+        const addr =
+            self.last_address + MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET;
+        self.last_address += 2 * MMIO_DEVICE_ALLOCATED_REGION_SIZE;
+        const irq = self.last_irq;
+        self.last_irq += 1;
+        log.debug(
+            @src(),
+            "allocate mmio opt region: addr: 0x{x}, len: 0x{x}, irq: {}",
+            .{ addr, MMIO_DEVICE_ALLOCATED_REGION_SIZE, irq },
+        );
+        return .{
+            .addr = addr,
+            .len = MMIO_DEVICE_REGION_SIZE,
+            .irq = irq,
+        };
+    }
+
+    pub const PciInfo = struct {
+        bar_addr: u64,
+    };
+    pub fn allocate_pci(self: *Resources) PciInfo {
+        const addr = self.last_bar_address;
+        self.last_bar_address += Memory.PCI_BAR_SIZE;
+        log.debug(
+            @src(),
+            "allocate pci region: addr: 0x{x}, len: 0x{x}",
+            .{ addr, @as(u32, Memory.PCI_BAR_SIZE) },
+        );
+        return .{ .bar_addr = addr };
+    }
+};
+
+num_devices: u8,
+devices: [MAX_MMIO_DEVICES]MmioDevice,
+virtio_num_devices: u8,
+virtio_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
+virtio_address_start: u64,
+
+pci_num_devices: u8,
+pci_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
+ecam: *Ecam,
+
+const MAX_MMIO_DEVICES = 2;
+const MAX_VIRTIO_DEVICES = 8;
+
 pub const MmioDevice = struct {
     ptr: *anyopaque,
     read_ptr: *const fn (*anyopaque, u64, []u8) void,
@@ -28,108 +115,19 @@ pub const MmioDevice = struct {
     }
 };
 
-pub const MmioDeviceInfo = struct {
-    addr: u64,
-    len: u64,
-    irq: u32,
-};
-
-last_irq: u16,
-last_address: u64,
-last_bar_address: u64,
-virtio_address_start: u64,
-
-num_devices: u8,
-devices: [MAX_MMIO_DEVICES]MmioDevice,
-
-virtio_num_devices: u8,
-virtio_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
-
-pci_num_devices: u8,
-pci_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
-
-ecam: *Ecam,
-
-const MAX_MMIO_DEVICES = 2;
-const MAX_VIRTIO_DEVICES = 8;
-
 const Self = @This();
 
-pub fn new(ecam: *Ecam) Self {
+pub fn init(ecam: *Ecam, virtio_address_start: u64) Self {
     return .{
-        .last_irq = Gicv2.IRQ_BASE,
-        .last_address = MMIO_MEM_START,
-        .last_bar_address = Memory.PCI_START,
-        .virtio_address_start = MMIO_MEM_START,
         .num_devices = 0,
         .devices = undefined,
         .virtio_num_devices = 0,
         .virtio_devices = undefined,
+        .virtio_address_start = virtio_address_start,
         .pci_num_devices = 0,
         .pci_devices = undefined,
         .ecam = ecam,
     };
-}
-
-pub fn start_mmio_opt(self: *Self) void {
-    self.virtio_address_start = self.last_address;
-}
-
-// MMIO devices should be allocated before VIRTIO devices.
-// Devices are allocated one after another each taking
-// MMIO_DEVICE_ALLOCATED_REGION_SIZE space in the MMIO region.
-pub fn allocate(self: *Self) MmioDeviceInfo {
-    const addr = self.last_address;
-    self.last_address += MMIO_DEVICE_ALLOCATED_REGION_SIZE;
-    const irq = self.last_irq;
-    self.last_irq += 1;
-    log.debug(
-        @src(),
-        "allocate mmio region: addr: 0x{x}, len: 0x{x}, irq: {}",
-        .{ addr, MMIO_DEVICE_ALLOCATED_REGION_SIZE, irq },
-    );
-    return MmioDeviceInfo{
-        .addr = addr,
-        .len = MMIO_DEVICE_REGION_SIZE,
-        .irq = irq,
-    };
-}
-
-// VIRTIO devices should be allocated after all MMIO devices
-// are allocated. VIRTIO MMIO space will be offset from the
-// beginning of the page by
-// MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET
-// and thus will be split between 2 guest physical pages.
-pub fn allocate_virtio(self: *Self) MmioDeviceInfo {
-    const addr =
-        self.last_address + MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET;
-    self.last_address += 2 * MMIO_DEVICE_ALLOCATED_REGION_SIZE;
-    const irq = self.last_irq;
-    self.last_irq += 1;
-    log.debug(
-        @src(),
-        "allocate mmio opt region: addr: 0x{x}, len: 0x{x}, irq: {}",
-        .{ addr, MMIO_DEVICE_ALLOCATED_REGION_SIZE, irq },
-    );
-    return MmioDeviceInfo{
-        .addr = addr,
-        .len = MMIO_DEVICE_REGION_SIZE,
-        .irq = irq,
-    };
-}
-
-pub const PciDeviceInfo = struct {
-    bar_addr: u64,
-};
-pub fn allocate_pci(self: *Self) PciDeviceInfo {
-    const addr = self.last_bar_address;
-    self.last_bar_address += Memory.PCI_BAR_SIZE;
-    log.debug(
-        @src(),
-        "allocate pci region: addr: 0x{x}, len: 0x{x}",
-        .{ addr, @as(u32, Memory.PCI_BAR_SIZE) },
-    );
-    return .{ .bar_addr = addr };
 }
 
 pub fn add_device(self: *Self, device: MmioDevice) void {

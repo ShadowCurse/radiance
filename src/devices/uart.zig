@@ -4,7 +4,7 @@ const nix = @import("../nix.zig");
 
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
-const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
+const Mmio = @import("../mmio.zig");
 const EventFd = @import("../eventfd.zig");
 const RingBuffer = @import("../ring_buffer.zig").RingBuffer;
 
@@ -124,7 +124,7 @@ pub fn new(
     vm: *const Vm,
     in: nix.fd_t,
     out: nix.fd_t,
-    mmio_info: MmioDeviceInfo,
+    mmio_info: Mmio.Resources.MmioInfo,
 ) Self {
     const irq_evt = EventFd.new(System, 0, nix.EFD_NONBLOCK);
     const kvm_irqfd: nix.kvm_irqfd = .{
@@ -155,7 +155,7 @@ pub fn new(
     };
 }
 
-pub fn add_to_cmdline(cmdline: *CmdLine, mmio_info: MmioDeviceInfo) !void {
+pub fn add_to_cmdline(cmdline: *CmdLine, mmio_info: Mmio.Resources.MmioInfo) !void {
     var buff: [50]u8 = undefined;
     const cmd = try std.fmt.bufPrint(
         &buff,

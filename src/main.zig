@@ -169,13 +169,13 @@ pub fn main() !void {
     }
 
     // create mmio devices
-    var ecam: Ecam = try .init(permanent_alloc, pci_devices);
-    var mmio = Mmio.new(&ecam);
-    var el = EventLoop.new(nix.System);
-
-    const uart_device_info = if (config.uart.enabled) mmio.allocate() else undefined;
-    const rtc_device_info = mmio.allocate();
-    mmio.start_mmio_opt();
+    var mmio_resources: Mmio.Resources = .{};
+    const uart_device_info = if (config.uart.enabled)
+        mmio_resources.allocate_mmio()
+    else
+        undefined;
+    const rtc_device_info = mmio_resources.allocate_mmio();
+    mmio_resources.start_mmio_virtio();
 
     // preallocate all mmio regions for the devices. This is needed to
     // pass a single slice of mmio regions to the fdt builder.
@@ -184,12 +184,16 @@ pub fn main() !void {
     const net_mmio_info_count = net_mmio_count +
         net_vhost_mmio_count;
     const mmio_info_count = block_mmio_info_count + net_mmio_info_count;
-    const mmio_infos = try tmp_alloc.alloc(Mmio.MmioDeviceInfo, mmio_info_count);
+    const mmio_infos = try tmp_alloc.alloc(Mmio.Resources.MmioInfo, mmio_info_count);
     for (mmio_infos) |*info|
-        info.* = mmio.allocate_virtio();
+        info.* = mmio_resources.allocate_mmio_virtio();
 
     var mmio_block_infos = mmio_infos[0..block_mmio_info_count];
     var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
+
+    var ecam: Ecam = try .init(permanent_alloc, pci_devices);
+    var mmio: Mmio = .init(&ecam, mmio_resources.virtio_address_start);
+    var el: EventLoop = .new(nix.System);
 
     // configure terminal for uart in/out
     const state = if (config.uart.enabled) configure_terminal(nix.System) else undefined;
@@ -264,6 +268,7 @@ pub fn main() !void {
         permanent_alloc,
         &vm,
         &mmio,
+        &mmio_resources,
         &memory,
         &el,
         &ecam,
@@ -277,6 +282,7 @@ pub fn main() !void {
         permanent_alloc,
         &vm,
         &mmio,
+        &mmio_resources,
         &memory,
         &el,
         &io_uring,
@@ -432,7 +438,7 @@ fn create_block_mmio(
     mmio: *Mmio,
     memory: *Memory,
     event_loop: *EventLoop,
-    mmio_infos: []const Mmio.MmioDeviceInfo,
+    mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.BlockConfig,
 ) ![]const BlockMmio {
     const blocks = try alloc.alloc(BlockMmio, mmio_infos.len);
@@ -475,7 +481,7 @@ fn create_block_mmio_io_uring(
     memory: *Memory,
     event_loop: *EventLoop,
     io_uring: *IoUring,
-    mmio_infos: []const Mmio.MmioDeviceInfo,
+    mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.BlockConfig,
 ) ![]const BlockMmioIoUring {
     const blocks = try alloc.alloc(BlockMmioIoUring, mmio_infos.len);
@@ -518,6 +524,7 @@ fn create_block_pci(
     alloc: Allocator,
     vm: *Vm,
     mmio: *Mmio,
+    mmio_resources: *Mmio.Resources,
     memory: *Memory,
     event_loop: *EventLoop,
     ecam: *Ecam,
@@ -531,7 +538,7 @@ fn create_block_pci(
             const block = &blocks[index];
             index += 1;
 
-            const info = mmio.allocate_pci();
+            const info = mmio_resources.allocate_pci();
             ecam.add_header(
                 block_devices.TYPE_BLOCK,
                 @intFromEnum(Ecam.PciClass.MassStorage),
@@ -567,6 +574,7 @@ fn create_block_pci_io_uring(
     alloc: Allocator,
     vm: *Vm,
     mmio: *Mmio,
+    mmio_resources: *Mmio.Resources,
     memory: *Memory,
     event_loop: *EventLoop,
     io_uring: *IoUring,
@@ -581,7 +589,7 @@ fn create_block_pci_io_uring(
             const block = &blocks[index];
             index += 1;
 
-            const info = mmio.allocate_pci();
+            const info = mmio_resources.allocate_pci();
             ecam.add_header(
                 block_devices.TYPE_BLOCK,
                 @intFromEnum(Ecam.PciClass.MassStorage),
@@ -623,7 +631,7 @@ fn create_net_mmio(
     mmio: *Mmio,
     memory: *Memory,
     event_loop: *EventLoop,
-    mmio_infos: []const Mmio.MmioDeviceInfo,
+    mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.NetConfig,
 ) !void {
     const nets = try alloc.alloc(VirtioNet, mmio_infos.len);
@@ -674,7 +682,7 @@ fn create_net_mmio_vhost(
     vm: *Vm,
     mmio: *Mmio,
     memory: *Memory,
-    mmio_infos: []const Mmio.MmioDeviceInfo,
+    mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.NetConfig,
 ) !void {
     const nets = try alloc.alloc(VhostNet, mmio_infos.len);
