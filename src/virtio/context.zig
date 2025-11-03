@@ -139,7 +139,7 @@ pub fn VirtioContext(
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
-            info: Mmio.MmioDeviceInfo,
+            info: Mmio.Resources.MmioInfo,
         ) Self {
             var queue_events: [NUM_QUEUES]EventFd = undefined;
             for (&queue_events) |*qe| {

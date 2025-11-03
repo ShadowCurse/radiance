@@ -6,7 +6,7 @@ const log = @import("log.zig");
 const _cache = @import("cache.zig");
 const read_host_caches = _cache.read_host_caches;
 const Gicv2 = @import("gicv2.zig");
-const MmioDeviceInfo = @import("mmio.zig").MmioDeviceInfo;
+const Mmio = @import("mmio.zig");
 const Memory = @import("memory.zig");
 const Pmem = @import("devices/pmem.zig");
 
@@ -251,9 +251,9 @@ pub fn create_fdt(
     memory: *const Memory,
     mpidrs: []const u64,
     cmdline: [:0]const u8,
-    uart_device_info: ?MmioDeviceInfo,
-    rtc_device_info: MmioDeviceInfo,
-    virtio_devices_info: []const MmioDeviceInfo,
+    uart_device_info: ?Mmio.Resources.MmioInfo,
+    rtc_device_info: Mmio.Resources.MmioInfo,
+    virtio_devices_info: []const Mmio.Resources.MmioInfo,
     pmem_info: []const Pmem.Info,
 ) u64 {
     // https://mjmwired.net/kernel/Documentation/devicetree/booting-without-of.txt
@@ -547,7 +547,7 @@ fn create_psci_node(builder: *FdtBuilder) void {
     builder.add_property([:0]const u8, "method", "hvc");
 }
 
-fn create_uart_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
+fn create_uart_node(builder: *FdtBuilder, device_info: Mmio.Resources.MmioInfo) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/serial/8250.yaml
     var buff: [20]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{device_info.addr}) catch unreachable;
@@ -565,7 +565,7 @@ fn create_uart_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
     );
 }
 
-fn create_rtc_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
+fn create_rtc_node(builder: *FdtBuilder, device_info: Mmio.Resources.MmioInfo) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/rtc/arm%2Cpl031.yaml
     var buff: [20]u8 = undefined;
     const name = std.fmt.bufPrintZ(&buff, "rtc@{x:.8}", .{device_info.addr}) catch unreachable;
@@ -580,7 +580,7 @@ fn create_rtc_node(builder: *FdtBuilder, device_info: MmioDeviceInfo) void {
 
 fn create_virtio_node(
     builder: *FdtBuilder,
-    device_info: *const MmioDeviceInfo,
+    device_info: *const Mmio.Resources.MmioInfo,
 ) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/virtio/mmio.yaml
     var buff: [30]u8 = undefined;

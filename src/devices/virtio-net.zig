@@ -4,7 +4,7 @@ const nix = @import("../nix.zig");
 const arch = @import("../arch.zig");
 
 const Vm = @import("../vm.zig");
-const MmioDeviceInfo = @import("../mmio.zig").MmioDeviceInfo;
+const Mmio = @import("../mmio.zig");
 const Memory = @import("../memory.zig");
 const _virtio = @import("../virtio/context.zig");
 const VirtioContext = _virtio.VirtioContext;
@@ -44,7 +44,7 @@ pub const VirtioNet = struct {
         tap_name: []const u8,
         mac: ?[6]u8,
         memory: *Memory,
-        mmio_info: MmioDeviceInfo,
+        mmio_info: Mmio.Resources.MmioInfo,
     ) Self {
         const tun = nix.assert(@src(), System, "open", .{
             "/dev/net/tun",
