@@ -31,19 +31,6 @@ pub const PCI_CONFIG_SIZE = 1 << 30; // 1 GB
 pub const PCI_CONFIG_START = PCI_START - PCI_CONFIG_SIZE;
 pub const PCI_ECAM_REGION_SIZE = 256 << 20; // 256 MB
 
-const arm64_image_header = packed struct {
-    code0: u32,
-    code1: u32,
-    text_offset: u64,
-    image_size: u64,
-    flags: u64,
-    res2: u64,
-    res3: u64,
-    res4: u64,
-    magic: u32,
-    res5: u32,
-};
-
 mem: []align(HOST_PAGE_SIZE) u8,
 
 const Self = @This();
@@ -105,6 +92,19 @@ pub fn align_addr(addr: u64, align_to: u64) u64 {
 pub fn is_aligned(addr: u64, align_to: u64) bool {
     return (addr & (align_to - 1)) == 0;
 }
+
+const arm64_image_header = packed struct {
+    code0: u32,
+    code1: u32,
+    text_offset: u64,
+    image_size: u64,
+    flags: u64,
+    res2: u64,
+    res3: u64,
+    res4: u64,
+    magic: u32,
+    res5: u32,
+};
 
 /// Loads the linux kernel into the memory.
 /// Returns the guest memory address where
