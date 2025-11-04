@@ -39,13 +39,14 @@ pub const VirtioNet = struct {
     const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
 
     pub fn init(
+        self: *Self,
         comptime System: type,
         vm: *Vm,
         tap_name: []const u8,
         mac: ?[6]u8,
         memory: *Memory,
         mmio_info: Mmio.Resources.MmioInfo,
-    ) Self {
+    ) void {
         const tun = nix.assert(@src(), System, "open", .{
             "/dev/net/tun",
             .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
@@ -99,13 +100,11 @@ pub const VirtioNet = struct {
         const rx_chains = RxChains.init(System);
         const tx_chain = TxChain.init();
 
-        return .{
-            .memory = memory,
-            .context = virtio_context,
-            .tun = tun,
-            .rx_chains = rx_chains,
-            .tx_chain = tx_chain,
-        };
+        self.memory = memory;
+        self.context = virtio_context;
+        self.tun = tun;
+        self.rx_chains = rx_chains;
+        self.tx_chain = tx_chain;
     }
 
     pub fn activate(self: *Self, comptime System: type) void {

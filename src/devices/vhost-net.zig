@@ -25,13 +25,14 @@ pub const VhostNet = struct {
     const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
 
     pub fn init(
+        self: *Self,
         comptime System: type,
         vm: *Vm,
         tap_name: []const u8,
         mac: ?[6]u8,
         memory: *Memory,
         mmio_info: Mmio.Resources.MmioInfo,
-    ) Self {
+    ) void {
         const tun = nix.assert(@src(), System, "open", .{
             "/dev/net/tun",
             .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
@@ -87,12 +88,10 @@ pub const VhostNet = struct {
             virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
         }
 
-        return .{
-            .memory = memory,
-            .context = virtio_context,
-            .tun = tun,
-            .vhost = null,
-        };
+        self.memory = memory;
+        self.context = virtio_context;
+        self.tun = tun;
+        self.vhost = null;
     }
 
     pub fn activate(
