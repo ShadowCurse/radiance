@@ -22,10 +22,9 @@ const Self = @This();
 
 const MAX_EVENTS = 16;
 
-pub fn new(comptime System: type) Self {
+pub fn init(comptime System: type) Self {
     const epollfd = nix.assert(@src(), System, "epoll_create1", .{0});
-
-    return Self{
+    return .{
         .exit = false,
         .epollfd = epollfd,
         .events = undefined,

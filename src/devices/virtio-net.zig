@@ -38,7 +38,7 @@ pub const VirtioNet = struct {
     const Self = @This();
     const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
 
-    pub fn new(
+    pub fn init(
         comptime System: type,
         vm: *Vm,
         tap_name: []const u8,
@@ -73,7 +73,7 @@ pub const VirtioNet = struct {
             @intFromPtr(&size),
         });
 
-        var virtio_context = VIRTIO_CONTEXT.new(
+        var virtio_context = VIRTIO_CONTEXT.init(
             System,
             vm,
             QueueSizes,
@@ -99,7 +99,7 @@ pub const VirtioNet = struct {
         const rx_chains = RxChains.init(System);
         const tx_chain = TxChain.init();
 
-        return Self{
+        return .{
             .memory = memory,
             .context = virtio_context,
             .tun = tun,

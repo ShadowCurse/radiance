@@ -126,7 +126,7 @@ pub const FdtBuilder = struct {
 
     const Self = @This();
 
-    pub fn new(allocator: Allocator, memory: *const Memory) Self {
+    pub fn init(allocator: Allocator, memory: *const Memory) Self {
         var data = FdtData.init(memory);
 
         // Allocation 40 bytes. This is a size of FdtHeader struct.
@@ -149,7 +149,7 @@ pub const FdtBuilder = struct {
         header_ptr.off_dt_struct = @byteSwap(off_dt_struct);
         header_ptr.off_mem_rsvmap = @byteSwap(off_mem_rsvmap);
 
-        return Self{
+        return .{
             .data = data,
             .allocator = allocator,
             .strings_map = .empty,
@@ -260,7 +260,7 @@ pub fn create_fdt(
     const ADDRESS_CELLS: u32 = 0x2;
     const SIZE_CELLS: u32 = 0x2;
 
-    var fdt_builder = FdtBuilder.new(allocator, memory);
+    var fdt_builder = FdtBuilder.init(allocator, memory);
 
     // use &.{0} to make an empty string with 0 at the end
     fdt_builder.begin_node(&.{0});

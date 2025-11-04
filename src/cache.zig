@@ -63,7 +63,7 @@ pub const CacheEntry = struct {
 
     const Self = @This();
 
-    pub fn new(comptime System: type, comptime index: usize) !Self {
+    pub fn init(comptime System: type, comptime index: usize) !Self {
         var read_buff: [30]u8 = undefined;
 
         // removing 1 from read bytes because last byte is `10` ASCII and
@@ -91,7 +91,7 @@ pub const CacheEntry = struct {
         const nos_bytes = try Self.read_info(System, index, "number_of_sets", &read_buff) - 1;
         const nos = try std.fmt.parseInt(u16, read_buff[0..nos_bytes], 10);
 
-        return Self{
+        return .{
             .level = level,
             .cache_type = cache_type,
             .size = size,
@@ -141,7 +141,7 @@ pub const Caches = struct {
 pub fn read_host_caches(comptime System: type) Caches {
     var caches: Caches = .{};
     inline for (0..MAX_CACHE_INDEXES) |i| {
-        if (CacheEntry.new(System, i)) |entry| {
+        if (CacheEntry.init(System, i)) |entry| {
             switch (entry.level) {
                 1 => {
                     switch (entry.cache_type) {

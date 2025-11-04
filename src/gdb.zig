@@ -438,7 +438,7 @@ const PayloadIterator = struct {
 
     const Self = @This();
 
-    fn new(buf: []const u8) Self {
+    fn init(buf: []const u8) Self {
         return .{ .buf = buf };
     }
 
@@ -618,7 +618,7 @@ pub const GdbServer = struct {
             const payload_data = self.read_buffer[0..len];
             log.info(@src(), "got payload: {s} len: {}", .{ payload_data, len });
 
-            var iter = PayloadIterator.new(payload_data);
+            var iter = PayloadIterator.init(payload_data);
             blk: while (iter.next()) |payload| {
                 if (payload) |paylod_type| {
                     log.info(@src(), "payload type: {any}", .{paylod_type});

@@ -135,24 +135,22 @@ pub fn VirtioContext(
 
         const Self = @This();
 
-        pub fn new(
+        pub fn init(
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
             info: Mmio.Resources.MmioInfo,
         ) Self {
             var queue_events: [NUM_QUEUES]EventFd = undefined;
-            for (&queue_events) |*qe| {
-                qe.* = .new(System, 0, nix.EFD_NONBLOCK);
-            }
+            for (&queue_events) |*qe|
+                qe.* = .init(System, 0, nix.EFD_NONBLOCK);
             var queues: [NUM_QUEUES]Queue = undefined;
-            for (&queues, queue_sizes) |*q, size| {
-                q.* = Queue.new(size);
-            }
+            for (&queues, queue_sizes) |*q, size|
+                q.* = .init(size);
             const self = Self{
                 .queues = queues,
                 .queue_events = queue_events,
-                .irq_evt = .new(System, 0, nix.EFD_NONBLOCK),
+                .irq_evt = .init(System, 0, nix.EFD_NONBLOCK),
                 .vm = vm,
                 .addr = info.addr,
             };

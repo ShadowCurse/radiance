@@ -4,7 +4,7 @@ fd: nix.fd_t,
 
 const Self = @This();
 
-pub fn new(comptime System: type) Self {
+pub fn init(comptime System: type) Self {
     return .{
         .fd = nix.assert(@src(), System, "open", .{ "/dev/kvm", .{}, 0 }),
     };

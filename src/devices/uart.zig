@@ -119,14 +119,14 @@ fifo: RingBuffer(u8, 64),
 
 const Self = @This();
 
-pub fn new(
+pub fn init(
     comptime System: type,
     vm: *const Vm,
     in: nix.fd_t,
     out: nix.fd_t,
     mmio_info: Mmio.Resources.MmioInfo,
 ) Self {
-    const irq_evt = EventFd.new(System, 0, nix.EFD_NONBLOCK);
+    const irq_evt = EventFd.init(System, 0, nix.EFD_NONBLOCK);
     const kvm_irqfd: nix.kvm_irqfd = .{
         .fd = @intCast(irq_evt.fd),
         .gsi = mmio_info.irq,
@@ -138,7 +138,7 @@ pub fn new(
         @intFromPtr(&kvm_irqfd),
     });
 
-    return Self{
+    return .{
         .in = in,
         .out = out,
         .irq_evt = irq_evt,

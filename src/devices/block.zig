@@ -49,7 +49,7 @@ pub fn Block(comptime Context: type) type {
 
         const Self = @This();
 
-        pub fn new(
+        pub fn init(
             comptime System: type,
             file_path: []const u8,
             read_only: bool,
@@ -78,7 +78,7 @@ pub fn Block(comptime Context: type) type {
             const nsectors = statx.size >> SECTOR_SHIFT;
             const block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
 
-            var context = Context.new(
+            var context: Context = .init(
                 System,
                 vm,
                 QUEUE_SIZES,
@@ -88,13 +88,12 @@ pub fn Block(comptime Context: type) type {
                 (1 << nix.VIRTIO_F_VERSION_1) |
                 (1 << nix.VIRTIO_RING_F_EVENT_IDX) |
                 (1 << nix.VIRTIO_BLK_F_SEG_MAX);
-            if (read_only) {
+            if (read_only)
                 context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
-            }
             context.config.capacity = nsectors;
             context.config.seg_max = MAX_SEGMENTS;
 
-            return Self{
+            return .{
                 .read_only = read_only,
                 .memory = memory,
                 .context = context,
@@ -278,7 +277,7 @@ pub fn BlockIoUring(comptime Context: type) type {
 
         const Self = @This();
 
-        pub fn new(
+        pub fn init(
             comptime System: type,
             file_path: []const u8,
             read_only: bool,
@@ -297,7 +296,7 @@ pub fn BlockIoUring(comptime Context: type) type {
             const nsectors = statx.size >> SECTOR_SHIFT;
             const block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
 
-            var context = Context.new(
+            var context: Context = .init(
                 System,
                 vm,
                 QUEUE_SIZES,
@@ -306,13 +305,12 @@ pub fn BlockIoUring(comptime Context: type) type {
             context.avail_features =
                 (1 << nix.VIRTIO_F_VERSION_1) |
                 (1 << nix.VIRTIO_RING_F_EVENT_IDX);
-            if (read_only) {
+            if (read_only)
                 context.avail_features |= (1 << nix.VIRTIO_BLK_F_RO);
-            }
             context.config.capacity = nsectors;
             context.config.seg_max = MAX_SEGMENTS_IO_URING;
 
-            return Self{
+            return .{
                 .read_only = read_only,
                 .memory = memory,
                 .file_fd = file_fd,
