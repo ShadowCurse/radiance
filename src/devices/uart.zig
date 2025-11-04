@@ -120,12 +120,13 @@ fifo: RingBuffer(u8, 64),
 const Self = @This();
 
 pub fn init(
+    self: *Self,
     comptime System: type,
     vm: *const Vm,
     in: nix.fd_t,
     out: nix.fd_t,
     mmio_info: Mmio.Resources.MmioInfo,
-) Self {
+) void {
     const irq_evt = EventFd.init(System, 0, nix.EFD_NONBLOCK);
     const kvm_irqfd: nix.kvm_irqfd = .{
         .fd = @intCast(irq_evt.fd),
@@ -138,21 +139,19 @@ pub fn init(
         @intFromPtr(&kvm_irqfd),
     });
 
-    return .{
-        .in = in,
-        .out = out,
-        .irq_evt = irq_evt,
-        .baud_divisor_low = DEFAULT_BAUD_DIVISOR_LOW,
-        .baud_divisor_high = DEFAULT_BAUD_DIVISOR_HIGH,
-        .ier = .{},
-        .iir = .{ .no_pending_interrupt = true, .fifo = .fifo_enabled },
-        .lcr = .{ .data_bits = .@"8bits" },
-        .lsr = .{ .thr_empty = true, .thr_empty_and_line_is_idle = true },
-        .mcr = .{ .auxiliary_output_2 = true },
-        .msr = .{ .clear_to_send = true, .data_set_ready = true, .carrier_detect = true },
-        .scr = .{},
-        .fifo = .empty,
-    };
+    self.in = in;
+    self.out = out;
+    self.irq_evt = irq_evt;
+    self.baud_divisor_low = DEFAULT_BAUD_DIVISOR_LOW;
+    self.baud_divisor_high = DEFAULT_BAUD_DIVISOR_HIGH;
+    self.ier = .{};
+    self.iir = .{ .no_pending_interrupt = true, .fifo = .fifo_enabled };
+    self.lcr = .{ .data_bits = .@"8bits" };
+    self.lsr = .{ .thr_empty = true, .thr_empty_and_line_is_idle = true };
+    self.mcr = .{ .auxiliary_output_2 = true };
+    self.msr = .{ .clear_to_send = true, .data_set_ready = true, .carrier_detect = true };
+    self.scr = .{};
+    self.fifo = .empty;
 }
 
 pub fn add_to_cmdline(cmdline: *CmdLine, mmio_info: Mmio.Resources.MmioInfo) !void {

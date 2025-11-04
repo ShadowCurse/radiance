@@ -50,6 +50,7 @@ pub fn Block(comptime Context: type) type {
         const Self = @This();
 
         pub fn init(
+            self: *Self,
             comptime System: type,
             file_path: []const u8,
             read_only: bool,
@@ -57,7 +58,7 @@ pub fn Block(comptime Context: type) type {
             vm: *Vm,
             memory: *Memory,
             info: anytype,
-        ) Self {
+        ) void {
             const fd = nix.assert(@src(), System, "open", .{
                 file_path,
                 .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
@@ -93,13 +94,11 @@ pub fn Block(comptime Context: type) type {
             context.config.capacity = nsectors;
             context.config.seg_max = MAX_SEGMENTS;
 
-            return .{
-                .read_only = read_only,
-                .memory = memory,
-                .context = context,
-                .file_mem = file_mem,
-                .block_id = block_id,
-            };
+            self.read_only = read_only;
+            self.memory = memory;
+            self.context = context;
+            self.file_mem = file_mem;
+            self.block_id = block_id;
         }
 
         pub fn write_default(self: *Self, offset: u64, data: []u8) void {
@@ -278,6 +277,7 @@ pub fn BlockIoUring(comptime Context: type) type {
         const Self = @This();
 
         pub fn init(
+            self: *Self,
             comptime System: type,
             file_path: []const u8,
             read_only: bool,
@@ -285,7 +285,7 @@ pub fn BlockIoUring(comptime Context: type) type {
             vm: *Vm,
             memory: *Memory,
             info: anytype,
-        ) Self {
+        ) void {
             const file_fd = nix.assert(@src(), System, "open", .{
                 file_path,
                 .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
@@ -310,15 +310,13 @@ pub fn BlockIoUring(comptime Context: type) type {
             context.config.capacity = nsectors;
             context.config.seg_max = MAX_SEGMENTS_IO_URING;
 
-            return .{
-                .read_only = read_only,
-                .memory = memory,
-                .file_fd = file_fd,
-                .context = context,
-                .block_id = block_id,
-                .io_uring_device = undefined,
-                .submission_ring = .{},
-            };
+            self.read_only = read_only;
+            self.memory = memory;
+            self.file_fd = file_fd;
+            self.context = context;
+            self.block_id = block_id;
+            self.io_uring_device = undefined;
+            self.submission_ring = .{};
         }
 
         pub fn write_default(self: *Self, offset: u64, data: []u8) void {

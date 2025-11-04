@@ -197,7 +197,7 @@ pub fn main() !void {
     const state = if (config.uart.enabled) configure_terminal(nix.System) else undefined;
     var uart: Uart = undefined;
     if (config.uart.enabled) {
-        uart = Uart.init(
+        uart.init(
             nix.System,
             &vm,
             nix.STDIN_FILENO,
@@ -447,7 +447,7 @@ fn create_block_mmio(
             const info = mmio_infos[index];
             index += 1;
 
-            block.* = BlockMmio.init(
+            block.init(
                 nix.System,
                 config.path,
                 config.read_only,
@@ -489,7 +489,7 @@ fn create_block_mmio_io_uring(
             const block = &blocks[index];
             const info = mmio_infos[index];
             index += 1;
-            block.* = BlockMmioIoUring.init(
+            block.init(
                 nix.System,
                 config.path,
                 config.read_only,
@@ -543,7 +543,7 @@ fn create_block_pci(
                 @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
                 info.bar_addr,
             );
-            block.* = BlockPci.init(
+            block.init(
                 nix.System,
                 config.path,
                 config.read_only,
@@ -594,7 +594,7 @@ fn create_block_pci_io_uring(
                 @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
                 info.bar_addr,
             );
-            block.* = BlockPciIoUring.init(
+            block.init(
                 nix.System,
                 config.path,
                 config.read_only,
@@ -640,7 +640,7 @@ fn create_net_mmio(
             const mmio_info = mmio_infos[index];
             index += 1;
 
-            net.* = VirtioNet.init(
+            net.init(
                 nix.System,
                 vm,
                 config.dev_name,
@@ -691,7 +691,7 @@ fn create_net_mmio_vhost(
             const mmio_info = mmio_infos[index];
             index += 1;
 
-            net.* = VhostNet.init(
+            net.init(
                 nix.System,
                 vm,
                 config.dev_name,
