@@ -56,8 +56,8 @@ pub const Queue = struct {
     const Self = @This();
 
     /// Constructs an empty virtio queue with the given `max_size`.
-    pub fn new(max_size: u16) Self {
-        return Self{
+    pub fn init(max_size: u16) Self {
+        return .{
             .desc_table = 0,
             .avail_ring = 0,
             .used_ring = 0,
@@ -192,7 +192,7 @@ test "test_queue_pop_desc_chain" {
     const memory = Memory.init(TestSystem, 0x1000);
     @memset(memory.mem, 0);
 
-    var queue = Queue.new(10);
+    var queue = Queue.init(10);
     queue.size = 10;
     queue.desc_table = Memory.DRAM_START;
     queue.avail_ring = Memory.DRAM_START + 0x100;
@@ -220,7 +220,7 @@ test "test_queue_add_used_desc" {
     var memory = Memory.init(TestSystem, 0x1000);
     @memset(memory.mem, 0);
 
-    var queue = Queue.new(10);
+    var queue = Queue.init(10);
     queue.size = 10;
     queue.desc_table = Memory.DRAM_START;
     queue.avail_ring = Memory.DRAM_START + 0x100;

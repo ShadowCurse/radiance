@@ -85,21 +85,20 @@ pub fn PciVirtioContext(
         const NUM_IRQS = NUM_QUEUES + 1;
         const Self = @This();
 
-        pub fn new(
+        pub fn init(
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
             info: Mmio.Resources.PciInfo,
         ) Self {
             var queues: [NUM_QUEUES]Queue = undefined;
-            for (&queues, queue_sizes) |*q, size| {
-                q.* = Queue.new(size);
-            }
+            for (&queues, queue_sizes) |*q, size|
+                q.* = .init(size);
             const self = Self{
                 .queues = queues,
-                .queue_events = .{EventFd.new(System, 0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
-                .queue_irqs = .{EventFd.new(System, 0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
-                .config_irq = .new(System, 0, nix.EFD_NONBLOCK),
+                .queue_events = .{EventFd.init(System, 0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
+                .queue_irqs = .{EventFd.init(System, 0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
+                .config_irq = .init(System, 0, nix.EFD_NONBLOCK),
                 .vm = vm,
             };
 

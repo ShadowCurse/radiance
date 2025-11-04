@@ -135,10 +135,10 @@ pub fn main() !void {
     var guest_memory = allocator.GuestMemory.init(&memory, load_result.size);
     const tmp_alloc = guest_memory.allocator();
 
-    const kvm = Kvm.new(nix.System);
+    const kvm = Kvm.init(nix.System);
 
     // create vm
-    var vm = Vm.new(nix.System, &kvm);
+    var vm = Vm.init(nix.System, &kvm);
     vm.set_memory(nix.System, .{
         .guest_phys_addr = Memory.DRAM_START,
         .memory_size = memory.mem.len,
@@ -147,17 +147,15 @@ pub fn main() !void {
 
     // create vcpu
     const kvi = vm.get_preferred_target(nix.System);
-    const vcpu_exit_event = EventFd.new(nix.System, 0, nix.EFD_NONBLOCK);
+    const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
     const vcpu_mmap_size = kvm.vcpu_mmap_size(nix.System);
 
     var vcpus = try permanent_alloc.alloc(Vcpu, config.machine.vcpus);
-    for (vcpus, 0..) |*vcpu, i| {
-        vcpu.* = Vcpu.new(nix.System, &vm, i, vcpu_exit_event, vcpu_mmap_size);
-        vcpu.init(nix.System, kvi);
-    }
+    for (vcpus, 0..) |*vcpu, i|
+        vcpu.* = .init(nix.System, &vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
 
     // create interrupt controller
-    Gicv2.new(nix.System, &vm);
+    Gicv2.init(nix.System, &vm);
 
     // attach pmem
     var last_addr = Memory.align_addr(memory.last_addr(), Pmem.ALIGNMENT);
@@ -193,13 +191,13 @@ pub fn main() !void {
 
     var ecam: Ecam = try .init(permanent_alloc, pci_devices);
     var mmio: Mmio = .init(&ecam, mmio_resources.virtio_address_start);
-    var el: EventLoop = .new(nix.System);
+    var el: EventLoop = .init(nix.System);
 
     // configure terminal for uart in/out
     const state = if (config.uart.enabled) configure_terminal(nix.System) else undefined;
     var uart: Uart = undefined;
     if (config.uart.enabled) {
-        uart = Uart.new(
+        uart = Uart.init(
             nix.System,
             &vm,
             nix.STDIN_FILENO,
@@ -315,7 +313,7 @@ pub fn main() !void {
     mmio_net_infos = mmio_net_infos[net_vhost_mmio_count..];
 
     // create kernel cmdline
-    var cmdline = try CmdLine.new(tmp_alloc, 128);
+    var cmdline = try CmdLine.init(tmp_alloc, 128);
     try cmdline.append(config.machine.cmdline);
     for (config.block.configs.slice_const(), 0..) |*block_config, i| {
         if (block_config.rootfs) {
@@ -449,7 +447,7 @@ fn create_block_mmio(
             const info = mmio_infos[index];
             index += 1;
 
-            block.* = BlockMmio.new(
+            block.* = BlockMmio.init(
                 nix.System,
                 config.path,
                 config.read_only,
@@ -491,7 +489,7 @@ fn create_block_mmio_io_uring(
             const block = &blocks[index];
             const info = mmio_infos[index];
             index += 1;
-            block.* = BlockMmioIoUring.new(
+            block.* = BlockMmioIoUring.init(
                 nix.System,
                 config.path,
                 config.read_only,
@@ -545,7 +543,7 @@ fn create_block_pci(
                 @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
                 info.bar_addr,
             );
-            block.* = BlockPci.new(
+            block.* = BlockPci.init(
                 nix.System,
                 config.path,
                 config.read_only,
@@ -596,7 +594,7 @@ fn create_block_pci_io_uring(
                 @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
                 info.bar_addr,
             );
-            block.* = BlockPciIoUring.new(
+            block.* = BlockPciIoUring.init(
                 nix.System,
                 config.path,
                 config.read_only,
@@ -642,7 +640,7 @@ fn create_net_mmio(
             const mmio_info = mmio_infos[index];
             index += 1;
 
-            net.* = VirtioNet.new(
+            net.* = VirtioNet.init(
                 nix.System,
                 vm,
                 config.dev_name,
@@ -693,7 +691,7 @@ fn create_net_mmio_vhost(
             const mmio_info = mmio_infos[index];
             index += 1;
 
-            net.* = VhostNet.new(
+            net.* = VhostNet.init(
                 nix.System,
                 vm,
                 config.dev_name,

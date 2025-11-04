@@ -24,7 +24,7 @@ pub const VhostNet = struct {
     const Self = @This();
     const VIRTIO_CONTEXT = VirtioContext(QueueSizes.len, TYPE_NET, Config);
 
-    pub fn new(
+    pub fn init(
         comptime System: type,
         vm: *Vm,
         tap_name: []const u8,
@@ -59,7 +59,7 @@ pub const VhostNet = struct {
             @intFromPtr(&size),
         });
 
-        var virtio_context = VIRTIO_CONTEXT.new(
+        var virtio_context = VIRTIO_CONTEXT.init(
             System,
             vm,
             QueueSizes,
@@ -87,7 +87,7 @@ pub const VhostNet = struct {
             virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
         }
 
-        return Self{
+        return .{
             .memory = memory,
             .context = virtio_context,
             .tun = tun,

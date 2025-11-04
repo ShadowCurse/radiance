@@ -34,7 +34,7 @@ pub const IRQ_MAX: u32 = 96;
 pub const MSIX_IRQ_BASE = 64;
 pub const MSIX_IRQ_NUM = 64;
 
-pub fn new(comptime System: type, vm: *const Vm) void {
+pub fn init(comptime System: type, vm: *const Vm) void {
     var device: nix.kvm_create_device = .{
         .type = nix.KVM_DEV_TYPE_ARM_VGIC_V2,
         .fd = 0,

@@ -133,7 +133,7 @@ pub fn init(comptime System: type, entries: u32) Self {
     const complete_queue_entries: []nix.io_uring_cqe =
         @ptrCast(@alignCast(complete_ring[params.cq_off.cqes..]));
 
-    const eventfd = EventFd.new(nix.System, 0, nix.EFD_NONBLOCK);
+    const eventfd = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
     _ = nix.assert(@src(), System, "io_uring_register", .{
         fd,
         nix.IORING_REGISTER.REGISTER_EVENTFD,

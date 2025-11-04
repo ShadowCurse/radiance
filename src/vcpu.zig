@@ -74,12 +74,13 @@ pub fn kick_threads(comptime System: type) void {
     _ = System.kill(pid, VCPU_SIGNAL);
 }
 
-pub fn new(
+pub fn init(
     comptime System: type,
     vm: *const Vm,
     index: u64,
     exit_event: EventFd,
     vcpu_mmap_size: u32,
+    preferred_target: nix.kvm_vcpu_init,
 ) Self {
     const fd = nix.assert(@src(), System, "ioctl", .{
         vm.fd,
@@ -101,26 +102,24 @@ pub fn new(
         @as(u64, 0),
     });
 
+    var kvi = preferred_target;
+    kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_PSCI_0_2;
+    // All vcpus are powered off except first one
+    if (0 < index) {
+        kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
+    }
+    _ = nix.assert(@src(), System, "ioctl", .{
+        fd,
+        nix.KVM_ARM_VCPU_INIT,
+        @intFromPtr(&kvi),
+    });
+
     return Self{
         .fd = fd,
         .kvm_run = @ptrCast(kvm_run.ptr),
         .index = index,
         .exit_event = exit_event,
     };
-}
-
-pub fn init(self: *const Self, comptime System: type, preferred_target: nix.kvm_vcpu_init) void {
-    var kvi = preferred_target;
-    kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_PSCI_0_2;
-    // All vcpus are powered off except first one
-    if (0 < self.index) {
-        kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
-    }
-    _ = nix.assert(@src(), System, "ioctl", .{
-        self.fd,
-        nix.KVM_ARM_VCPU_INIT,
-        @intFromPtr(&kvi),
-    });
 }
 
 pub fn set_reg(
