@@ -35,25 +35,6 @@ mem: []align(HOST_PAGE_SIZE) u8,
 
 const Self = @This();
 
-pub fn init(comptime System: type, size: usize) Self {
-    const prot = nix.PROT.READ | nix.PROT.WRITE;
-    const flags = nix.MAP{
-        .TYPE = .PRIVATE,
-        .ANONYMOUS = true,
-        .NORESERVE = true,
-    };
-    const mem = nix.assert(@src(), System, "mmap", .{
-        null,
-        size,
-        prot,
-        flags,
-        -1,
-        0,
-    });
-
-    return Self{ .mem = mem };
-}
-
 pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
     const offset = addr - DRAM_START;
     const end_of_type = offset + @sizeOf(T);

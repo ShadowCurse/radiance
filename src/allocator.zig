@@ -19,26 +19,3 @@ pub const GuestMemory = struct {
         return self.inner.allocator();
     }
 };
-
-pub const PermanentMemory = struct {
-    inner: std.heap.FixedBufferAllocator,
-
-    const Self = @This();
-
-    pub fn init(comptime System: type, size: usize) Self {
-        const prot = nix.PROT.READ | nix.PROT.WRITE;
-        const flags = nix.MAP{
-            .TYPE = .PRIVATE,
-            .ANONYMOUS = true,
-            .NORESERVE = true,
-        };
-        const mem = nix.assert(@src(), System, "mmap", .{ null, size, prot, flags, -1, 0 });
-        return .{
-            .inner = .init(mem),
-        };
-    }
-
-    pub fn allocator(self: *Self) std.mem.Allocator {
-        return self.inner.allocator();
-    }
-};
