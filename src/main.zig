@@ -3,7 +3,6 @@ const build_options = @import("build_options");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const gdb = @import("gdb.zig");
-const allocator = @import("allocator.zig");
 const args_parser = @import("args_parser.zig");
 const config_parser = @import("config_parser.zig");
 
@@ -141,10 +140,10 @@ pub fn main() !void {
         ecam_bytes;
 
     log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
-    const permanent_memory = PermanentMemory.init(nix.System, permanent_memory_size);
+    const permanent_memory: Memory.Permanent = .init(nix.System, permanent_memory_size);
     var pm: []align(8) u8 = permanent_memory.mem;
 
-    var memory: Memory = .{ .mem = @alignCast(pm[0..memory_bytes]) };
+    var memory: Memory.Guest = .{ .mem = @alignCast(pm[0..memory_bytes]) };
     pm = @alignCast(pm[memory_bytes..]);
 
     const vcpus: []Vcpu = @ptrCast(pm[0..vcpu_bytes]);
@@ -174,9 +173,8 @@ pub fn main() !void {
     const ecam_memory: []align(8) u8 = @ptrCast(pm[0..ecam_bytes]);
     pm = @alignCast(pm[ecam_bytes..]);
 
-    const load_result = memory.load_linux_kernel(nix.System, config.kernel.path);
-    var guest_memory = allocator.GuestMemory.init(&memory, load_result.size);
-    const tmp_alloc = guest_memory.allocator();
+    var load_result = memory.load_linux_kernel(nix.System, config.kernel.path);
+    const tmp_alloc = load_result.post_kernel_allocator.allocator();
 
     // create vm
     const kvm = Kvm.init(nix.System);
@@ -467,35 +465,11 @@ pub fn main() !void {
     return;
 }
 
-const PermanentMemory = struct {
-    mem: []align(Memory.HOST_PAGE_SIZE) u8,
-
-    const Self = @This();
-
-    pub fn init(comptime System: type, size: usize) Self {
-        const mem = nix.assert(@src(), System, "mmap", .{
-            null,
-            size,
-            nix.PROT.READ | nix.PROT.WRITE,
-            nix.MAP{
-                .TYPE = .PRIVATE,
-                .ANONYMOUS = true,
-                .NORESERVE = true,
-            },
-            -1,
-            0,
-        });
-        return .{
-            .mem = mem,
-        };
-    }
-};
-
 fn create_block_mmio(
     blocks: []BlockMmio,
     vm: *Vm,
     mmio: *Mmio,
-    memory: *Memory,
+    memory: *Memory.Guest,
     event_loop: *EventLoop,
     mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.BlockConfig,
@@ -535,7 +509,7 @@ fn create_block_mmio_io_uring(
     blocks: []BlockMmioIoUring,
     vm: *Vm,
     mmio: *Mmio,
-    memory: *Memory,
+    memory: *Memory.Guest,
     event_loop: *EventLoop,
     io_uring: *IoUring,
     mmio_infos: []const Mmio.Resources.MmioInfo,
@@ -580,7 +554,7 @@ fn create_block_pci(
     vm: *Vm,
     mmio: *Mmio,
     mmio_resources: *Mmio.Resources,
-    memory: *Memory,
+    memory: *Memory.Guest,
     event_loop: *EventLoop,
     ecam: *Ecam,
     configs: []const config_parser.BlockConfig,
@@ -627,7 +601,7 @@ fn create_block_pci_io_uring(
     vm: *Vm,
     mmio: *Mmio,
     mmio_resources: *Mmio.Resources,
-    memory: *Memory,
+    memory: *Memory.Guest,
     event_loop: *EventLoop,
     io_uring: *IoUring,
     ecam: *Ecam,
@@ -678,7 +652,7 @@ fn create_net_mmio(
     nets: []VirtioNet,
     vm: *Vm,
     mmio: *Mmio,
-    memory: *Memory,
+    memory: *Memory.Guest,
     event_loop: *EventLoop,
     mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.NetConfig,
@@ -729,7 +703,7 @@ fn create_net_mmio_vhost(
     nets: []VhostNet,
     vm: *Vm,
     mmio: *Mmio,
-    memory: *Memory,
+    memory: *Memory.Guest,
     mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.NetConfig,
 ) !void {

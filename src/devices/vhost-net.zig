@@ -15,7 +15,7 @@ pub const Config = extern struct {
 pub const QueueSizes = .{ 256, 256 };
 
 pub const VhostNet = struct {
-    memory: *Memory,
+    memory: *Memory.Guest,
     context: VIRTIO_CONTEXT,
 
     tun: nix.fd_t,
@@ -30,7 +30,7 @@ pub const VhostNet = struct {
         vm: *Vm,
         tap_name: []const u8,
         mac: ?[6]u8,
-        memory: *Memory,
+        memory: *Memory.Guest,
         mmio_info: Mmio.Resources.MmioInfo,
     ) void {
         const tun = nix.assert(@src(), System, "open", .{

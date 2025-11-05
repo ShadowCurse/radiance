@@ -95,7 +95,7 @@ pub const Queue = struct {
         }
     }
 
-    pub fn send_notification(self: *Self, memory: *const Memory) bool {
+    pub fn send_notification(self: *Self, memory: *const Memory.Guest) bool {
         if (self.notification_suppression) {
             arch.load_barrier();
             // avail_ring is only written by the driver
@@ -111,7 +111,7 @@ pub const Queue = struct {
     }
 
     /// Pop the first available descriptor chain from the avail ring.
-    pub fn pop_desc_chain(self: *Self, memory: *const Memory) ?DescriptorChain {
+    pub fn pop_desc_chain(self: *Self, memory: *const Memory.Guest) ?DescriptorChain {
         if (self.notification_suppression) {
             // used_ring is only written by the device
             const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
@@ -148,7 +148,7 @@ pub const Queue = struct {
     /// Puts an available descriptor head into the used ring for use by the guest.
     pub fn add_used_desc(
         self: *Self,
-        memory: *Memory,
+        memory: *Memory.Guest,
         desc_id: u16,
         data_len: u32,
     ) void {
@@ -173,7 +173,7 @@ const TestSystem = struct {
     var M align(memory.HOST_PAGE_SIZE) = [_]u8{0} ** 4096;
 };
 test "test_queue_pop_desc_chain" {
-    const memory: Memory = .{ .mem = TestSystem.M[0..] };
+    const memory: Memory.Guest = .{ .mem = TestSystem.M[0..] };
 
     var queue = Queue.init(10);
     queue.size = 10;
@@ -200,7 +200,7 @@ test "test_queue_pop_desc_chain" {
 }
 
 test "test_queue_add_used_desc" {
-    var memory: Memory = .{ .mem = TestSystem.M[0..] };
+    var memory: Memory.Guest = .{ .mem = TestSystem.M[0..] };
 
     var queue = Queue.init(10);
     queue.size = 10;
