@@ -170,27 +170,10 @@ pub const Queue = struct {
 
 const TestSystem = struct {
     const memory = @import("../memory.zig");
-
     var M align(memory.HOST_PAGE_SIZE) = [_]u8{0} ** 4096;
-    pub fn mmap(
-        ptr: ?[*]align(memory.HOST_PAGE_SIZE) u8,
-        length: usize,
-        prot: u32,
-        flags: nix.MAP,
-        fd: nix.fd_t,
-        offset: u64,
-    ) ![]align(memory.HOST_PAGE_SIZE) u8 {
-        _ = ptr;
-        _ = prot;
-        _ = flags;
-        _ = fd;
-        _ = offset;
-        return M[0..length];
-    }
 };
 test "test_queue_pop_desc_chain" {
-    const memory = Memory.init(TestSystem, 0x1000);
-    @memset(memory.mem, 0);
+    const memory: Memory = .{ .mem = TestSystem.M[0..] };
 
     var queue = Queue.init(10);
     queue.size = 10;
@@ -217,8 +200,7 @@ test "test_queue_pop_desc_chain" {
 }
 
 test "test_queue_add_used_desc" {
-    var memory = Memory.init(TestSystem, 0x1000);
-    @memset(memory.mem, 0);
+    var memory: Memory = .{ .mem = TestSystem.M[0..] };
 
     var queue = Queue.init(10);
     queue.size = 10;

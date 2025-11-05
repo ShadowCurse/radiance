@@ -274,17 +274,26 @@ pub const HeaderBarSizes = struct {
 
 const Self = @This();
 
-pub fn init(alloc: Allocator, pci_devices: u32) !Self {
-    const headers = try alloc.alloc(Type0ConfigurationHeader, pci_devices);
+pub fn init(memory: []align(8) u8, pci_devices: u32) !*Self {
+    var mem: []align(8) u8 = memory;
+
+    var self: *Self = @ptrCast(mem[0..@sizeOf(Self)]);
+    mem = mem[@sizeOf(Self)..];
+
+    const headers_bytes = @sizeOf(Type0ConfigurationHeader) * pci_devices;
+    const headers: []Type0ConfigurationHeader = @ptrCast(mem[0..headers_bytes]);
+    mem = @alignCast(mem[headers_bytes..]);
     for (headers) |*h| h.* = .{};
-    const headers_meta = try alloc.alloc(HeaderBarSizes, pci_devices);
+
+    const headers_meta_bytes = @sizeOf(HeaderBarSizes) * pci_devices;
+    const headers_meta: []HeaderBarSizes = @ptrCast(mem[0..headers_meta_bytes]);
     for (headers_meta) |*h| h.* = .{};
-    return .{
-        .headers = headers,
-        .headers_meta = headers_meta,
-        .num_devices = 0,
-        .virtio_device_capability = .{},
-    };
+
+    self.headers = headers;
+    self.headers_meta = headers_meta;
+    self.num_devices = 0;
+    self.virtio_device_capability = .{};
+    return self;
 }
 
 pub fn add_header(

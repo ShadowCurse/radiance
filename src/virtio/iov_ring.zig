@@ -4,6 +4,7 @@ const log = @import("../log.zig");
 
 const HOST_PAGE_SIZE = @import("../memory.zig").HOST_PAGE_SIZE;
 
+pub const BACKING_SIZE = HOST_PAGE_SIZE;
 pub const MAX_IOVECS = HOST_PAGE_SIZE / @sizeOf(nix.iovec);
 
 const Self = @This();

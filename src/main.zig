@@ -59,6 +59,7 @@ fn check_aligments() void {
         BlockPciIoUring,
         VirtioNet,
         VhostNet,
+        Ecam,
         Ecam.Type0ConfigurationHeader,
         Ecam.HeaderBarSizes,
     }) |t| {
@@ -87,8 +88,6 @@ pub fn main() !void {
     const config_parse_result = try config_parser.parse_file(nix.System, args.config_path.?);
     const config = &config_parse_result.config;
 
-    var pci_devices: u32 = 0;
-
     var net_mmio_count: u32 = 0;
     var net_vhost_mmio_count: u32 = 0;
     for (config.network.configs.slice_const()) |*net_config| {
@@ -99,6 +98,7 @@ pub fn main() !void {
         }
     }
 
+    var pci_devices: u32 = 0;
     var block_mmio_count: u32 = 0;
     var block_pci_count: u32 = 0;
     var block_mmio_io_uring_count: u32 = 0;
@@ -112,32 +112,74 @@ pub fn main() !void {
         }
     }
 
-    const permanent_memory_size =
-        @sizeOf(Vcpu) * config.machine.vcpus +
-        @sizeOf(std.Thread) * config.machine.vcpus +
-        @sizeOf(BlockMmio) * block_mmio_count +
-        @sizeOf(BlockPci) * block_pci_count +
-        @sizeOf(BlockMmioIoUring) * block_mmio_io_uring_count +
-        @sizeOf(BlockPciIoUring) * block_pci_io_uring_count +
-        @sizeOf(VirtioNet) * net_mmio_count +
-        @sizeOf(VhostNet) * net_vhost_mmio_count +
+    // These need to be host page aligned
+    const memory_bytes = config.machine.memory_mb << 20;
+
+    // Need to be 8 bytes aligned, so they go after host page aligned items
+    const vcpu_bytes = @sizeOf(Vcpu) * config.machine.vcpus;
+    const thread_bytes = @sizeOf(std.Thread) * config.machine.vcpus;
+    const block_mmio_bytes = @sizeOf(BlockMmio) * block_mmio_count;
+    const block_pci_bytes = @sizeOf(BlockPci) * block_pci_count;
+    const block_mmio_io_uring_bytes = @sizeOf(BlockMmioIoUring) * block_mmio_io_uring_count;
+    const block_pci_io_uring_bytes = @sizeOf(BlockPciIoUring) * block_pci_io_uring_count;
+    const net_bytes = @sizeOf(VirtioNet) * net_mmio_count;
+    const vhost_net_bytes = @sizeOf(VhostNet) * net_vhost_mmio_count;
+    const ecam_bytes = @sizeOf(Ecam) +
         @sizeOf(Ecam.Type0ConfigurationHeader) * pci_devices +
         @sizeOf(Ecam.HeaderBarSizes) * pci_devices;
 
+    const permanent_memory_size =
+        memory_bytes +
+        vcpu_bytes +
+        thread_bytes +
+        block_mmio_bytes +
+        block_pci_bytes +
+        block_mmio_io_uring_bytes +
+        block_pci_io_uring_bytes +
+        net_bytes +
+        vhost_net_bytes +
+        ecam_bytes;
+
     log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
-    var permanent_memory = allocator.PermanentMemory.init(nix.System, permanent_memory_size);
-    const permanent_alloc = permanent_memory.allocator();
+    const permanent_memory = PermanentMemory.init(nix.System, permanent_memory_size);
+    var pm: []align(8) u8 = permanent_memory.mem;
 
-    var memory = Memory.init(nix.System, config.machine.memory_mb << 20);
-    const load_result =
-        memory.load_linux_kernel(nix.System, config.kernel.path);
+    var memory: Memory = .{ .mem = @alignCast(pm[0..memory_bytes]) };
+    pm = @alignCast(pm[memory_bytes..]);
 
+    const vcpus: []Vcpu = @ptrCast(pm[0..vcpu_bytes]);
+    pm = @alignCast(pm[vcpu_bytes..]);
+
+    const vcpu_threads: []std.Thread = @ptrCast(pm[0..thread_bytes]);
+    pm = @alignCast(pm[thread_bytes..]);
+
+    const block_mmio: []BlockMmio = @ptrCast(pm[0..block_mmio_bytes]);
+    pm = @alignCast(pm[block_mmio_bytes..]);
+
+    const block_pci: []BlockPci = @ptrCast(pm[0..block_pci_bytes]);
+    pm = @alignCast(pm[block_pci_bytes..]);
+
+    const block_mmio_io_uring: []BlockMmioIoUring = @ptrCast(pm[0..block_mmio_io_uring_bytes]);
+    pm = @alignCast(pm[block_mmio_io_uring_bytes..]);
+
+    const block_pci_io_uring: []BlockPciIoUring = @ptrCast(pm[0..block_pci_io_uring_bytes]);
+    pm = @alignCast(pm[block_pci_io_uring_bytes..]);
+
+    const net: []VirtioNet = @ptrCast(pm[0..net_bytes]);
+    pm = @alignCast(pm[net_bytes..]);
+
+    const vhost_net: []VhostNet = @ptrCast(pm[0..vhost_net_bytes]);
+    pm = @alignCast(pm[vhost_net_bytes..]);
+
+    const ecam_memory: []align(8) u8 = @ptrCast(pm[0..ecam_bytes]);
+    pm = @alignCast(pm[ecam_bytes..]);
+
+    const load_result = memory.load_linux_kernel(nix.System, config.kernel.path);
     var guest_memory = allocator.GuestMemory.init(&memory, load_result.size);
     const tmp_alloc = guest_memory.allocator();
 
-    const kvm = Kvm.init(nix.System);
-
     // create vm
+    const kvm = Kvm.init(nix.System);
     var vm = Vm.init(nix.System, &kvm);
     vm.set_memory(nix.System, .{
         .guest_phys_addr = Memory.DRAM_START,
@@ -149,8 +191,6 @@ pub fn main() !void {
     const kvi = vm.get_preferred_target(nix.System);
     const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
     const vcpu_mmap_size = kvm.vcpu_mmap_size(nix.System);
-
-    var vcpus = try permanent_alloc.alloc(Vcpu, config.machine.vcpus);
     for (vcpus, 0..) |*vcpu, i|
         vcpu.* = .init(nix.System, &vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
 
@@ -189,8 +229,8 @@ pub fn main() !void {
     var mmio_block_infos = mmio_infos[0..block_mmio_info_count];
     var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
 
-    var ecam: Ecam = try .init(permanent_alloc, pci_devices);
-    var mmio: Mmio = .init(&ecam, mmio_resources.virtio_address_start);
+    const ecam: *Ecam = try .init(ecam_memory, pci_devices);
+    var mmio: Mmio = .init(ecam, mmio_resources.virtio_address_start);
     var el: EventLoop = .init(nix.System);
 
     // configure terminal for uart in/out
@@ -235,8 +275,8 @@ pub fn main() !void {
         );
     }
 
-    const mmio_blocks = try create_block_mmio(
-        permanent_alloc,
+    try create_block_mmio(
+        block_mmio,
         &vm,
         &mmio,
         &memory,
@@ -245,11 +285,11 @@ pub fn main() !void {
         config.block.configs.slice_const(),
     );
     mmio_block_infos = mmio_block_infos[block_mmio_count..];
-    defer for (mmio_blocks) |*block|
+    defer for (block_mmio) |*block|
         block.sync(nix.System);
 
-    const mmio_io_uring_blocks = try create_block_mmio_io_uring(
-        permanent_alloc,
+    try create_block_mmio_io_uring(
+        block_mmio_io_uring,
         &vm,
         &mmio,
         &memory,
@@ -259,40 +299,38 @@ pub fn main() !void {
         config.block.configs.slice_const(),
     );
     mmio_block_infos = mmio_block_infos[block_mmio_io_uring_count..];
-    defer for (mmio_io_uring_blocks) |*block|
+    defer for (block_mmio_io_uring) |*block|
         block.sync(nix.System);
 
-    const pci_blocks = try create_block_pci(
-        permanent_alloc,
+    try create_block_pci(
+        block_pci,
         &vm,
         &mmio,
         &mmio_resources,
         &memory,
         &el,
-        &ecam,
-        block_pci_count,
+        ecam,
         config.block.configs.slice_const(),
     );
-    defer for (pci_blocks) |*block|
+    defer for (block_pci) |*block|
         block.sync(nix.System);
 
-    const pci_io_uring_blocks = try create_block_pci_io_uring(
-        permanent_alloc,
+    try create_block_pci_io_uring(
+        block_pci_io_uring,
         &vm,
         &mmio,
         &mmio_resources,
         &memory,
         &el,
         &io_uring,
-        &ecam,
-        block_pci_io_uring_count,
+        ecam,
         config.block.configs.slice_const(),
     );
-    defer for (pci_io_uring_blocks) |*block|
+    defer for (block_pci_io_uring) |*block|
         block.sync(nix.System);
 
     try create_net_mmio(
-        permanent_alloc,
+        net,
         &vm,
         &mmio,
         &memory,
@@ -303,7 +341,7 @@ pub fn main() !void {
     mmio_net_infos = mmio_net_infos[net_mmio_count..];
 
     try create_net_mmio_vhost(
-        permanent_alloc,
+        vhost_net,
         &vm,
         &mmio,
         &memory,
@@ -334,8 +372,8 @@ pub fn main() !void {
             try cmdline.append(name);
             break;
         }
-    } else for (config.pmem.configs.slice_const(), 0..) |*pm, i| {
-        if (pm.rootfs) {
+    } else for (config.pmem.configs.slice_const(), 0..) |*pmem_config, i| {
+        if (pmem_config.rootfs) {
             var name_buff: [64]u8 = undefined;
             const name = try std.fmt.bufPrint(
                 &name_buff,
@@ -383,7 +421,6 @@ pub fn main() !void {
     config_parse_result.deinit(nix.System);
 
     // start vcpu threads
-    const vcpu_threads = try permanent_alloc.alloc(std.Thread, config.machine.vcpus);
     log.debug(@src(), "starting vcpu threads", .{});
     // TODO this does linux futex syscalls. Maybe can be replaced
     // by simple atomic value?
@@ -430,16 +467,39 @@ pub fn main() !void {
     return;
 }
 
+const PermanentMemory = struct {
+    mem: []align(Memory.HOST_PAGE_SIZE) u8,
+
+    const Self = @This();
+
+    pub fn init(comptime System: type, size: usize) Self {
+        const mem = nix.assert(@src(), System, "mmap", .{
+            null,
+            size,
+            nix.PROT.READ | nix.PROT.WRITE,
+            nix.MAP{
+                .TYPE = .PRIVATE,
+                .ANONYMOUS = true,
+                .NORESERVE = true,
+            },
+            -1,
+            0,
+        });
+        return .{
+            .mem = mem,
+        };
+    }
+};
+
 fn create_block_mmio(
-    alloc: Allocator,
+    blocks: []BlockMmio,
     vm: *Vm,
     mmio: *Mmio,
     memory: *Memory,
     event_loop: *EventLoop,
     mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.BlockConfig,
-) ![]const BlockMmio {
-    const blocks = try alloc.alloc(BlockMmio, mmio_infos.len);
+) !void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (!config.io_uring and !config.pci) {
@@ -469,11 +529,10 @@ fn create_block_mmio(
             );
         }
     }
-    return blocks;
 }
 
 fn create_block_mmio_io_uring(
-    alloc: Allocator,
+    blocks: []BlockMmioIoUring,
     vm: *Vm,
     mmio: *Mmio,
     memory: *Memory,
@@ -481,8 +540,7 @@ fn create_block_mmio_io_uring(
     io_uring: *IoUring,
     mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.BlockConfig,
-) ![]const BlockMmioIoUring {
-    const blocks = try alloc.alloc(BlockMmioIoUring, mmio_infos.len);
+) !void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.io_uring and !config.pci) {
@@ -515,21 +573,18 @@ fn create_block_mmio_io_uring(
             );
         }
     }
-    return blocks;
 }
 
 fn create_block_pci(
-    alloc: Allocator,
+    blocks: []BlockPci,
     vm: *Vm,
     mmio: *Mmio,
     mmio_resources: *Mmio.Resources,
     memory: *Memory,
     event_loop: *EventLoop,
     ecam: *Ecam,
-    pci_blocks_count: u32,
     configs: []const config_parser.BlockConfig,
-) ![]const BlockPci {
-    const blocks = try alloc.alloc(BlockPci, pci_blocks_count);
+) !void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (!config.io_uring and config.pci) {
@@ -565,11 +620,10 @@ fn create_block_pci(
             );
         }
     }
-    return blocks;
 }
 
 fn create_block_pci_io_uring(
-    alloc: Allocator,
+    blocks: []BlockPciIoUring,
     vm: *Vm,
     mmio: *Mmio,
     mmio_resources: *Mmio.Resources,
@@ -577,10 +631,8 @@ fn create_block_pci_io_uring(
     event_loop: *EventLoop,
     io_uring: *IoUring,
     ecam: *Ecam,
-    block_count: u32,
     configs: []const config_parser.BlockConfig,
-) ![]const BlockPciIoUring {
-    const blocks = try alloc.alloc(BlockPciIoUring, block_count);
+) !void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.io_uring and config.pci) {
@@ -620,11 +672,10 @@ fn create_block_pci_io_uring(
             );
         }
     }
-    return blocks;
 }
 
 fn create_net_mmio(
-    alloc: Allocator,
+    nets: []VirtioNet,
     vm: *Vm,
     mmio: *Mmio,
     memory: *Memory,
@@ -632,7 +683,6 @@ fn create_net_mmio(
     mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.NetConfig,
 ) !void {
-    const nets = try alloc.alloc(VirtioNet, mmio_infos.len);
     var index: u8 = 0;
     for (configs) |*config| {
         if (!config.vhost) {
@@ -676,14 +726,13 @@ fn create_net_mmio(
 }
 
 fn create_net_mmio_vhost(
-    alloc: Allocator,
+    nets: []VhostNet,
     vm: *Vm,
     mmio: *Mmio,
     memory: *Memory,
     mmio_infos: []const Mmio.Resources.MmioInfo,
     configs: []const config_parser.NetConfig,
 ) !void {
-    const nets = try alloc.alloc(VhostNet, mmio_infos.len);
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.vhost) {
