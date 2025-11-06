@@ -113,6 +113,10 @@ pub fn main() !void {
 
     // These need to be host page aligned
     const memory_bytes = config.machine.memory_mb << 20;
+    // These are for optimized mmio devices that need actual memory to be put in
+    // mmio region
+    const mmio_regions_bytes = Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE *
+        (block_mmio_count + block_mmio_io_uring_count + net_mmio_count + net_vhost_mmio_count);
 
     // Need to be 8 bytes aligned, so they go after host page aligned items
     const vcpu_bytes = @sizeOf(Vcpu) * config.machine.vcpus;
@@ -123,12 +127,14 @@ pub fn main() !void {
     const block_pci_io_uring_bytes = @sizeOf(BlockPciIoUring) * block_pci_io_uring_count;
     const net_bytes = @sizeOf(VirtioNet) * net_mmio_count;
     const vhost_net_bytes = @sizeOf(VhostNet) * net_vhost_mmio_count;
+
     const ecam_bytes = @sizeOf(Ecam) +
         @sizeOf(Ecam.Type0ConfigurationHeader) * pci_devices +
         @sizeOf(Ecam.HeaderBarSizes) * pci_devices;
 
     const permanent_memory_size =
         memory_bytes +
+        mmio_regions_bytes +
         vcpu_bytes +
         thread_bytes +
         block_mmio_bytes +
@@ -145,6 +151,9 @@ pub fn main() !void {
 
     var memory: Memory.Guest = .{ .mem = @alignCast(pm[0..memory_bytes]) };
     pm = @alignCast(pm[memory_bytes..]);
+
+    var mmio_regions: []align(Memory.HOST_PAGE_SIZE) u8 = @alignCast(pm[0..mmio_regions_bytes]);
+    pm = @alignCast(pm[mmio_regions_bytes..]);
 
     const vcpus: []Vcpu = @ptrCast(pm[0..vcpu_bytes]);
     pm = @alignCast(pm[vcpu_bytes..]);
@@ -220,9 +229,12 @@ pub fn main() !void {
     const net_mmio_info_count = net_mmio_count +
         net_vhost_mmio_count;
     const mmio_info_count = block_mmio_info_count + net_mmio_info_count;
-    const mmio_infos = try tmp_alloc.alloc(Mmio.Resources.MmioInfo, mmio_info_count);
-    for (mmio_infos) |*info|
+    const mmio_infos = try tmp_alloc.alloc(Mmio.Resources.MmioVirtioInfo, mmio_info_count);
+    for (mmio_infos) |*info| {
         info.* = mmio_resources.allocate_mmio_virtio();
+        info.mem_ptr = mmio_regions.ptr;
+        mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+    }
 
     var mmio_block_infos = mmio_infos[0..block_mmio_info_count];
     var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
@@ -471,7 +483,7 @@ fn create_block_mmio(
     mmio: *Mmio,
     memory: *Memory.Guest,
     event_loop: *EventLoop,
-    mmio_infos: []const Mmio.Resources.MmioInfo,
+    mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.BlockConfig,
 ) !void {
     var index: u8 = 0;
@@ -512,7 +524,7 @@ fn create_block_mmio_io_uring(
     memory: *Memory.Guest,
     event_loop: *EventLoop,
     io_uring: *IoUring,
-    mmio_infos: []const Mmio.Resources.MmioInfo,
+    mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.BlockConfig,
 ) !void {
     var index: u8 = 0;
@@ -654,7 +666,7 @@ fn create_net_mmio(
     mmio: *Mmio,
     memory: *Memory.Guest,
     event_loop: *EventLoop,
-    mmio_infos: []const Mmio.Resources.MmioInfo,
+    mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.NetConfig,
 ) !void {
     var index: u8 = 0;
@@ -704,7 +716,7 @@ fn create_net_mmio_vhost(
     vm: *Vm,
     mmio: *Mmio,
     memory: *Memory.Guest,
-    mmio_infos: []const Mmio.Resources.MmioInfo,
+    mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.NetConfig,
 ) !void {
     var index: u8 = 0;

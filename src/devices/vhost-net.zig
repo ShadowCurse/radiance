@@ -31,7 +31,7 @@ pub const VhostNet = struct {
         tap_name: []const u8,
         mac: ?[6]u8,
         memory: *Memory.Guest,
-        mmio_info: Mmio.Resources.MmioInfo,
+        mmio_info: Mmio.Resources.MmioVirtioInfo,
     ) void {
         const tun = nix.assert(@src(), System, "open", .{
             "/dev/net/tun",
