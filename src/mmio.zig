@@ -21,16 +21,15 @@ pub const Resources = struct {
     last_bar_address: u64 = Memory.PCI_START,
     virtio_address_start: u64 = MMIO_MEM_START,
 
+    pub fn start_mmio_virtio(self: *Resources) void {
+        self.virtio_address_start = self.last_address;
+    }
+
     pub const MmioInfo = struct {
         addr: u64,
         len: u32,
         irq: u32,
     };
-
-    pub fn start_mmio_virtio(self: *Resources) void {
-        self.virtio_address_start = self.last_address;
-    }
-
     // MMIO devices should be allocated before VIRTIO devices.
     // Devices are allocated one after another each taking
     // MMIO_DEVICE_ALLOCATED_REGION_SIZE space in the MMIO region.
@@ -51,12 +50,18 @@ pub const Resources = struct {
         };
     }
 
+    pub const MmioVirtioInfo = struct {
+        addr: u64,
+        len: u32,
+        irq: u32,
+        mem_ptr: [*]align(Memory.HOST_PAGE_SIZE) u8,
+    };
     // VIRTIO devices should be allocated after all MMIO devices
     // are allocated. VIRTIO MMIO space will be offset from the
     // beginning of the page by
     // MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET
     // and thus will be split between 2 guest physical pages.
-    pub fn allocate_mmio_virtio(self: *Resources) MmioInfo {
+    pub fn allocate_mmio_virtio(self: *Resources) MmioVirtioInfo {
         const addr =
             self.last_address + MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET;
         self.last_address += 2 * MMIO_DEVICE_ALLOCATED_REGION_SIZE;
@@ -71,6 +76,7 @@ pub const Resources = struct {
             .addr = addr,
             .len = MMIO_DEVICE_REGION_SIZE,
             .irq = irq,
+            .mem_ptr = undefined,
         };
     }
 

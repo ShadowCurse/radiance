@@ -253,7 +253,7 @@ pub fn create_fdt(
     cmdline: [:0]const u8,
     uart_device_info: ?Mmio.Resources.MmioInfo,
     rtc_device_info: Mmio.Resources.MmioInfo,
-    virtio_devices_info: []const Mmio.Resources.MmioInfo,
+    virtio_devices_info: []const Mmio.Resources.MmioVirtioInfo,
     pmem_info: []const Pmem.Info,
 ) u64 {
     // https://mjmwired.net/kernel/Documentation/devicetree/booting-without-of.txt
@@ -580,7 +580,7 @@ fn create_rtc_node(builder: *FdtBuilder, device_info: Mmio.Resources.MmioInfo) v
 
 fn create_virtio_node(
     builder: *FdtBuilder,
-    device_info: *const Mmio.Resources.MmioInfo,
+    device_info: *const Mmio.Resources.MmioVirtioInfo,
 ) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/virtio/mmio.yaml
     var buff: [30]u8 = undefined;

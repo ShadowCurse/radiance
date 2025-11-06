@@ -4,6 +4,7 @@ const log = @import("../log.zig");
 
 const Vm = @import("../vm.zig");
 const Mmio = @import("../mmio.zig");
+const Memory = @import("../memory.zig");
 const EventFd = @import("../eventfd.zig");
 const Queue = @import("queue.zig").Queue;
 
@@ -132,6 +133,7 @@ pub fn VirtioContext(
 
         vm: *Vm,
         addr: u64,
+        mem_ptr: [*]align(Memory.HOST_PAGE_SIZE) u8,
 
         const Self = @This();
 
@@ -139,7 +141,7 @@ pub fn VirtioContext(
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
-            info: Mmio.Resources.MmioInfo,
+            info: Mmio.Resources.MmioVirtioInfo,
         ) Self {
             var queue_events: [NUM_QUEUES]EventFd = undefined;
             for (&queue_events) |*qe|
@@ -153,6 +155,7 @@ pub fn VirtioContext(
                 .irq_evt = .init(System, 0, nix.EFD_NONBLOCK),
                 .vm = vm,
                 .addr = info.addr,
+                .mem_ptr = info.mem_ptr,
             };
 
             const kvm_irqfd: nix.kvm_irqfd = .{
@@ -183,20 +186,9 @@ pub fn VirtioContext(
         }
 
         pub fn set_memory(self: *Self, comptime System: type) void {
-            const prot = nix.PROT.READ | nix.PROT.WRITE;
-            const flags = nix.MAP{
-                .TYPE = .PRIVATE,
-                .ANONYMOUS = true,
-                .NORESERVE = true,
-            };
-            const mem = nix.assert(
-                @src(),
-                System,
-                "mmap",
-                .{ null, Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE, prot, flags, -1, 0 },
-            );
             // Memory will be at the offset INTERRUPT_STATUS_OFFSET in VIRTIO region
             // Set Interrupt status to always be 1
+            const mem: []align(Memory.HOST_PAGE_SIZE) u8 = self.mem_ptr[0..Memory.HOST_PAGE_SIZE];
             mem[0] = 1;
 
             const guest_phys_addr = self.addr + INTERRUPT_STATUS_OFFSET;
@@ -282,8 +274,7 @@ pub fn VirtioContext(
                 },
                 0x70 => {
                     const action = self.device_status.update(data[0]);
-                    if (action == .ActivateDevice)
-                        self.set_memory(System);
+                    if (action == .ActivateDevice) self.set_memory(System);
                     return action;
                 },
                 0x80 => self.queues[self.selected_queue].set_desc_table(false, data_u32.*),
