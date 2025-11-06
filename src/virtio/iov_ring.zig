@@ -13,7 +13,7 @@ start: u16,
 len: u16,
 capacity: u32,
 
-pub fn init(comptime System: type) Self {
+pub fn init(comptime System: type, memory: []align(HOST_PAGE_SIZE) u8) Self {
     const memfd = nix.assert(@src(), System, "memfd_create", .{ "iov_ring", nix.FD_CLOEXEC });
     nix.assert(@src(), System, "ftruncate", .{ memfd, HOST_PAGE_SIZE });
     const mem = nix.assert(@src(), System, "mmap", .{
@@ -40,6 +40,20 @@ pub fn init(comptime System: type) Self {
     });
     _ = nix.assert(@src(), System, "mmap", .{
         mem.ptr + HOST_PAGE_SIZE,
+        HOST_PAGE_SIZE,
+        nix.PROT.READ | nix.PROT.WRITE,
+        nix.MAP{
+            .TYPE = .SHARED,
+            .FIXED = true,
+        },
+        memfd,
+        0,
+    });
+    // This one mapps the provided memory to the same memfd. This way the same data
+    // will be available in 3 different virtual pages. This is done to be able to save
+    // the state of the iovecs.
+    _ = nix.assert(@src(), System, "mmap", .{
+        memory.ptr,
         HOST_PAGE_SIZE,
         nix.PROT.READ | nix.PROT.WRITE,
         nix.MAP{
@@ -93,10 +107,14 @@ pub fn slice(self: *Self) []nix.iovec {
     return self.iovecs[self.start..(self.start + self.len)];
 }
 
+const TestSystem = struct {
+    const memory = @import("../memory.zig");
+    var M align(memory.HOST_PAGE_SIZE) = [_]u8{0} ** 4096;
+};
 test "test_iov_ring_push_back" {
     const System = nix.System;
 
-    var ir = Self.init(System);
+    var ir = Self.init(System, TestSystem.M[0..]);
     try std.testing.expectEqual(ir.start, 0);
     try std.testing.expectEqual(ir.len, 0);
     try std.testing.expectEqual(ir.capacity, 0);
@@ -115,7 +133,7 @@ test "test_iov_ring_push_back" {
 test "test_iov_ring_pop_front_n" {
     const System = nix.System;
 
-    var ir = Self.init(System);
+    var ir = Self.init(System, TestSystem.M[0..]);
 
     for (0..256) |_| {
         ir.push_back(.{ .base = undefined, .len = 1 });
@@ -135,7 +153,7 @@ test "test_iov_ring_pop_front_n" {
 test "test_iov_ring_slice" {
     const System = nix.System;
 
-    var ir = Self.init(System);
+    var ir = Self.init(System, TestSystem.M[0..]);
 
     for (0..128) |_| {
         ir.push_back(.{ .base = undefined, .len = 1 });
