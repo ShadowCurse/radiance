@@ -46,6 +46,7 @@ pub const VirtioNet = struct {
         mac: ?[6]u8,
         memory: *Memory.Guest,
         mmio_info: Mmio.Resources.MmioVirtioInfo,
+        iov_ring_memory: []align(Memory.HOST_PAGE_SIZE) u8,
     ) void {
         const tun = nix.assert(@src(), System, "open", .{
             "/dev/net/tun",
@@ -97,7 +98,7 @@ pub const VirtioNet = struct {
             virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
         }
 
-        const rx_chains = RxChains.init(System);
+        const rx_chains = RxChains.init(System, iov_ring_memory);
         const tx_chain = TxChain.init();
 
         self.memory = memory;
@@ -258,9 +259,9 @@ const RxChains = struct {
     iovec_ring: IovRing,
     chain_infos: RingBuffer(ChainInfo, IovRing.MAX_IOVECS),
 
-    pub fn init(comptime System: type) Self {
+    pub fn init(comptime System: type, iov_ring_memory: []align(Memory.HOST_PAGE_SIZE) u8) Self {
         return .{
-            .iovec_ring = .init(System),
+            .iovec_ring = .init(System, iov_ring_memory),
             .chain_infos = .empty,
         };
     }

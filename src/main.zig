@@ -20,6 +20,7 @@ const VhostNet = @import("devices/vhost-net.zig").VhostNet;
 const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
 
 const Ecam = @import("virtio/ecam.zig");
+const IovRing = @import("virtio/iov_ring.zig");
 const EventLoop = @import("event_loop.zig");
 const EventFd = @import("eventfd.zig");
 const CmdLine = @import("cmdline.zig");
@@ -117,6 +118,8 @@ pub fn main() !void {
     // mmio region
     const mmio_regions_bytes = Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE *
         (block_mmio_count + block_mmio_io_uring_count + net_mmio_count + net_vhost_mmio_count);
+    // These will be used to back iov_ring types in the VirtioNet devices
+    const net_iov_ring_bytes = IovRing.BACKING_SIZE * net_mmio_count;
 
     // Need to be 8 bytes aligned, so they go after host page aligned items
     const vcpu_bytes = @sizeOf(Vcpu) * config.machine.vcpus;
@@ -135,6 +138,7 @@ pub fn main() !void {
     const permanent_memory_size =
         memory_bytes +
         mmio_regions_bytes +
+        net_iov_ring_bytes +
         vcpu_bytes +
         thread_bytes +
         block_mmio_bytes +
@@ -154,6 +158,9 @@ pub fn main() !void {
 
     var mmio_regions: []align(Memory.HOST_PAGE_SIZE) u8 = @alignCast(pm[0..mmio_regions_bytes]);
     pm = @alignCast(pm[mmio_regions_bytes..]);
+
+    const net_iov_ring: []align(Memory.HOST_PAGE_SIZE) u8 = @alignCast(pm[0..net_iov_ring_bytes]);
+    pm = @alignCast(pm[net_iov_ring_bytes..]);
 
     const vcpus: []Vcpu = @ptrCast(pm[0..vcpu_bytes]);
     pm = @alignCast(pm[vcpu_bytes..]);
@@ -341,6 +348,7 @@ pub fn main() !void {
 
     try create_net_mmio(
         net,
+        net_iov_ring,
         &vm,
         &mmio,
         &memory,
@@ -662,6 +670,7 @@ fn create_block_pci_io_uring(
 
 fn create_net_mmio(
     nets: []VirtioNet,
+    net_iov_ring: []align(Memory.HOST_PAGE_SIZE) u8,
     vm: *Vm,
     mmio: *Mmio,
     memory: *Memory.Guest,
@@ -670,10 +679,13 @@ fn create_net_mmio(
     configs: []const config_parser.NetConfig,
 ) !void {
     var index: u8 = 0;
+    var iov_ring = net_iov_ring;
     for (configs) |*config| {
         if (!config.vhost) {
             const net = &nets[index];
             const mmio_info = mmio_infos[index];
+            const iov_ring_memory = iov_ring[0..IovRing.BACKING_SIZE];
+            iov_ring = iov_ring[IovRing.BACKING_SIZE..];
             index += 1;
 
             net.init(
@@ -683,6 +695,7 @@ fn create_net_mmio(
                 config.mac,
                 memory,
                 mmio_info,
+                iov_ring_memory,
             );
             mmio.add_device_virtio(.{
                 .ptr = net,
