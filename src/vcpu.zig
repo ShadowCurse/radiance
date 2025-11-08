@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
+const arch = @import("arch.zig");
 const Kvm = @import("kvm.zig");
 const Mmio = @import("mmio.zig");
 const Vm = @import("vm.zig");
@@ -29,10 +30,8 @@ pub const VCPU_SIGNAL = nix.SIGUSR1;
 
 fd: nix.fd_t,
 kvm_run: *nix.kvm_run,
-index: u64,
+tid: u32,
 exit_event: EventFd,
-// Needed for signal handler to kick vcpu from the KVM_RUN loop
-threadlocal var self_ref: ?*Self = null;
 
 const Self = @This();
 
@@ -57,7 +56,6 @@ pub fn sys_reg_id(op0: u64, op1: u64, crn: u64, crm: u64, op2: u64) u64 {
 
 fn signal_handler(s: c_int) callconv(.c) void {
     _ = s;
-    Self.self_ref.?.kvm_run.immediate_exit = 1;
 }
 
 fn set_thread_handler(comptime System: type) void {
@@ -69,9 +67,10 @@ fn set_thread_handler(comptime System: type) void {
     _ = nix.assert(@src(), System, "sigaction", .{ VCPU_SIGNAL, &sigact, null });
 }
 
-pub fn kick_threads(comptime System: type) void {
-    const pid = System.getpid();
-    _ = System.kill(pid, VCPU_SIGNAL);
+pub fn pause(self: *const Self, comptime System: type) void {
+    self.kvm_run.immediate_exit = 1;
+    arch.load_store_barrier();
+    _ = System.tkill(self.tid, VCPU_SIGNAL);
 }
 
 pub fn init(
@@ -117,7 +116,7 @@ pub fn init(
     return Self{
         .fd = fd,
         .kvm_run = @ptrCast(kvm_run.ptr),
-        .index = index,
+        .tid = 0,
         .exit_event = exit_event,
     };
 }
@@ -157,22 +156,27 @@ pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
         switch (e) {
             .INTR => return false,
             else => {
-                log.err(@src(), "ioctl call error: {}:{}", .{ r, nix.errno(r) });
-                self.exit_event.write(1);
+                log.err(
+                    @src(),
+                    "[VCPU: {d}] ioctl call error: {}:{}",
+                    .{ self.tid, r, e },
+                );
+                self.exit_event.write(System, 1);
+                return false;
             },
         }
     }
 
     switch (self.kvm_run.exit_reason) {
-        nix.KVM_EXIT_IO => log.info(@src(), "Got KVM_EXIT_IO", .{}),
-        nix.KVM_EXIT_HLT => log.info(@src(), "Got KVM_EXIT_HLT", .{}),
+        nix.KVM_EXIT_IO => log.info(@src(), "[VCPU: {d}] Got KVM_EXIT_IO", .{self.tid}),
+        nix.KVM_EXIT_HLT => log.info(@src(), "[VCPU: {d}] Got KVM_EXIT_HLT", .{self.tid}),
         nix.KVM_EXIT_SYSTEM_EVENT => {
             switch (self.kvm_run.kvm_exit_info.system_event.type) {
                 nix.KVM_SYSTEM_EVENT_SHUTDOWN => {
                     log.info(
                         @src(),
-                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN",
-                        .{},
+                        "[VCPU: {d}] Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SHUTDOWN",
+                        .{self.tid},
                     );
                     self.exit_event.write(System, 1);
                     return false;
@@ -180,8 +184,8 @@ pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
                 nix.KVM_SYSTEM_EVENT_RESET => {
                     log.info(
                         @src(),
-                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_RESET",
-                        .{},
+                        "[VCPU: {d}] Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_RESET",
+                        .{self.tid},
                     );
                     self.exit_event.write(System, 1);
                     return false;
@@ -189,8 +193,8 @@ pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
                 nix.KVM_SYSTEM_EVENT_CRASH => {
                     log.info(
                         @src(),
-                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_CRASH",
-                        .{},
+                        "[VCPU: {d}] Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_CRASH",
+                        .{self.tid},
                     );
                     self.exit_event.write(System, 1);
                     return false;
@@ -198,19 +202,23 @@ pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
                 nix.KVM_SYSTEM_EVENT_WAKEUP => {
                     log.info(
                         @src(),
-                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_WAKEUP",
-                        .{},
+                        "[VCPU: {d}] Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_WAKEUP",
+                        .{self.tid},
                     );
                 },
                 nix.KVM_SYSTEM_EVENT_SUSPEND => {
                     log.info(
                         @src(),
-                        "Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SUSPEND",
-                        .{},
+                        "[VCPU: {d}] Got KVM_EXIT_SYSTEM_EVENT with type: KVM_SYSTEM_EVENT_SUSPEND",
+                        .{self.tid},
                     );
                 },
                 else => |x| {
-                    log.info(@src(), "Got KVM_EXIT_SYSTEM_EVENT with unknown type: {}", .{x});
+                    log.info(
+                        @src(),
+                        "[VCPU: {d}] Got KVM_EXIT_SYSTEM_EVENT with unknown type: {}",
+                        .{ self.tid, x },
+                    );
                 },
             }
         },
@@ -229,10 +237,13 @@ pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
         },
         nix.KVM_EXIT_UNKNOWNW => log.info(
             @src(),
-            "Got KVM_EXIT_UNKNOWNW: hardware_exit_reason: 0x{x}",
-            .{self.kvm_run.kvm_exit_info.hw.hardware_exit_reason},
+            "[VCPU: {d}] Got KVM_EXIT_UNKNOWNW: hardware_exit_reason: 0x{x}",
+            .{ self.tid, self.kvm_run.kvm_exit_info.hw.hardware_exit_reason },
         ),
-        else => |exit| log.info(@src(), "Got KVM_EXIT: {}", .{exit}),
+        else => |exit| {
+            log.info(@src(), "[VCPU: {d}] Got KVM_EXIT: {}", .{ self.tid, exit });
+            return false;
+        },
     }
     return true;
 }
@@ -244,8 +255,8 @@ pub fn run_threaded(
     mmio: *Mmio,
     start_time: *const std.time.Instant,
 ) void {
-    self_ref = self;
     Self.set_thread_handler(System);
+    self.tid = std.Thread.getCurrentId();
     barrier.wait();
     const now = std.time.Instant.now() catch unreachable;
     log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / std.time.ns_per_us});

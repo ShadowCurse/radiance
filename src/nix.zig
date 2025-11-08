@@ -9,7 +9,9 @@ pub const System = struct {
     pub const ftruncate = std.posix.ftruncate;
     pub const eventfd = std.posix.eventfd;
     pub const getpid = std.os.linux.getpid;
-    pub const kill = std.os.linux.kill;
+    pub fn tkill(tid: u32, sig: i32) usize {
+        return std.os.linux.tkill(@bitCast(tid), sig);
+    }
     pub const tcgetattr = std.os.linux.tcgetattr;
     pub const tcsetattr = std.os.linux.tcsetattr;
     pub const mmap = std.posix.mmap;
@@ -120,6 +122,7 @@ pub const KVM_GET_ONE_REG = _IOW(KVMIO, 0xab, kvm_one_reg);
 pub const KVM_SET_ONE_REG = _IOW(KVMIO, 0xac, kvm_one_reg);
 
 pub const KVM_SET_DEVICE_ATTR = _IOW(KVMIO, 0xe1, kvm_device_attr);
+pub const KVM_GET_DEVICE_ATTR = _IOW(KVMIO, 0xe2, kvm_device_attr);
 pub const KVM_VGIC_V2_DIST_SIZE = 0x1000;
 pub const KVM_VGIC_V2_CPU_SIZE = 0x2000;
 pub const KVM_VGIC_V2_ADDR_TYPE_DIST = 0;
@@ -129,6 +132,8 @@ pub const KVM_DEV_ARM_VGIC_GRP_ADDR = 0;
 pub const KVM_DEV_ARM_VGIC_GRP_NR_IRQS = 3;
 pub const KVM_DEV_ARM_VGIC_GRP_CTRL = 4;
 pub const KVM_DEV_ARM_VGIC_CTRL_INIT = 0;
+pub const KVM_DEV_ARM_VGIC_GRP_DIST_REGS = 1;
+pub const KVM_DEV_ARM_VGIC_GRP_CPU_REGS = 2;
 
 //
 // MSI_TYPER:
@@ -668,6 +673,7 @@ test "test_bindings" {
     try std.testing.expectEqual(KVM_SET_ONE_REG, C.KVM_SET_ONE_REG);
 
     try std.testing.expectEqual(KVM_SET_DEVICE_ATTR, C.KVM_SET_DEVICE_ATTR);
+    try std.testing.expectEqual(KVM_GET_DEVICE_ATTR, C.KVM_GET_DEVICE_ATTR);
     try std.testing.expectEqual(KVM_VGIC_V2_DIST_SIZE, C.KVM_VGIC_V2_DIST_SIZE);
     try std.testing.expectEqual(KVM_VGIC_V2_CPU_SIZE, C.KVM_VGIC_V2_CPU_SIZE);
     try std.testing.expectEqual(KVM_VGIC_V2_ADDR_TYPE_DIST, C.KVM_VGIC_V2_ADDR_TYPE_DIST);
