@@ -44,6 +44,7 @@ pub const log_options = log.Options{
 
 const Args = struct {
     config_path: ?[]const u8 = null,
+    save_state: bool = false,
 };
 
 // All of these types are allocated from a single arena. In order to easily determine
@@ -135,7 +136,9 @@ pub fn main() !void {
         @sizeOf(Ecam.Type0ConfigurationHeader) * pci_devices +
         @sizeOf(Ecam.HeaderBarSizes) * pci_devices;
 
-    const permanent_memory_size =
+    const gicv2_state_bytes = @sizeOf(Gicv2.State);
+
+    var permanent_memory_size =
         memory_bytes +
         mmio_regions_bytes +
         net_iov_ring_bytes +
@@ -148,46 +151,57 @@ pub fn main() !void {
         net_bytes +
         vhost_net_bytes +
         ecam_bytes;
+    if (args.save_state)
+        permanent_memory_size += gicv2_state_bytes;
 
     log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
     const permanent_memory: Memory.Permanent = .init(nix.System, permanent_memory_size);
-    var pm: []align(8) u8 = permanent_memory.mem;
+    var pm: []u8 = permanent_memory.mem;
 
     var memory: Memory.Guest = .{ .mem = @alignCast(pm[0..memory_bytes]) };
-    pm = @alignCast(pm[memory_bytes..]);
+    pm = pm[memory_bytes..];
 
     var mmio_regions: []align(Memory.HOST_PAGE_SIZE) u8 = @alignCast(pm[0..mmio_regions_bytes]);
-    pm = @alignCast(pm[mmio_regions_bytes..]);
+    pm = pm[mmio_regions_bytes..];
 
     const net_iov_ring: []align(Memory.HOST_PAGE_SIZE) u8 = @alignCast(pm[0..net_iov_ring_bytes]);
-    pm = @alignCast(pm[net_iov_ring_bytes..]);
+    pm = pm[net_iov_ring_bytes..];
 
-    const vcpus: []Vcpu = @ptrCast(pm[0..vcpu_bytes]);
-    pm = @alignCast(pm[vcpu_bytes..]);
+    const vcpus: []Vcpu = @ptrCast(@alignCast(pm[0..vcpu_bytes]));
+    pm = pm[vcpu_bytes..];
 
-    const vcpu_threads: []std.Thread = @ptrCast(pm[0..thread_bytes]);
-    pm = @alignCast(pm[thread_bytes..]);
+    const vcpu_threads: []std.Thread = @ptrCast(@alignCast(pm[0..thread_bytes]));
+    pm = pm[thread_bytes..];
 
-    const block_mmio: []BlockMmio = @ptrCast(pm[0..block_mmio_bytes]);
-    pm = @alignCast(pm[block_mmio_bytes..]);
+    const block_mmio: []BlockMmio = @ptrCast(@alignCast(pm[0..block_mmio_bytes]));
+    pm = pm[block_mmio_bytes..];
 
-    const block_pci: []BlockPci = @ptrCast(pm[0..block_pci_bytes]);
-    pm = @alignCast(pm[block_pci_bytes..]);
+    const block_pci: []BlockPci = @ptrCast(@alignCast(pm[0..block_pci_bytes]));
+    pm = pm[block_pci_bytes..];
 
-    const block_mmio_io_uring: []BlockMmioIoUring = @ptrCast(pm[0..block_mmio_io_uring_bytes]);
-    pm = @alignCast(pm[block_mmio_io_uring_bytes..]);
+    const block_mmio_io_uring: []BlockMmioIoUring =
+        @ptrCast(@alignCast(pm[0..block_mmio_io_uring_bytes]));
+    pm = pm[block_mmio_io_uring_bytes..];
 
-    const block_pci_io_uring: []BlockPciIoUring = @ptrCast(pm[0..block_pci_io_uring_bytes]);
-    pm = @alignCast(pm[block_pci_io_uring_bytes..]);
+    const block_pci_io_uring: []BlockPciIoUring =
+        @ptrCast(@alignCast(pm[0..block_pci_io_uring_bytes]));
+    pm = pm[block_pci_io_uring_bytes..];
 
-    const net: []VirtioNet = @ptrCast(pm[0..net_bytes]);
-    pm = @alignCast(pm[net_bytes..]);
+    const net: []VirtioNet = @ptrCast(@alignCast(pm[0..net_bytes]));
+    pm = pm[net_bytes..];
 
-    const vhost_net: []VhostNet = @ptrCast(pm[0..vhost_net_bytes]);
-    pm = @alignCast(pm[vhost_net_bytes..]);
+    const vhost_net: []VhostNet = @ptrCast(@alignCast(pm[0..vhost_net_bytes]));
+    pm = pm[vhost_net_bytes..];
 
-    const ecam_memory: []align(8) u8 = @ptrCast(pm[0..ecam_bytes]);
-    pm = @alignCast(pm[ecam_bytes..]);
+    const ecam_memory: []align(8) u8 = @ptrCast(@alignCast(pm[0..ecam_bytes]));
+    pm = pm[ecam_bytes..];
+
+    var gicv2_state: *Gicv2.State = undefined;
+    if (args.save_state) {
+        gicv2_state = @ptrCast(@alignCast(pm[0..gicv2_state_bytes]));
+        pm = pm[gicv2_state_bytes..];
+    }
+    log.assert(@src(), pm.len == 0, "Not all permanent bytes were used. {d} left", .{pm.len});
 
     var load_result = memory.load_linux_kernel(nix.System, config.kernel.path);
     const tmp_alloc = load_result.post_kernel_allocator.allocator();
@@ -209,7 +223,7 @@ pub fn main() !void {
         vcpu.* = .init(nix.System, &vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
 
     // create interrupt controller
-    Gicv2.init(nix.System, &vm);
+    const gicv2: Gicv2 = .init(nix.System, &vm);
 
     // attach pmem
     var last_addr = Memory.align_addr(memory.last_addr(), Pmem.ALIGNMENT);
@@ -478,6 +492,11 @@ pub fn main() !void {
 
         // start event loop
         el.run(nix.System);
+    }
+
+    if (args.save_state) {
+        for (vcpus) |vcpu| vcpu.pause(nix.System);
+        gicv2.save_state(nix.System, gicv2_state);
     }
 
     log.info(@src(), "Shutting down", .{});
