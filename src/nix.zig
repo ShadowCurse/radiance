@@ -31,6 +31,10 @@ pub const System = struct {
     pub const io_uring_register = std.os.linux.io_uring_register;
     pub const io_uring_enter = std.os.linux.io_uring_enter;
 
+    pub const socket = std.os.linux.socket;
+    pub const bind = std.os.linux.bind;
+    pub const listen = std.os.linux.listen;
+
     pub fn statx(fd: fd_t) !Statx {
         var stx = std.mem.zeroes(Statx);
         const rcx = std.os.linux.statx(
