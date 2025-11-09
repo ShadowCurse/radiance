@@ -136,6 +136,8 @@ pub fn main() !void {
         @sizeOf(Ecam.Type0ConfigurationHeader) * pci_devices +
         @sizeOf(Ecam.HeaderBarSizes) * pci_devices;
 
+    const vcpu_reg_list_bytes = @sizeOf(Vcpu.RegList);
+    const vcpu_regs_bytes = config.machine.vcpus * Vcpu.PER_VCPU_REGS_BYTES;
     const gicv2_state_bytes = @sizeOf(Gicv2.State);
 
     var permanent_memory_size =
@@ -152,7 +154,7 @@ pub fn main() !void {
         vhost_net_bytes +
         ecam_bytes;
     if (args.save_state)
-        permanent_memory_size += gicv2_state_bytes;
+        permanent_memory_size += vcpu_reg_list_bytes + vcpu_regs_bytes + gicv2_state_bytes;
 
     log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
     const permanent_memory: Memory.Permanent = .init(nix.System, permanent_memory_size);
@@ -196,8 +198,16 @@ pub fn main() !void {
     const ecam_memory: []align(8) u8 = @ptrCast(@alignCast(pm[0..ecam_bytes]));
     pm = pm[ecam_bytes..];
 
+    var vcpu_reg_list: *Vcpu.RegList = undefined;
+    var vcpu_regs: []u8 = undefined;
     var gicv2_state: *Gicv2.State = undefined;
     if (args.save_state) {
+        vcpu_reg_list = @ptrCast(@alignCast(pm[0..vcpu_reg_list_bytes]));
+        pm = pm[vcpu_reg_list_bytes..];
+
+        vcpu_regs = @ptrCast(@alignCast(pm[0..vcpu_regs_bytes]));
+        pm = pm[vcpu_regs_bytes..];
+
         gicv2_state = @ptrCast(@alignCast(pm[0..gicv2_state_bytes]));
         pm = pm[gicv2_state_bytes..];
     }
@@ -497,6 +507,15 @@ pub fn main() !void {
     if (args.save_state) {
         for (vcpus) |vcpu| vcpu.pause(nix.System);
         gicv2.save_state(nix.System, gicv2_state);
+
+        vcpus[0].get_reg_list(nix.System, vcpu_reg_list);
+        var regs_bytes = vcpu_regs;
+        for (vcpus, 0..) |vcpu, i| {
+            log.debug(@src(), "Saving state for vcpu {d}", .{i});
+            const used = vcpu.save_regs(nix.System, vcpu_reg_list, regs_bytes);
+            regs_bytes = regs_bytes[used..];
+        }
+        log.debug(@src(), "Unused vcpu state bytes: {d}", .{regs_bytes.len});
     }
 
     log.info(@src(), "Shutting down", .{});
