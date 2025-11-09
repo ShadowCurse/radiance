@@ -29,6 +29,7 @@ const Gicv2 = @import("gicv2.zig");
 const Kvm = @import("kvm.zig");
 const Memory = @import("memory.zig");
 const Mmio = @import("mmio.zig");
+const Api = @import("api.zig");
 const Vcpu = @import("vcpu.zig");
 const Vm = @import("vm.zig");
 const IoUring = @import("io_uring.zig");
@@ -308,6 +309,18 @@ pub fn main() !void {
     const ecam: *Ecam = try .init(ecam_memory, pci_devices);
     var mmio: Mmio = .init(ecam, mmio_resources.virtio_address_start);
     var el: EventLoop = .init(nix.System);
+    var vcpu_barrier: std.Thread.ResetEvent = .{};
+
+    var api: Api = undefined;
+    if (config.api.socket_path) |socket_path| {
+        api = .init(nix.System, socket_path, vcpus, vcpu_threads, &vcpu_barrier);
+        el.add_event(
+            nix.System,
+            api.fd,
+            @ptrCast(&Api.handle_default),
+            &api,
+        );
+    }
 
     // configure terminal for uart in/out
     const state = if (config.uart.enabled) configure_terminal(nix.System) else undefined;
@@ -534,12 +547,11 @@ pub fn main() !void {
     log.debug(@src(), "starting vcpu threads", .{});
     // TODO this does linux futex syscalls. Maybe can be replaced
     // by simple atomic value?
-    var barrier: std.Thread.ResetEvent = .{};
     for (vcpu_threads, vcpus) |*t, *vcpu| {
         t.* = try nix.System.spawn_thread(
             .{},
             Vcpu.run_threaded,
-            .{ vcpu, nix.System, &barrier, &mmio, &start_time },
+            .{ vcpu, nix.System, &vcpu_barrier, &mmio, &start_time },
         );
     }
 
@@ -550,7 +562,7 @@ pub fn main() !void {
             gdb_config.socket_path,
             vcpus,
             vcpu_threads,
-            &barrier,
+            &vcpu_barrier,
             &memory,
             &mmio,
             &el,
@@ -566,13 +578,14 @@ pub fn main() !void {
         el.run(nix.System);
     } else {
         // start vcpus
-        barrier.set();
+        vcpu_barrier.set();
 
         // start event loop
         el.run(nix.System);
     }
 
     if (args.save_state) {
+        vcpu_barrier.reset();
         for (vcpus) |vcpu| vcpu.pause(nix.System);
         gicv2.save_state(nix.System, gicv2_state);
 
