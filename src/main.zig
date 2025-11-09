@@ -233,6 +233,9 @@ pub fn main() !void {
     var config_devices_state: []u8 = undefined;
     if (args.save_state) {
         vcpu_reg_list = @ptrCast(@alignCast(pm[0..vcpu_reg_list_bytes]));
+        // First value is the number of ids in the list. Set to 0 to
+        // be able to detect when list needs to be queried.
+        vcpu_reg_list[0] = 0;
         pm = pm[vcpu_reg_list_bytes..];
 
         vcpu_regs = @ptrCast(@alignCast(pm[0..vcpu_regs_bytes]));
@@ -313,7 +316,18 @@ pub fn main() !void {
 
     var api: Api = undefined;
     if (config.api.socket_path) |socket_path| {
-        api = .init(nix.System, socket_path, vcpus, vcpu_threads, &vcpu_barrier);
+        api = .init(
+            nix.System,
+            socket_path,
+            vcpus,
+            vcpu_threads,
+            &vcpu_barrier,
+            vcpu_reg_list,
+            vcpu_regs,
+            gicv2,
+            gicv2_state,
+            permanent_memory,
+        );
         el.add_event(
             nix.System,
             api.fd,
@@ -582,21 +596,6 @@ pub fn main() !void {
 
         // start event loop
         el.run(nix.System);
-    }
-
-    if (args.save_state) {
-        vcpu_barrier.reset();
-        for (vcpus) |vcpu| vcpu.pause(nix.System);
-        gicv2.save_state(nix.System, gicv2_state);
-
-        vcpus[0].get_reg_list(nix.System, vcpu_reg_list);
-        var regs_bytes = vcpu_regs;
-        for (vcpus, 0..) |vcpu, i| {
-            log.debug(@src(), "Saving state for vcpu {d}", .{i});
-            const used = vcpu.save_regs(nix.System, vcpu_reg_list, regs_bytes);
-            regs_bytes = regs_bytes[used..];
-        }
-        log.debug(@src(), "Unused vcpu state bytes: {d}", .{regs_bytes.len});
     }
 
     log.info(@src(), "Shutting down", .{});
