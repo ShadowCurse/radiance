@@ -7,10 +7,29 @@ const Mmio = @import("mmio.zig");
 const Vm = @import("vm.zig");
 const EventFd = @import("eventfd.zig");
 
-pub const PC = Self.core_reg_id("pc");
-pub const REGS0 = Self.core_reg_id("regs");
-pub const PSTATE = Self.core_reg_id("pstate");
-pub const MPIDR_EL1 = Self.sys_reg_id(3, 0, 0, 0, 5);
+fn core_reg_id(comptime name: []const u8) u64 {
+    const offset = @offsetOf(nix.kvm_regs, "regs") + @offsetOf(nix.user_pt_regs, name);
+    return nix.KVM_REG_ARM64 |
+        nix.KVM_REG_SIZE_U64 |
+        nix.KVM_REG_ARM_CORE |
+        (offset / @sizeOf(u32));
+}
+
+fn sys_reg_id(op0: u64, op1: u64, crn: u64, crm: u64, op2: u64) u64 {
+    return nix.KVM_REG_ARM64 |
+        nix.KVM_REG_SIZE_U64 |
+        nix.KVM_REG_ARM64_SYSREG |
+        ((op0 << nix.KVM_REG_ARM64_SYSREG_OP0_SHIFT) & nix.KVM_REG_ARM64_SYSREG_OP0_MASK) |
+        ((op1 << nix.KVM_REG_ARM64_SYSREG_OP1_SHIFT) & nix.KVM_REG_ARM64_SYSREG_OP1_MASK) |
+        ((crn << nix.KVM_REG_ARM64_SYSREG_CRN_SHIFT) & nix.KVM_REG_ARM64_SYSREG_CRN_MASK) |
+        ((crm << nix.KVM_REG_ARM64_SYSREG_CRM_SHIFT) & nix.KVM_REG_ARM64_SYSREG_CRM_MASK) |
+        ((op2 << nix.KVM_REG_ARM64_SYSREG_OP2_SHIFT) & nix.KVM_REG_ARM64_SYSREG_OP2_MASK);
+}
+
+pub const PC = core_reg_id("pc");
+pub const REGS0 = core_reg_id("regs");
+pub const PSTATE = core_reg_id("pstate");
+pub const MPIDR_EL1 = sys_reg_id(3, 0, 0, 0, 5);
 
 /// PSR (Processor State Register) bits.
 /// arch/arm64/include/uapi/asm/ptrace.h.
@@ -26,6 +45,15 @@ pub const PSTATE_FAULT_BITS_64: u64 = PSR_MODE_EL1h |
     PSR_I_BIT |
     PSR_D_BIT;
 
+pub const REG_LIST_SIZE = 500;
+// The FAM structure will include 1 additional u64 to store the number of entries
+// in the array.
+pub const RegList = [REG_LIST_SIZE + 1]u64;
+// 4K page can hold 512 8byte registers. This should be enough to store state of vcpu
+// since KVM only has around 300 registers with sizes of 4,8,16 bytes.
+// Regs of all sizes wil be stored in a single byte slice.
+pub const PER_VCPU_REGS_BYTES = 4096;
+
 pub const VCPU_SIGNAL = nix.SIGUSR1;
 
 fd: nix.fd_t,
@@ -34,25 +62,6 @@ tid: u32,
 exit_event: EventFd,
 
 const Self = @This();
-
-pub fn core_reg_id(comptime name: []const u8) u64 {
-    const offset = @offsetOf(nix.kvm_regs, "regs") + @offsetOf(nix.user_pt_regs, name);
-    return nix.KVM_REG_ARM64 |
-        nix.KVM_REG_SIZE_U64 |
-        nix.KVM_REG_ARM_CORE |
-        (offset / @sizeOf(u32));
-}
-
-pub fn sys_reg_id(op0: u64, op1: u64, crn: u64, crm: u64, op2: u64) u64 {
-    return nix.KVM_REG_ARM64 |
-        nix.KVM_REG_SIZE_U64 |
-        nix.KVM_REG_ARM64_SYSREG |
-        ((op0 << nix.KVM_REG_ARM64_SYSREG_OP0_SHIFT) & nix.KVM_REG_ARM64_SYSREG_OP0_MASK) |
-        ((op1 << nix.KVM_REG_ARM64_SYSREG_OP1_SHIFT) & nix.KVM_REG_ARM64_SYSREG_OP1_MASK) |
-        ((crn << nix.KVM_REG_ARM64_SYSREG_CRN_SHIFT) & nix.KVM_REG_ARM64_SYSREG_CRN_MASK) |
-        ((crm << nix.KVM_REG_ARM64_SYSREG_CRM_SHIFT) & nix.KVM_REG_ARM64_SYSREG_CRM_MASK) |
-        ((op2 << nix.KVM_REG_ARM64_SYSREG_OP2_SHIFT) & nix.KVM_REG_ARM64_SYSREG_OP2_MASK);
-}
 
 fn signal_handler(s: c_int) callconv(.c) void {
     _ = s;
@@ -147,6 +156,81 @@ pub fn get_reg(self: *const Self, comptime System: type, reg_id: u64) u64 {
     });
     log.debug(@src(), "vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
     return value;
+}
+
+pub fn get_reg_list(self: *const Self, comptime System: type, reg_list: *RegList) void {
+    reg_list[0] = REG_LIST_SIZE;
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_GET_REG_LIST,
+        @intFromPtr(reg_list),
+    });
+}
+
+fn reg_size(reg_id: u64) usize {
+    const shift: u6 = @truncate((reg_id & nix.KVM_REG_SIZE_MASK) >> nix.KVM_REG_SIZE_SHIFT);
+    return @as(usize, 1) << shift;
+}
+
+pub fn save_regs(
+    self: *const Self,
+    comptime System: type,
+    reg_list: *const RegList,
+    reg_bytes: []u8,
+) usize {
+    var bytes = reg_bytes;
+    var value: u2048 = 0;
+    for (0..reg_list[0]) |i| {
+        const reg_id = reg_list[1 + i];
+        const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_GET_ONE_REG,
+            @intFromPtr(&kor),
+        });
+
+        const rs = reg_size(reg_id);
+        log.debug(
+            @src(),
+            "Got reg 0x{x} size: {d}, remaining bytes: {d}",
+            .{ reg_id, rs, bytes.len },
+        );
+        const value_bytes: []u8 = @ptrCast(&value);
+        @memcpy(bytes[0..rs], value_bytes[@sizeOf(u2048) - rs .. @sizeOf(u2048)]);
+        bytes = bytes[rs..];
+    }
+    return reg_bytes.len - bytes.len;
+}
+
+pub fn restore_regs(
+    self: *const Self,
+    comptime System: type,
+    reg_list: *const RegList,
+    reg_bytes: []const u8,
+) usize {
+    var bytes = reg_bytes;
+    var value: u2048 = 0;
+    for (0..reg_list[0]) |i| {
+        const reg_id = reg_list[1 + i];
+
+        const rs = reg_size(reg_id);
+        log.debug(
+            @src(),
+            "Got reg 0x{x} size: {d}, remaining bytes: {d}",
+            .{ reg_id, rs, bytes.len },
+        );
+        const value_bytes: []u8 = @ptrCast(&value);
+        @memcpy(value_bytes[@sizeOf(u2048) - rs .. @sizeOf(u2048)], bytes[0..rs]);
+        bytes = bytes[rs..];
+
+        const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_SET_ONE_REG,
+            @intFromPtr(&kor),
+        });
+    }
+    return reg_bytes.len - bytes.len;
 }
 
 pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {

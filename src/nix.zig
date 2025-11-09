@@ -120,6 +120,7 @@ pub const KVM_IOEVENTFD = _IOW(KVMIO, 0x79, kvm_ioeventfd);
 pub const KVM_RUN = _IO(KVMIO, 0x80);
 pub const KVM_GET_ONE_REG = _IOW(KVMIO, 0xab, kvm_one_reg);
 pub const KVM_SET_ONE_REG = _IOW(KVMIO, 0xac, kvm_one_reg);
+pub const KVM_GET_REG_LIST = _IOWR(KVMIO, @as(c_int, 0xb0), kvm_reg_list);
 
 pub const KVM_SET_DEVICE_ATTR = _IOW(KVMIO, 0xe1, kvm_device_attr);
 pub const KVM_GET_DEVICE_ATTR = _IOW(KVMIO, 0xe2, kvm_device_attr);
@@ -179,6 +180,8 @@ pub const KVM_REG_ARM64_SYSREG_CRM_MASK = 0x0000000000000078;
 pub const KVM_REG_ARM64_SYSREG_CRM_SHIFT = 3;
 pub const KVM_REG_ARM64_SYSREG_OP2_MASK = 0x0000000000000007;
 pub const KVM_REG_ARM64_SYSREG_OP2_SHIFT = 0;
+pub const KVM_REG_SIZE_SHIFT = 52;
+pub const KVM_REG_SIZE_MASK = 0xf0000000000000;
 
 pub const KVM_EXIT_UNKNOWNW = 0;
 pub const KVM_EXIT_IO = 2;
@@ -274,6 +277,11 @@ pub const kvm_run = extern struct {
 pub const kvm_one_reg = extern struct {
     id: u64 = 0,
     addr: u64 = 0,
+};
+// This is a FAM struct with array of u64 at the end
+pub const kvm_reg_list = extern struct {
+    n: u64 = 0,
+    // regs: []u64,
 };
 pub const user_pt_regs = extern struct {
     regs: [31]u64 = .{0} ** 31,
@@ -603,7 +611,7 @@ pub inline fn assert(
                 "'{s}' failed with error: {t}\nargs:" ++ args_fmt(@TypeOf(args)),
                 ttt,
             );
-            return @intCast(r);
+            return @bitCast(@as(u32, @truncate(r)));
         },
         else => comptime log.comptime_err(
             src,
@@ -671,6 +679,7 @@ test "test_bindings" {
     try std.testing.expectEqual(KVM_RUN, C.KVM_RUN);
     try std.testing.expectEqual(KVM_GET_ONE_REG, C.KVM_GET_ONE_REG);
     try std.testing.expectEqual(KVM_SET_ONE_REG, C.KVM_SET_ONE_REG);
+    try std.testing.expectEqual(KVM_GET_REG_LIST, C.KVM_GET_REG_LIST);
 
     try std.testing.expectEqual(KVM_SET_DEVICE_ATTR, C.KVM_SET_DEVICE_ATTR);
     try std.testing.expectEqual(KVM_GET_DEVICE_ATTR, C.KVM_GET_DEVICE_ATTR);
