@@ -344,5 +344,8 @@ pub fn run_threaded(
     barrier.wait();
     const now = std.time.Instant.now() catch unreachable;
     log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / std.time.ns_per_us});
-    while (self.run(System, mmio)) {}
+    while (true) {
+        while (self.run(System, mmio)) {}
+        barrier.wait();
+    }
 }
