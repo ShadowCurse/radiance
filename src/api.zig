@@ -2,6 +2,8 @@ const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const Vcpu = @import("vcpu.zig");
+const Gicv2 = @import("gicv2.zig");
+const Memory = @import("memory.zig");
 
 const KERNEL_BACKLOG = 128;
 
@@ -10,6 +12,11 @@ fd: nix.fd_t,
 vcpus: []Vcpu,
 vcpu_threads: []std.Thread,
 vcpus_barrier: *std.Thread.ResetEvent,
+vcpu_reg_list: *Vcpu.RegList,
+vcpu_regs: []u8,
+gicv2: Gicv2,
+gicv2_state: *Gicv2.State,
+permanent_memory: Memory.Permanent,
 
 const Self = @This();
 
@@ -19,6 +26,11 @@ pub fn init(
     vcpus: []Vcpu,
     vcpu_threads: []std.Thread,
     vcpus_barrier: *std.Thread.ResetEvent,
+    vcpu_reg_list: *Vcpu.RegList,
+    vcpu_regs: []u8,
+    gicv2: Gicv2,
+    gicv2_state: *Gicv2.State,
+    permanent_memory: Memory.Permanent,
 ) Self {
     const address = std.net.Address.initUnix(socket_path) catch |err| {
         log.panic(@src(), "Api socket name is too long: {t}", .{err});
@@ -37,6 +49,11 @@ pub fn init(
         .vcpus = vcpus,
         .vcpu_threads = vcpu_threads,
         .vcpus_barrier = vcpus_barrier,
+        .vcpu_reg_list = vcpu_reg_list,
+        .vcpu_regs = vcpu_regs,
+        .gicv2 = gicv2,
+        .gicv2_state = gicv2_state,
+        .permanent_memory = permanent_memory,
     };
 }
 
@@ -77,6 +94,36 @@ pub fn handle(self: *Self, comptime System: type) void {
         } else if (std.mem.eql(u8, msg, "resume")) {
             for (self.vcpus) |vcpu| vcpu.kvm_run.immediate_exit = 0;
             self.vcpus_barrier.set();
+        } else if (std.mem.startsWith(u8, msg, "snapshot ")) {
+            const snapshot_path = msg["snapshot ".len..];
+
+            const snapshot_fd = nix.assert(@src(), System, "open", .{
+                snapshot_path,
+                .{ .ACCMODE = .WRONLY, .CREAT = true },
+                0,
+            });
+            defer System.close(snapshot_fd);
+
+            self.gicv2.save_state(nix.System, self.gicv2_state);
+            // No reason to query list more than 1 time
+            if (self.vcpu_reg_list[0] == 0) {
+                log.debug(@src(), "Getting the register list", .{});
+                self.vcpus[0].get_reg_list(nix.System, self.vcpu_reg_list);
+            }
+            var regs_bytes = self.vcpu_regs;
+            for (self.vcpus, 0..) |vcpu, i| {
+                log.debug(@src(), "Saving state for vcpu {d}", .{i});
+                const used = vcpu.save_regs(nix.System, self.vcpu_reg_list, regs_bytes);
+                regs_bytes = regs_bytes[used..];
+            }
+            log.debug(@src(), "Unused vcpu state bytes: {d}", .{regs_bytes.len});
+
+            _ = nix.assert(
+                @src(),
+                System,
+                "write",
+                .{ snapshot_fd, self.permanent_memory.mem },
+            );
         }
     }
 }
