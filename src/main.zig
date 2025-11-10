@@ -48,9 +48,10 @@ const Args = struct {
     save_state: bool = false,
 };
 
-const ConfigState = extern struct {
+pub const ConfigState = extern struct {
     memory_mb: u32,
     vcpus: u32,
+    uart_enabled: bool,
     block_mmio_count: u8,
     block_pci_count: u8,
     block_mmio_io_uring_count: u8,
@@ -58,7 +59,6 @@ const ConfigState = extern struct {
     net_mmio_count: u8,
     net_vhost_mmio_count: u8,
     pmem_count: u8,
-    _: u8,
 };
 
 // All of these types are allocated from a single arena. In order to easily determine
@@ -77,6 +77,8 @@ fn check_aligments() void {
         Ecam,
         Ecam.Type0ConfigurationHeader,
         Ecam.HeaderBarSizes,
+        Uart,
+        Rtc,
     }) |t| {
         log.comptime_assert(
             @src(),
@@ -152,20 +154,25 @@ pub fn main() !void {
         @sizeOf(Ecam.Type0ConfigurationHeader) * pci_devices +
         @sizeOf(Ecam.HeaderBarSizes) * pci_devices;
 
+    var uart_bytes: usize = 0;
+    if (config.uart.enabled)
+        uart_bytes = @sizeOf(Uart);
+    const rtc_bytes: usize = @sizeOf(Rtc);
+
     // Additional bytes needed to store VM state
     // 8 byte aligned
     const vcpu_reg_list_bytes = @sizeOf(Vcpu.RegList);
     const vcpu_regs_bytes = config.machine.vcpus * Vcpu.PER_VCPU_REGS_BYTES;
     // 4 byte aligned
     const gicv2_state_bytes = @sizeOf(Gicv2.State);
-    // 4 byte aligned
-    const config_bytes: usize = @sizeOf(ConfigState);
     // 1 byte aligned
     var config_devices_bytes: usize = 0;
     // The only thing needed saving for devices are paths and read_only flags
     for (config.block.configs.items) |bc| config_devices_bytes += bc.path.len + 1 + 1;
     for (config.network.configs.items) |nc| config_devices_bytes += nc.dev_name.len + 1;
     for (config.pmem.configs.items) |pc| config_devices_bytes += pc.path.len + 1;
+    // 4 byte aligned
+    const config_bytes: usize = @sizeOf(ConfigState);
 
     var permanent_memory_size =
         memory_bytes +
@@ -179,10 +186,17 @@ pub fn main() !void {
         block_pci_io_uring_bytes +
         net_bytes +
         vhost_net_bytes +
-        ecam_bytes;
-    if (args.save_state)
+        ecam_bytes +
+        uart_bytes +
+        rtc_bytes;
+    if (args.save_state) {
         permanent_memory_size += vcpu_reg_list_bytes +
-            vcpu_regs_bytes + gicv2_state_bytes + config_bytes + config_devices_bytes;
+            vcpu_regs_bytes + gicv2_state_bytes + config_devices_bytes;
+
+        // Need to store ConfigState last and it needs aligment update;
+        permanent_memory_size = Memory.align_addr(permanent_memory_size, @alignOf(ConfigState));
+        permanent_memory_size += config_bytes;
+    }
 
     log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
     const permanent_memory: Memory.Permanent = .init(nix.System, permanent_memory_size);
@@ -226,6 +240,15 @@ pub fn main() !void {
     const ecam_memory: []align(8) u8 = @ptrCast(@alignCast(pm[0..ecam_bytes]));
     pm = pm[ecam_bytes..];
 
+    var uart: *Uart = undefined;
+    if (config.uart.enabled) {
+        uart = @ptrCast(@alignCast(pm[0..uart_bytes]));
+        pm = pm[uart_bytes..];
+    }
+    const rtc: *Rtc = @ptrCast(@alignCast(pm[0..rtc_bytes]));
+    rtc.* = .{};
+    pm = pm[rtc_bytes..];
+
     var vcpu_reg_list: *Vcpu.RegList = undefined;
     var vcpu_regs: []u8 = undefined;
     var gicv2_state: *Gicv2.State = undefined;
@@ -244,13 +267,11 @@ pub fn main() !void {
         gicv2_state = @ptrCast(@alignCast(pm[0..gicv2_state_bytes]));
         pm = pm[gicv2_state_bytes..];
 
-        config_state = @ptrCast(@alignCast(pm[0..config_bytes]));
-        pm = pm[config_bytes..];
-
         config_devices_state = @ptrCast(pm[0..config_devices_bytes]);
         pm = pm[config_devices_bytes..];
+
+        config_state = @ptrCast(@alignCast(pm[pm.len - @sizeOf(ConfigState) ..]));
     }
-    log.assert(@src(), pm.len == 0, "Not all permanent bytes were used. {d} left", .{pm.len});
 
     var load_result = memory.load_linux_kernel(nix.System, config.kernel.path);
     const tmp_alloc = load_result.post_kernel_allocator.allocator();
@@ -338,7 +359,6 @@ pub fn main() !void {
 
     // configure terminal for uart in/out
     const state = if (config.uart.enabled) configure_terminal(nix.System) else undefined;
-    var uart: Uart = undefined;
     if (config.uart.enabled) {
         uart.init(
             nix.System,
@@ -348,7 +368,7 @@ pub fn main() !void {
             uart_device_info,
         );
         mmio.add_device(.{
-            .ptr = &uart,
+            .ptr = uart,
             .read_ptr = @ptrCast(&Uart.read),
             .write_ptr = @ptrCast(&Uart.write_default),
         });
@@ -356,13 +376,12 @@ pub fn main() !void {
             nix.System,
             nix.STDIN,
             @ptrCast(&Uart.event_read_input),
-            &uart,
+            uart,
         );
     } else undefined;
 
-    var rtc: Rtc = .{};
     mmio.add_device(.{
-        .ptr = &rtc,
+        .ptr = rtc,
         .read_ptr = @ptrCast(&Rtc.read),
         .write_ptr = @ptrCast(&Rtc.write),
     });
@@ -524,6 +543,7 @@ pub fn main() !void {
     if (args.save_state) {
         config_state.memory_mb = config.machine.memory_mb;
         config_state.vcpus = config.machine.vcpus;
+        config_state.uart_enabled = config.uart.enabled;
         config_state.block_mmio_count = block_mmio_count;
         config_state.block_pci_count = block_pci_count;
         config_state.block_mmio_io_uring_count = block_mmio_io_uring_count;
