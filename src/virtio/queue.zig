@@ -95,7 +95,7 @@ pub const Queue = struct {
         }
     }
 
-    pub fn send_notification(self: *Self, memory: *const Memory.Guest) bool {
+    pub fn send_notification(self: *Self, memory: Memory.Guest) bool {
         if (self.notification_suppression) {
             arch.load_barrier();
             // avail_ring is only written by the driver
@@ -111,7 +111,7 @@ pub const Queue = struct {
     }
 
     /// Pop the first available descriptor chain from the avail ring.
-    pub fn pop_desc_chain(self: *Self, memory: *const Memory.Guest) ?DescriptorChain {
+    pub fn pop_desc_chain(self: *Self, memory: Memory.Guest) ?DescriptorChain {
         if (self.notification_suppression) {
             // used_ring is only written by the device
             const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
@@ -148,7 +148,7 @@ pub const Queue = struct {
     /// Puts an available descriptor head into the used ring for use by the guest.
     pub fn add_used_desc(
         self: *Self,
-        memory: *Memory.Guest,
+        memory: Memory.Guest,
         desc_id: u16,
         data_len: u32,
     ) void {
@@ -181,13 +181,13 @@ test "test_queue_pop_desc_chain" {
     queue.avail_ring = Memory.DRAM_START + 0x100;
     queue.used_ring = Memory.DRAM_START + 0x200;
 
-    try std.testing.expectEqual(null, queue.pop_desc_chain(&memory));
+    try std.testing.expectEqual(null, queue.pop_desc_chain(memory));
 
     const avail_ring = memory.get_ptr(nix.vring_avail, queue.avail_ring);
     avail_ring.idx = 10;
     for (0..10) |i| @constCast(avail_ring.ring())[i] = @intCast(i);
     for (0..10) |i| {
-        const dc = queue.pop_desc_chain(&memory);
+        const dc = queue.pop_desc_chain(memory);
         try std.testing.expect(dc != null);
         try std.testing.expectEqual(@as(u16, @intCast(i)), dc.?.index);
         try std.testing.expectEqual(
@@ -210,7 +210,7 @@ test "test_queue_add_used_desc" {
 
     const used_ring = memory.get_ptr(nix.vring_used, queue.used_ring);
     for (0..10) |i| {
-        queue.add_used_desc(&memory, @intCast(i), 69);
+        queue.add_used_desc(memory, @intCast(i), 69);
         const a = used_ring.ring()[i];
         try std.testing.expectEqual(i, a.id);
         try std.testing.expectEqual(69, a.len);

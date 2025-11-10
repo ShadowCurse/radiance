@@ -16,7 +16,7 @@ const FdtData = struct {
 
     const Self = @This();
 
-    pub fn init(memory: *const Memory.Guest) Self {
+    pub fn init(memory: Memory.Guest) Self {
         const fdt_addr = FdtBuilder.fdt_addr(memory.last_addr());
         const memory_fdt_start = fdt_addr - Memory.DRAM_START;
         return .{
@@ -126,7 +126,7 @@ pub const FdtBuilder = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: Allocator, memory: *const Memory.Guest) Self {
+    pub fn init(allocator: Allocator, memory: Memory.Guest) Self {
         var data = FdtData.init(memory);
 
         // Allocation 40 bytes. This is a size of FdtHeader struct.
@@ -248,7 +248,7 @@ pub const FdtBuilder = struct {
 pub fn create_fdt(
     comptime System: type,
     allocator: Allocator,
-    memory: *const Memory.Guest,
+    memory: Memory.Guest,
     mpidrs: []const u64,
     cmdline: [:0]const u8,
     uart_enabled: bool,
@@ -437,7 +437,7 @@ fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, mpidrs: []const u
     }
 }
 
-fn create_memory_fdt(builder: *FdtBuilder, memory: *const Memory.Guest) void {
+fn create_memory_fdt(builder: *FdtBuilder, memory: Memory.Guest) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/usage-model.rst
     const mem_reg_prop = [_]u64{ Memory.DRAM_START, memory.mem.len };
 
