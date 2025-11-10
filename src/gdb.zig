@@ -549,7 +549,7 @@ pub const GdbServer = struct {
     vcpus: []Vcpu,
     vcpu_threads: []std.Thread,
     vcpus_barier: *std.Thread.ResetEvent,
-    memory: *Memory.Guest,
+    memory: Memory.Guest,
     mmio: *Mmio,
     event_loop: *EventLoop,
 
@@ -562,7 +562,7 @@ pub const GdbServer = struct {
         vcpus: []Vcpu,
         vcpu_threads: []std.Thread,
         vcpus_barier: *std.Thread.ResetEvent,
-        memory: *Memory.Guest,
+        memory: Memory.Guest,
         mmio: *Mmio,
         event_loop: *EventLoop,
     ) !Self {

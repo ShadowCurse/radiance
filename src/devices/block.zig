@@ -41,7 +41,7 @@ pub const BlockPci = Block(PciContext);
 pub fn Block(comptime Context: type) type {
     return struct {
         read_only: bool,
-        memory: *Memory.Guest,
+        memory: Memory.Guest,
         file_mem: []align(HOST_PAGE_SIZE) u8,
         block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
@@ -56,7 +56,7 @@ pub fn Block(comptime Context: type) type {
             read_only: bool,
             id: ?[nix.VIRTIO_BLK_ID_BYTES]u8,
             vm: *Vm,
-            memory: *Memory.Guest,
+            memory: Memory.Guest,
             info: anytype,
         ) void {
             const fd = nix.assert(@src(), System, "open", .{
@@ -265,7 +265,7 @@ pub const BlockPciIoUring = BlockIoUring(PciContext);
 pub fn BlockIoUring(comptime Context: type) type {
     return struct {
         read_only: bool,
-        memory: *Memory.Guest,
+        memory: Memory.Guest,
         file_fd: nix.fd_t,
         block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
@@ -283,7 +283,7 @@ pub fn BlockIoUring(comptime Context: type) type {
             read_only: bool,
             id: ?[nix.VIRTIO_BLK_ID_BYTES]u8,
             vm: *Vm,
-            memory: *Memory.Guest,
+            memory: Memory.Guest,
             info: anytype,
         ) void {
             const file_fd = nix.assert(@src(), System, "open", .{

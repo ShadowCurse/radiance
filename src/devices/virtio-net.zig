@@ -26,7 +26,7 @@ const RX_INDEX = 0;
 const TX_INDEX = 1;
 
 pub const VirtioNet = struct {
-    memory: *Memory.Guest,
+    memory: Memory.Guest,
     context: VIRTIO_CONTEXT,
     tun: nix.fd_t,
 
@@ -44,7 +44,7 @@ pub const VirtioNet = struct {
         vm: *Vm,
         tap_name: []const u8,
         mac: ?[6]u8,
-        memory: *Memory.Guest,
+        memory: Memory.Guest,
         mmio_info: Mmio.Resources.MmioVirtioInfo,
         iov_ring_memory: []align(Memory.HOST_PAGE_SIZE) u8,
     ) void {
@@ -275,7 +275,7 @@ const RxChains = struct {
         return self.iovec_ring.slice();
     }
 
-    pub fn add_chain(self: *Self, memory: *Memory.Guest, dc: DescriptorChain) void {
+    pub fn add_chain(self: *Self, memory: Memory.Guest, dc: DescriptorChain) void {
         var chain = dc;
         var chain_info: ChainInfo = .{
             .head_index = dc.index.?,
@@ -295,7 +295,7 @@ const RxChains = struct {
         self.chain_infos.push_back(chain_info);
     }
 
-    pub fn mark_used_bytes(self: *Self, memory: *Memory.Guest, queue: *Queue, bytes: u32) void {
+    pub fn mark_used_bytes(self: *Self, memory: Memory.Guest, queue: *Queue, bytes: u32) void {
         log.assert(@src(), self.iovec_ring.len != 0, "Empty iovec_ring", .{});
         log.assert(
             @src(),
@@ -359,7 +359,7 @@ const TxChain = struct {
         return self.iovec_array.slice_const();
     }
 
-    pub fn add_chain(self: *Self, memory: *Memory.Guest, dc: DescriptorChain) void {
+    pub fn add_chain(self: *Self, memory: Memory.Guest, dc: DescriptorChain) void {
         self.head_index = dc.index.?;
         var chain = dc;
         while (chain.next()) |desc| {
@@ -372,7 +372,7 @@ const TxChain = struct {
         }
     }
 
-    pub fn finish_used(self: *Self, memory: *Memory.Guest, queue: *Queue) void {
+    pub fn finish_used(self: *Self, memory: Memory.Guest, queue: *Queue) void {
         queue.add_used_desc(memory, self.head_index, 0);
         self.iovec_array.reset();
     }
