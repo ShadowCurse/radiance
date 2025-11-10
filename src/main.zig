@@ -306,12 +306,6 @@ pub fn main() !void {
 
     // create mmio devices
     var mmio_resources: Mmio.Resources = .{};
-    const uart_device_info = if (config.uart.enabled)
-        mmio_resources.allocate_mmio()
-    else
-        undefined;
-    const rtc_device_info = mmio_resources.allocate_mmio();
-    mmio_resources.start_mmio_virtio();
 
     // preallocate all mmio regions for the devices. This is needed to
     // pass a single slice of mmio regions to the fdt builder.
@@ -331,7 +325,7 @@ pub fn main() !void {
     var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
 
     const ecam: *Ecam = try .init(ecam_memory, pci_devices);
-    var mmio: Mmio = .init(ecam, mmio_resources.virtio_address_start);
+    var mmio: Mmio = .init(ecam);
     var el: EventLoop = .init(nix.System);
     var vcpu_barrier: std.Thread.ResetEvent = .{};
 
@@ -365,7 +359,6 @@ pub fn main() !void {
             &vm,
             nix.STDIN_FILENO,
             nix.STDOUT_FILENO,
-            uart_device_info,
         );
         mmio.add_device(.{
             .ptr = uart,
@@ -510,7 +503,7 @@ pub fn main() !void {
     } else {
         @panic("No rootfs device selected");
     }
-    if (config.uart.enabled) try Uart.add_to_cmdline(&cmdline, uart_device_info);
+    if (config.uart.enabled) try Uart.add_to_cmdline(&cmdline);
 
     const cmdline_0 = try cmdline.sentinel_str();
 
@@ -526,8 +519,7 @@ pub fn main() !void {
         &memory,
         mpidrs,
         cmdline_0,
-        if (config.uart.enabled) uart_device_info else null,
-        rtc_device_info,
+        config.uart.enabled,
         mmio_infos,
         pmem_infos,
     );

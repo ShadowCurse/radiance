@@ -251,8 +251,7 @@ pub fn create_fdt(
     memory: *const Memory.Guest,
     mpidrs: []const u64,
     cmdline: [:0]const u8,
-    uart_device_info: ?Mmio.Resources.MmioInfo,
-    rtc_device_info: Mmio.Resources.MmioInfo,
+    uart_enabled: bool,
     virtio_devices_info: []const Mmio.Resources.MmioVirtioInfo,
     pmem_info: []const Pmem.Info,
 ) u64 {
@@ -279,9 +278,8 @@ pub fn create_fdt(
     create_psci_node(&fdt_builder);
     create_ecam_node(&fdt_builder);
 
-    if (uart_device_info) |info|
-        create_uart_node(&fdt_builder, info);
-    create_rtc_node(&fdt_builder, rtc_device_info);
+    if (uart_enabled) create_uart_node(&fdt_builder);
+    create_rtc_node(&fdt_builder);
 
     for (virtio_devices_info) |*info| {
         create_virtio_node(&fdt_builder, info);
@@ -547,33 +545,40 @@ fn create_psci_node(builder: *FdtBuilder) void {
     builder.add_property([:0]const u8, "method", "hvc");
 }
 
-fn create_uart_node(builder: *FdtBuilder, device_info: Mmio.Resources.MmioInfo) void {
+fn create_uart_node(builder: *FdtBuilder) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/serial/8250.yaml
     var buff: [20]u8 = undefined;
-    const name = std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{device_info.addr}) catch unreachable;
+    const name = std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{Mmio.UART_ADDR}) catch unreachable;
     builder.begin_node(name);
     defer builder.end_node();
 
     builder.add_property([:0]const u8, "compatible", "ns16550a");
-    builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
+    builder.add_property(
+        []const u64,
+        "reg",
+        &.{ Mmio.UART_ADDR, Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE },
+    );
     builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
     builder.add_property([:0]const u8, "clock-names", "apb_pclk");
     builder.add_property(
         []const u32,
         "interrupts",
-        &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, device_info.irq, FdtBuilder.IRQ_TYPE_EDGE_RISING },
+        &.{ FdtBuilder.GIC_FDT_IRQ_TYPE_SPI, Mmio.UART_IRQ, FdtBuilder.IRQ_TYPE_EDGE_RISING },
     );
 }
 
-fn create_rtc_node(builder: *FdtBuilder, device_info: Mmio.Resources.MmioInfo) void {
+fn create_rtc_node(builder: *FdtBuilder) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/rtc/arm%2Cpl031.yaml
-    var buff: [20]u8 = undefined;
-    const name = std.fmt.bufPrintZ(&buff, "rtc@{x:.8}", .{device_info.addr}) catch unreachable;
+    const name: [:0]const u8 = std.fmt.comptimePrint("rtc@{x:.8}", .{Mmio.RTC_ADDR});
     builder.begin_node(name);
     defer builder.end_node();
 
     builder.add_property([:0]const u8, "compatible", "arm,pl031\u{0}arm,primecell");
-    builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
+    builder.add_property(
+        []const u64,
+        "reg",
+        &.{ Mmio.RTC_ADDR, Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE },
+    );
     builder.add_property(u32, "clocks", FdtBuilder.CLOCK_PHANDLE);
     builder.add_property([:0]const u8, "clock-names", "apb_pclk");
 }

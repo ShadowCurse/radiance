@@ -15,40 +15,15 @@ pub const MMIO_DEVICE_REGION_SIZE: u64 = 0x1000;
 // The region size which will be reserved from a guest physical memory.
 pub const MMIO_DEVICE_ALLOCATED_REGION_SIZE: u64 = Memory.HOST_PAGE_SIZE;
 
+pub const UART_ADDR = MMIO_MEM_START;
+pub const UART_IRQ = Gicv2.IRQ_BASE;
+pub const RTC_ADDR = UART_ADDR + MMIO_DEVICE_ALLOCATED_REGION_SIZE;
+pub const VIRTIO_ADDRESS_START = RTC_ADDR + MMIO_DEVICE_ALLOCATED_REGION_SIZE;
+
 pub const Resources = struct {
-    last_irq: u16 = Gicv2.IRQ_BASE,
-    last_address: u64 = MMIO_MEM_START,
+    last_irq: u16 = UART_IRQ,
+    last_address: u64 = VIRTIO_ADDRESS_START,
     last_bar_address: u64 = Memory.PCI_START,
-    virtio_address_start: u64 = MMIO_MEM_START,
-
-    pub fn start_mmio_virtio(self: *Resources) void {
-        self.virtio_address_start = self.last_address;
-    }
-
-    pub const MmioInfo = struct {
-        addr: u64,
-        len: u32,
-        irq: u32,
-    };
-    // MMIO devices should be allocated before VIRTIO devices.
-    // Devices are allocated one after another each taking
-    // MMIO_DEVICE_ALLOCATED_REGION_SIZE space in the MMIO region.
-    pub fn allocate_mmio(self: *Resources) MmioInfo {
-        const addr = self.last_address;
-        self.last_address += MMIO_DEVICE_ALLOCATED_REGION_SIZE;
-        const irq = self.last_irq;
-        self.last_irq += 1;
-        log.debug(
-            @src(),
-            "allocate mmio region: addr: 0x{x}, len: 0x{x}, irq: {}",
-            .{ addr, MMIO_DEVICE_ALLOCATED_REGION_SIZE, irq },
-        );
-        return .{
-            .addr = addr,
-            .len = MMIO_DEVICE_REGION_SIZE,
-            .irq = irq,
-        };
-    }
 
     pub const MmioVirtioInfo = struct {
         addr: u64,
@@ -80,9 +55,7 @@ pub const Resources = struct {
         };
     }
 
-    pub const PciInfo = struct {
-        bar_addr: u64,
-    };
+    pub const PciInfo = struct { bar_addr: u64 };
     pub fn allocate_pci(self: *Resources) PciInfo {
         const addr = self.last_bar_address;
         self.last_bar_address += Memory.PCI_BAR_SIZE;
@@ -99,7 +72,6 @@ num_devices: u8,
 devices: [MAX_MMIO_DEVICES]MmioDevice,
 virtio_num_devices: u8,
 virtio_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
-virtio_address_start: u64,
 
 pci_num_devices: u8,
 pci_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
@@ -123,13 +95,12 @@ pub const MmioDevice = struct {
 
 const Self = @This();
 
-pub fn init(ecam: *Ecam, virtio_address_start: u64) Self {
+pub fn init(ecam: *Ecam) Self {
     return .{
         .num_devices = 0,
         .devices = undefined,
         .virtio_num_devices = 0,
         .virtio_devices = undefined,
-        .virtio_address_start = virtio_address_start,
         .pci_num_devices = 0,
         .pci_devices = undefined,
         .ecam = ecam,
@@ -181,14 +152,14 @@ pub fn write(self: *Self, addr: u64, data: []u8) void {
     } else if (Memory.PCI_CONFIG_START <= addr) {
         const offset = addr - Memory.PCI_CONFIG_START;
         self.ecam.write(offset, data);
-    } else if (addr < self.virtio_address_start) {
+    } else if (addr < VIRTIO_ADDRESS_START) {
         const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE;
         const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_ALLOCATED_REGION_SIZE * index;
         const device = self.devices[index];
         device.write(offset, data);
     } else {
-        const index = (addr - self.virtio_address_start) / MMIO_DEVICE_ALLOCATED_REGION_SIZE / 2;
-        const offset = (addr - self.virtio_address_start) -
+        const index = (addr - VIRTIO_ADDRESS_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE / 2;
+        const offset = (addr - VIRTIO_ADDRESS_START) -
             (MMIO_DEVICE_ALLOCATED_REGION_SIZE * index * 2) -
             (MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
         const device = self.virtio_devices[index];
@@ -208,14 +179,14 @@ pub fn read(self: *Self, addr: u64, data: []u8) void {
     } else if (Memory.PCI_CONFIG_START <= addr) {
         const offset = addr - Memory.PCI_CONFIG_START;
         self.ecam.read(offset, data);
-    } else if (addr < self.virtio_address_start) {
+    } else if (addr < VIRTIO_ADDRESS_START) {
         const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE;
         const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_ALLOCATED_REGION_SIZE * index;
         const device = self.devices[index];
         device.read(offset, data);
     } else {
-        const index = (addr - self.virtio_address_start) / MMIO_DEVICE_ALLOCATED_REGION_SIZE / 2;
-        const offset = (addr - self.virtio_address_start) -
+        const index = (addr - VIRTIO_ADDRESS_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE / 2;
+        const offset = (addr - VIRTIO_ADDRESS_START) -
             (MMIO_DEVICE_ALLOCATED_REGION_SIZE * index * 2) -
             (MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
         const device = self.virtio_devices[index];

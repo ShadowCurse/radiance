@@ -125,12 +125,11 @@ pub fn init(
     vm: *const Vm,
     in: nix.fd_t,
     out: nix.fd_t,
-    mmio_info: Mmio.Resources.MmioInfo,
 ) void {
     const irq_evt = EventFd.init(System, 0, nix.EFD_NONBLOCK);
     const kvm_irqfd: nix.kvm_irqfd = .{
         .fd = @intCast(irq_evt.fd),
-        .gsi = mmio_info.irq,
+        .gsi = Mmio.UART_IRQ,
     };
 
     _ = nix.assert(@src(), System, "ioctl", .{
@@ -154,12 +153,10 @@ pub fn init(
     self.fifo = .empty;
 }
 
-pub fn add_to_cmdline(cmdline: *CmdLine, mmio_info: Mmio.Resources.MmioInfo) !void {
-    var buff: [50]u8 = undefined;
-    const cmd = try std.fmt.bufPrint(
-        &buff,
+pub fn add_to_cmdline(cmdline: *CmdLine) !void {
+    const cmd = std.fmt.comptimePrint(
         " console=ttyS0 earlycon=uart,mmio,0x{x:.8}",
-        .{mmio_info.addr},
+        .{Mmio.UART_ADDR},
     );
     try cmdline.append(cmd);
 }
