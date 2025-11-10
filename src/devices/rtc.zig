@@ -17,6 +17,9 @@ load: u32 = 0,
 interrupt_mask_or_clear: u32 = 0,
 raw_interrupt: u32 = 0,
 time_offset: u32 = 0,
+// Technically wasted 4 bytes, but it makes Rtc size to be multiple of 8, so it can
+// be allocated along types which are 8 bytes aligned.
+_: u32 = 0,
 const ID = [_]u8{ 0x31, 0x10, 0x14, 0x00, 0x0d, 0xf0, 0x05, 0xb1 };
 
 const Self = @This();
