@@ -136,11 +136,13 @@ pub const Guest = struct {
 pub const Permanent = struct {
     mem: []align(HOST_PAGE_SIZE) u8,
 
+    const LOCATION = 0x8000000;
+
     const Self = @This();
 
     pub fn init(comptime System: type, size: usize) Self {
         const mem = nix.assert(@src(), System, "mmap", .{
-            null,
+            @ptrFromInt(LOCATION),
             size,
             nix.PROT.READ | nix.PROT.WRITE,
             nix.MAP{
