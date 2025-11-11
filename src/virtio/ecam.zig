@@ -274,7 +274,7 @@ pub const HeaderBarSizes = struct {
 
 const Self = @This();
 
-pub fn init(memory: []align(8) u8, pci_devices: u32) !*Self {
+pub fn init(memory: []align(8) u8, pci_devices: usize) !*Self {
     var mem: []align(8) u8 = memory;
 
     var self: *Self = @ptrCast(mem[0..@sizeOf(Self)]);
