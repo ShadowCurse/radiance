@@ -181,7 +181,7 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
         vcpu.* = .init(nix.System, vmm_state.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
 
     // create interrupt controller
-    const gicv2: Gicv2 = .init(nix.System, vmm_state.vm);
+    vmm_state.gicv2 = .init(nix.System, vmm_state.vm);
 
     // attach pmem
     var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
@@ -228,7 +228,7 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
             &vmm_state.vcpu_barrier,
             state.vcpu_reg_list,
             state.vcpu_regs,
-            gicv2,
+            vmm_state.gicv2,
             state.gicv2_state,
             state.permanent_memory,
         );
