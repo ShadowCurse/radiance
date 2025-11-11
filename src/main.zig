@@ -926,16 +926,52 @@ pub const State = struct {
             result.config_state.net_vhost_mmio_count = net_vhost_mmio_count;
             result.config_state.pmem_count = @truncate(config.pmem.configs.items.len);
             var config_device_state_bytes = result.config_devices_state;
-            for (config.block.configs.items) |bc| {
-                config_device_state_bytes[0] = @intFromBool(bc.read_only);
-                config_device_state_bytes[1] = @intCast(bc.path.len);
-                @memcpy(config_device_state_bytes[2..][0..bc.path.len], bc.path);
-                config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
+
+            for (config.block.configs.slice_const()) |*bc| {
+                if (!bc.pci and !bc.io_uring) {
+                    config_device_state_bytes[0] = @intFromBool(bc.read_only);
+                    config_device_state_bytes[1] = @intCast(bc.path.len);
+                    @memcpy(config_device_state_bytes[2..][0..bc.path.len], bc.path);
+                    config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
+                }
             }
-            for (config.network.configs.items) |nc| {
-                config_device_state_bytes[0] = @intCast(nc.dev_name.len);
-                @memcpy(config_device_state_bytes[1 .. 1 + nc.dev_name.len], nc.dev_name);
-                config_device_state_bytes = config_device_state_bytes[nc.dev_name.len + 1 ..];
+            for (config.block.configs.slice_const()) |*bc| {
+                if (bc.pci and !bc.io_uring) {
+                    config_device_state_bytes[0] = @intFromBool(bc.read_only);
+                    config_device_state_bytes[1] = @intCast(bc.path.len);
+                    @memcpy(config_device_state_bytes[2..][0..bc.path.len], bc.path);
+                    config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
+                }
+            }
+            for (config.block.configs.slice_const()) |*bc| {
+                if (!bc.pci and bc.io_uring) {
+                    config_device_state_bytes[0] = @intFromBool(bc.read_only);
+                    config_device_state_bytes[1] = @intCast(bc.path.len);
+                    @memcpy(config_device_state_bytes[2..][0..bc.path.len], bc.path);
+                    config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
+                }
+            }
+            for (config.block.configs.slice_const()) |*bc| {
+                if (bc.pci and bc.io_uring) {
+                    config_device_state_bytes[0] = @intFromBool(bc.read_only);
+                    config_device_state_bytes[1] = @intCast(bc.path.len);
+                    @memcpy(config_device_state_bytes[2..][0..bc.path.len], bc.path);
+                    config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
+                }
+            }
+            for (config.network.configs.slice_const()) |*nc| {
+                if (!nc.vhost) {
+                    config_device_state_bytes[0] = @intCast(nc.dev_name.len);
+                    @memcpy(config_device_state_bytes[1 .. 1 + nc.dev_name.len], nc.dev_name);
+                    config_device_state_bytes = config_device_state_bytes[nc.dev_name.len + 1 ..];
+                }
+            }
+            for (config.network.configs.slice_const()) |*nc| {
+                if (nc.vhost) {
+                    config_device_state_bytes[0] = @intCast(nc.dev_name.len);
+                    @memcpy(config_device_state_bytes[1 .. 1 + nc.dev_name.len], nc.dev_name);
+                    config_device_state_bytes = config_device_state_bytes[nc.dev_name.len + 1 ..];
+                }
             }
             for (config.pmem.configs.items) |pc| {
                 config_device_state_bytes[0] = @intCast(pc.path.len);
