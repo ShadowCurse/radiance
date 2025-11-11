@@ -84,7 +84,7 @@ pub fn pause(self: *const Self, comptime System: type) void {
 
 pub fn init(
     comptime System: type,
-    vm: *const Vm,
+    vm: Vm,
     index: u64,
     exit_event: EventFd,
     vcpu_mmap_size: u32,
