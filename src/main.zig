@@ -98,43 +98,97 @@ pub fn main() !void {
 
     const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
-    if (args.config_path == null) {
+
+    var state: State = undefined;
+    var vmm_state: VmmState = undefined;
+
+    if (args.config_path) |config_path| {
+        try from_config(config_path, &state, &vmm_state);
+    } else {
         try args_parser.print_help(Args);
         return;
     }
-    const config_parse_result = try config_parser.parse_file(nix.System, args.config_path.?);
+
+    // start vcpu threads
+    log.debug(@src(), "starting vcpu threads", .{});
+    for (state.vcpu_threads, state.vcpus) |*t, *vcpu|
+        t.* = try nix.System.spawn_thread(
+            .{},
+            Vcpu.run_threaded,
+            .{ vcpu, nix.System, &vmm_state.vcpu_barrier, &vmm_state.mmio, &start_time },
+        );
+
+    // Disable gdb for now as it is not operational anyway
+    // if (config.gdb) |gdb_config| {
+    //     // start gdb server
+    //     var gdb_server = try gdb.GdbServer.init(
+    //         nix.System,
+    //         gdb_config.socket_path,
+    //         state.vcpus,
+    //         state.vcpu_threads,
+    //         &vcpu_barrier,
+    //         state.memory,
+    //         &mmio,
+    //         &el,
+    //     );
+    //     el.add_event(
+    //         nix.System,
+    //         gdb_server.connection.stream.handle,
+    //         @ptrCast(&gdb.GdbServer.process_request),
+    //         &gdb_server,
+    //     );
+    //
+    //     // start event loop
+    //     el.run(nix.System);
+    // } else {
+    // start vcpus
+    vmm_state.vcpu_barrier.set();
+
+    // start event loop
+    vmm_state.el.run(nix.System);
+    // }
+
+    log.info(@src(), "Shutting down", .{});
+    if (vmm_state.terminal_state) |ts| restore_terminal(nix.System, &ts);
+    return;
+}
+
+fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !void {
+    const config_parse_result = try config_parser.parse_file(nix.System, config_path);
+    defer config_parse_result.deinit(nix.System);
+
     const config = &config_parse_result.config;
 
-    var state: State = .from_config(config);
+    state.* = .from_config(config);
 
     var load_result = state.memory.load_linux_kernel(nix.System, config.kernel.path);
     const tmp_alloc = load_result.post_kernel_allocator.allocator();
 
     // create vm
-    const kvm = Kvm.init(nix.System);
-    var vm = Vm.init(nix.System, &kvm);
-    vm.set_memory(nix.System, .{
+    vmm_state.kvm = .init(nix.System);
+    vmm_state.vm = .init(nix.System, vmm_state.kvm);
+    vmm_state.vm.set_memory(nix.System, .{
         .guest_phys_addr = Memory.DRAM_START,
         .memory_size = state.memory.mem.len,
         .userspace_addr = @intFromPtr(state.memory.mem.ptr),
     });
 
     // create vcpu
-    const kvi = vm.get_preferred_target(nix.System);
+    const kvi = vmm_state.vm.get_preferred_target(nix.System);
     const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
-    const vcpu_mmap_size = kvm.vcpu_mmap_size(nix.System);
+    const vcpu_mmap_size = vmm_state.kvm.vcpu_mmap_size(nix.System);
     for (state.vcpus, 0..) |*vcpu, i|
-        vcpu.* = .init(nix.System, &vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
+        vcpu.* = .init(nix.System, vmm_state.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
 
     // create interrupt controller
-    const gicv2: Gicv2 = .init(nix.System, &vm);
+    const gicv2: Gicv2 = .init(nix.System, vmm_state.vm);
 
     // attach pmem
     var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
     const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmem.configs.len);
     for (config.pmem.configs.slice_const(), pmem_infos) |*pmem_config, *info| {
         info.start = last_addr;
-        info.len = Pmem.attach(nix.System, &vm, pmem_config.path, info.start);
+        info.len = Pmem.attach(nix.System, &vmm_state.vm, pmem_config.path, info.start);
         last_addr += info.len;
     }
 
@@ -157,51 +211,50 @@ pub fn main() !void {
     var mmio_block_infos = mmio_infos[0..block_mmio_info_count];
     var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
 
-    const ecam: *Ecam = try .init(
+    vmm_state.ecam = try .init(
         state.ecam_memory,
         state.block_pci.len + state.block_pci_io_uring.len,
     );
-    var mmio: Mmio = .init(ecam);
-    var el: EventLoop = .init(nix.System);
-    var vcpu_barrier: std.Thread.ResetEvent = .{};
+    vmm_state.mmio = .init(vmm_state.ecam);
+    vmm_state.el = .init(nix.System);
+    vmm_state.vcpu_barrier = .{};
 
-    var api: Api = undefined;
     if (config.api.socket_path) |socket_path| {
-        api = .init(
+        vmm_state.api = .init(
             nix.System,
             socket_path,
             state.vcpus,
             state.vcpu_threads,
-            &vcpu_barrier,
+            &vmm_state.vcpu_barrier,
             state.vcpu_reg_list,
             state.vcpu_regs,
             gicv2,
             state.gicv2_state,
             state.permanent_memory,
         );
-        el.add_event(
+        vmm_state.el.add_event(
             nix.System,
-            api.fd,
+            vmm_state.api.fd,
             @ptrCast(&Api.handle_default),
-            &api,
+            &vmm_state.api,
         );
     }
 
     // configure terminal for uart in/out
-    const terminal_state = if (config.uart.enabled) configure_terminal(nix.System) else undefined;
     if (config.uart.enabled) {
+        vmm_state.terminal_state = configure_terminal(nix.System);
         state.uart.init(
             nix.System,
-            &vm,
+            &vmm_state.vm,
             nix.STDIN_FILENO,
             nix.STDOUT_FILENO,
         );
-        mmio.add_device(.{
+        vmm_state.mmio.add_device(.{
             .ptr = state.uart,
             .read_ptr = @ptrCast(&Uart.read),
             .write_ptr = @ptrCast(&Uart.write_default),
         });
-        el.add_event(
+        vmm_state.el.add_event(
             nix.System,
             nix.STDIN,
             @ptrCast(&Uart.event_read_input),
@@ -209,29 +262,28 @@ pub fn main() !void {
         );
     } else undefined;
 
-    mmio.add_device(.{
+    vmm_state.mmio.add_device(.{
         .ptr = state.rtc,
         .read_ptr = @ptrCast(&Rtc.read),
         .write_ptr = @ptrCast(&Rtc.write),
     });
 
-    var io_uring: IoUring = undefined;
     if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
-        io_uring = IoUring.init(nix.System, 256);
-        el.add_event(
+        vmm_state.io_uring = IoUring.init(nix.System, 256);
+        vmm_state.el.add_event(
             nix.System,
-            io_uring.eventfd.fd,
+            vmm_state.io_uring.eventfd.fd,
             @ptrCast(&IoUring.event_process_event),
-            @ptrCast(&io_uring),
+            @ptrCast(&vmm_state.io_uring),
         );
     }
 
     try create_block_mmio(
         state.block_mmio,
-        &vm,
-        &mmio,
+        &vmm_state.vm,
+        &vmm_state.mmio,
         state.memory,
-        &el,
+        &vmm_state.el,
         mmio_block_infos[0..state.block_mmio.len],
         config.block.configs.slice_const(),
     );
@@ -240,11 +292,11 @@ pub fn main() !void {
 
     try create_block_mmio_io_uring(
         state.block_mmio_io_uring,
-        &vm,
-        &mmio,
+        &vmm_state.vm,
+        &vmm_state.mmio,
         state.memory,
-        &el,
-        &io_uring,
+        &vmm_state.el,
+        &vmm_state.io_uring,
         mmio_block_infos[0..state.block_mmio_io_uring.len],
         config.block.configs.slice_const(),
     );
@@ -253,25 +305,25 @@ pub fn main() !void {
 
     try create_block_pci(
         state.block_pci,
-        &vm,
-        &mmio,
+        &vmm_state.vm,
+        &vmm_state.mmio,
         &mmio_resources,
         state.memory,
-        &el,
-        ecam,
+        &vmm_state.el,
+        vmm_state.ecam,
         config.block.configs.slice_const(),
     );
     defer for (state.block_pci) |*block| block.sync(nix.System);
 
     try create_block_pci_io_uring(
         state.block_pci_io_uring,
-        &vm,
-        &mmio,
+        &vmm_state.vm,
+        &vmm_state.mmio,
         &mmio_resources,
         state.memory,
-        &el,
-        &io_uring,
-        ecam,
+        &vmm_state.el,
+        &vmm_state.io_uring,
+        vmm_state.ecam,
         config.block.configs.slice_const(),
     );
     defer for (state.block_pci_io_uring) |*block| block.sync(nix.System);
@@ -279,10 +331,10 @@ pub fn main() !void {
     try create_net_mmio(
         state.net,
         state.net_iov_ring,
-        &vm,
-        &mmio,
+        &vmm_state.vm,
+        &vmm_state.mmio,
         state.memory,
-        &el,
+        &vmm_state.el,
         mmio_net_infos[0..state.net.len],
         config.network.configs.slice_const(),
     );
@@ -290,8 +342,8 @@ pub fn main() !void {
 
     try create_net_mmio_vhost(
         state.vhost_net,
-        &vm,
-        &mmio,
+        &vmm_state.vm,
+        &vmm_state.mmio,
         state.memory,
         mmio_net_infos[0..state.vhost_net.len],
         config.network.configs.slice_const(),
@@ -337,8 +389,6 @@ pub fn main() !void {
     }
     if (config.uart.enabled) try Uart.add_to_cmdline(&cmdline);
 
-    const cmdline_0 = try cmdline.sentinel_str();
-
     // create fdt
     const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
     for (mpidrs, state.vcpus) |*mpidr, *vcpu|
@@ -349,7 +399,7 @@ pub fn main() !void {
         tmp_alloc,
         state.memory,
         mpidrs,
-        cmdline_0,
+        try cmdline.sentinel_str(),
         config.uart.enabled,
         mmio_infos,
         pmem_infos,
@@ -360,55 +410,12 @@ pub fn main() !void {
     state.vcpus[0].set_reg(nix.System, u64, Vcpu.REGS0, @as(u64, fdt_addr));
     for (state.vcpus) |*vcpu|
         vcpu.set_reg(nix.System, u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
-    el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &el);
-
-    // free config memory after all usage of parsed config
-    config_parse_result.deinit(nix.System);
-
-    // start vcpu threads
-    log.debug(@src(), "starting vcpu threads", .{});
-    // TODO this does linux futex syscalls. Maybe can be replaced
-    // by simple atomic value?
-    for (state.vcpu_threads, state.vcpus) |*t, *vcpu| {
-        t.* = try nix.System.spawn_thread(
-            .{},
-            Vcpu.run_threaded,
-            .{ vcpu, nix.System, &vcpu_barrier, &mmio, &start_time },
-        );
-    }
-
-    if (config.gdb) |gdb_config| {
-        // start gdb server
-        var gdb_server = try gdb.GdbServer.init(
-            nix.System,
-            gdb_config.socket_path,
-            state.vcpus,
-            state.vcpu_threads,
-            &vcpu_barrier,
-            state.memory,
-            &mmio,
-            &el,
-        );
-        el.add_event(
-            nix.System,
-            gdb_server.connection.stream.handle,
-            @ptrCast(&gdb.GdbServer.process_request),
-            &gdb_server,
-        );
-
-        // start event loop
-        el.run(nix.System);
-    } else {
-        // start vcpus
-        vcpu_barrier.set();
-
-        // start event loop
-        el.run(nix.System);
-    }
-
-    log.info(@src(), "Shutting down", .{});
-    if (config.uart.enabled) restore_terminal(nix.System, &terminal_state);
-    return;
+    vmm_state.el.add_event(
+        nix.System,
+        vcpu_exit_event.fd,
+        @ptrCast(&EventLoop.stop),
+        &vmm_state.el,
+    );
 }
 
 fn create_block_mmio(
@@ -704,6 +711,19 @@ fn restore_terminal(comptime System: type, state: *const nix.termios) void {
     //set the terminal attributes.
     _ = System.tcsetattr(nix.STDIN, nix.TCSA.NOW, state);
 }
+
+pub const VmmState = struct {
+    kvm: Kvm,
+    vm: Vm,
+    gicv2: Gicv2,
+    ecam: *Ecam,
+    mmio: Mmio,
+    el: EventLoop,
+    io_uring: IoUring,
+    vcpu_barrier: std.Thread.ResetEvent,
+    api: Api,
+    terminal_state: ?nix.termios,
+};
 
 pub const State = struct {
     permanent_memory: Memory.Permanent,

@@ -7,7 +7,7 @@ num_slots: u32,
 
 const Self = @This();
 
-pub fn init(comptime System: type, kvm: *const Kvm) Self {
+pub fn init(comptime System: type, kvm: Kvm) Self {
     const fd = nix.assert(@src(), System, "ioctl", .{
         kvm.fd,
         nix.KVM_CREATE_VM,

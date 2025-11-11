@@ -114,7 +114,7 @@ fd: nix.fd_t,
 
 const Self = @This();
 
-pub fn init(comptime System: type, vm: *const Vm) Self {
+pub fn init(comptime System: type, vm: Vm) Self {
     var device: nix.kvm_create_device = .{
         .type = nix.KVM_DEV_TYPE_ARM_VGIC_V2,
         .fd = 0,
