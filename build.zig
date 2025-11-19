@@ -29,9 +29,14 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    const unit_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const unit_tests = b.addTest(.{
         .name = "unit_tests",
-        .root_module = exe_mod,
+        .root_module = unit_test_mod,
         .filters = b.args orelse &.{},
     });
     unit_tests.linkLibC();
