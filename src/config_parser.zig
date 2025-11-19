@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("log.zig");
 const nix = @import("nix.zig");
 const BoundedArray = @import("bounded_array.zig").BoundedArray;
 
@@ -174,24 +175,27 @@ pub fn parse_fd(comptime System: type, fd: nix.fd_t) !ParseResult {
 
     while (line_iter.next()) |line| {
         if (line.len != 0) {
-            const filed_name = blk: {
+            const field_name = blk: {
                 // Skip comments
                 if (std.mem.startsWith(u8, line, "#")) {
                     continue;
-                } else
+                }
                 // Find groups
-                if (std.mem.startsWith(u8, line, "[[")) {
+                else if (std.mem.startsWith(u8, line, "[[")) {
                     break :blk line[2 .. line.len - 2];
-                } else
+                }
                 // Find single enements
-                if (std.mem.startsWith(u8, line, "[")) {
+                else if (std.mem.startsWith(u8, line, "[")) {
                     break :blk line[1 .. line.len - 1];
                 } else {
-                    return error.UnknownTableType;
+                    log.err(@src(), "Unknown table line: {s}", .{line});
+                    return error.UnknownTableLine;
                 }
             };
+            var found: bool = false;
             inline for (type_fields) |field| {
-                if (std.mem.eql(u8, field.name, filed_name)) {
+                if (std.mem.eql(u8, field.name, field_name)) {
+                    found = true;
                     const field_type = @typeInfo(field.type);
                     if (field_type == .optional) {
                         @field(config, field.name) = .{};
@@ -201,6 +205,10 @@ pub fn parse_fd(comptime System: type, fd: nix.fd_t) !ParseResult {
                     }
                     break;
                 }
+            }
+            if (!found) {
+                log.err(@src(), "Unknown table entry: {s}", .{line});
+                return error.UnknownTableType;
             }
         }
     }
