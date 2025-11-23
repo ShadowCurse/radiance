@@ -101,6 +101,38 @@ pub fn Block(comptime Context: type) type {
             self.block_id = block_id;
         }
 
+        pub fn restore(
+            self: *Self,
+            comptime System: type,
+            vm: *Vm,
+            read_only: bool,
+            file_path: []const u8,
+            info: anytype,
+        ) void {
+            const fd = nix.assert(@src(), System, "open", .{
+                file_path,
+                .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
+                0,
+            });
+            defer System.close(fd);
+
+            const statx = nix.assert(@src(), System, "statx", .{fd});
+            self.file_mem = nix.assert(@src(), System, "mmap", .{
+                null,
+                statx.size,
+                if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
+                .{ .TYPE = if (read_only) .PRIVATE else .SHARED },
+                fd,
+                0,
+            });
+
+            self.context.restore(System, vm, info);
+
+            // Rerun queue processing in case there was an event
+            // before state was saved
+            self.process_queue(System);
+        }
+
         pub fn write_default(self: *Self, offset: u64, data: []u8) void {
             self.write(nix.System, offset, data);
         }
@@ -136,12 +168,14 @@ pub fn Block(comptime Context: type) type {
         }
 
         pub fn event_process_queue(self: *Self) void {
-            self.process_queue(nix.System);
+            self.process_queue_event(nix.System);
         }
-        pub fn process_queue(self: *Self, comptime System: type) void {
+        pub fn process_queue_event(self: *Self, comptime System: type) void {
             const queue_event = &self.context.queue_events[self.context.selected_queue];
             _ = queue_event.read(System);
-
+            self.process_queue(System);
+        }
+        pub fn process_queue(self: *Self, comptime System: type) void {
             var segments: [MAX_SEGMENTS][]volatile u8 = undefined;
             var segments_n: u32 = 0;
             var total_segments_len: u32 = 0;
@@ -319,6 +353,26 @@ pub fn BlockIoUring(comptime Context: type) type {
             self.submission_ring = .{};
         }
 
+        pub fn restore(
+            self: *Self,
+            comptime System: type,
+            vm: *Vm,
+            read_only: bool,
+            file_path: []const u8,
+            info: anytype,
+        ) void {
+            self.file_fd = nix.assert(@src(), System, "open", .{
+                file_path,
+                .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
+                0,
+            });
+            self.context.restore(System, vm, info);
+
+            // Rerun queue processing in case there was an event
+            // before state was saved
+            self.process_queue(System);
+        }
+
         pub fn write_default(self: *Self, offset: u64, data: []u8) void {
             self.write(nix.System, offset, data);
         }
@@ -354,11 +408,13 @@ pub fn BlockIoUring(comptime Context: type) type {
         }
 
         pub fn event_process_queue(self: *Self) void {
-            self.process_queue(nix.System);
+            self.process_queue_event(nix.System);
+        }
+        pub fn process_queue_event(self: *Self, comptime System: type) void {
+            _ = self.context.queue_events[self.context.selected_queue].read(System);
+            self.process_queue(System);
         }
         pub fn process_queue(self: *Self, comptime System: type) void {
-            _ = self.context.queue_events[self.context.selected_queue].read(System);
-
             var segments: [MAX_SEGMENTS_IO_URING][]volatile u8 = undefined;
             var segments_n: u32 = 0;
             var total_segments_len: u32 = 0;

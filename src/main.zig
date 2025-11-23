@@ -45,7 +45,7 @@ pub const log_options = log.Options{
 
 const Args = struct {
     config_path: ?[]const u8 = null,
-    save_state: bool = false,
+    snapshot_path: ?[]const u8 = null,
 };
 
 pub const ConfigState = extern struct {
@@ -104,6 +104,8 @@ pub fn main() !void {
 
     if (args.config_path) |config_path| {
         try from_config(config_path, &state, &vmm_state);
+    } else if (args.snapshot_path) |snapshot_path| {
+        try from_snapshot(snapshot_path, &state, &vmm_state);
     } else {
         try args_parser.print_help(Args);
         return;
@@ -211,7 +213,7 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
     var mmio_block_infos = mmio_infos[0..block_mmio_info_count];
     var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
 
-    vmm_state.ecam = try .init(
+    vmm_state.ecam = .init(
         state.ecam_memory,
         state.block_pci.len + state.block_pci_io_uring.len,
     );
@@ -228,6 +230,7 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
             &vmm_state.vcpu_barrier,
             state.vcpu_reg_list,
             state.vcpu_regs,
+            state.vcpu_mp_states,
             vmm_state.gicv2,
             state.gicv2_state,
             state.permanent_memory,
@@ -689,6 +692,265 @@ fn create_net_mmio_vhost(
     }
 }
 
+fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState) !void {
+    state.* = .from_snapshot(nix.System, snapshot_path);
+
+    vmm_state.kvm = .init(nix.System);
+    vmm_state.vm = .init(nix.System, vmm_state.kvm);
+    vmm_state.vm.set_memory(nix.System, .{
+        .guest_phys_addr = Memory.DRAM_START,
+        .memory_size = state.memory.mem.len,
+        .userspace_addr = @intFromPtr(state.memory.mem.ptr),
+    });
+
+    const kvi = vmm_state.vm.get_preferred_target(nix.System);
+    const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
+    const vcpu_mmap_size = vmm_state.kvm.vcpu_mmap_size(nix.System);
+
+    for (state.vcpus, 0..) |*vcpu, i|
+        vcpu.* = .init(nix.System, vmm_state.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
+    vmm_state.gicv2 = .init(nix.System, vmm_state.vm);
+
+    var regs_bytes = state.vcpu_regs;
+    for (state.vcpus, state.vcpu_mp_states) |*vcpu, *mp_state| {
+        const used = vcpu.restore_regs(nix.System, state.vcpu_reg_list, regs_bytes, mp_state);
+        regs_bytes = regs_bytes[used..];
+    }
+    vmm_state.gicv2.restore_state(nix.System, state.gicv2_state);
+
+    vmm_state.ecam = .restore(
+        state.ecam_memory,
+        state.block_pci.len + state.block_pci_io_uring.len,
+    );
+    vmm_state.mmio = .init(vmm_state.ecam);
+    vmm_state.el = .init(nix.System);
+    vmm_state.vcpu_barrier = .{};
+
+    if (state.config_state.uart_enabled) {
+        vmm_state.terminal_state = configure_terminal(nix.System);
+        state.uart.restore(nix.System, &vmm_state.vm);
+        vmm_state.mmio.add_device(.{
+            .ptr = state.uart,
+            .read_ptr = @ptrCast(&Uart.read),
+            .write_ptr = @ptrCast(&Uart.write_default),
+        });
+        vmm_state.el.add_event(
+            nix.System,
+            nix.STDIN,
+            @ptrCast(&Uart.event_read_input),
+            state.uart,
+        );
+    }
+
+    vmm_state.mmio.add_device(.{
+        .ptr = state.rtc,
+        .read_ptr = @ptrCast(&Rtc.read),
+        .write_ptr = @ptrCast(&Rtc.write),
+    });
+
+    if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
+        vmm_state.io_uring = IoUring.init(nix.System, 256);
+        vmm_state.el.add_event(
+            nix.System,
+            vmm_state.io_uring.eventfd.fd,
+            @ptrCast(&IoUring.event_process_event),
+            @ptrCast(&vmm_state.io_uring),
+        );
+    }
+
+    var mmio_resources: Mmio.Resources = .{};
+    var mmio_regions = state.mmio_regions;
+
+    var config_device_state_bytes = state.config_devices_state;
+    for (0..state.config_state.block_mmio_count) |i| {
+        const read_only = config_device_state_bytes[0] == 1;
+        const path_len = config_device_state_bytes[1];
+        const path = config_device_state_bytes[2..][0..path_len];
+        config_device_state_bytes = config_device_state_bytes[2 + path_len ..];
+
+        var info = mmio_resources.allocate_mmio_virtio();
+        info.mem_ptr = mmio_regions.ptr;
+        mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+
+        const block = &state.block_mmio[i];
+        block.restore(nix.System, &vmm_state.vm, read_only, path, info);
+        vmm_state.mmio.add_device_virtio(.{
+            .ptr = block,
+            .read_ptr = @ptrCast(&BlockMmio.read),
+            .write_ptr = @ptrCast(&BlockMmio.write_default),
+        });
+        vmm_state.el.add_event(
+            nix.System,
+            block.context.queue_events[0].fd,
+            @ptrCast(&BlockMmio.event_process_queue),
+            block,
+        );
+    }
+    for (0..state.config_state.block_pci_count) |i| {
+        const read_only = config_device_state_bytes[0] == 1;
+        const path_len = config_device_state_bytes[1];
+        const path = config_device_state_bytes[2..][0..path_len];
+        config_device_state_bytes = config_device_state_bytes[2 + path_len ..];
+
+        const info = mmio_resources.allocate_pci();
+
+        const block = &state.block_pci[i];
+        block.restore(nix.System, &vmm_state.vm, read_only, path, info);
+        vmm_state.mmio.add_device_pci(.{
+            .ptr = block,
+            .read_ptr = @ptrCast(&BlockPci.read),
+            .write_ptr = @ptrCast(&BlockPci.write_default),
+        });
+        vmm_state.el.add_event(
+            nix.System,
+            block.context.queue_events[0].fd,
+            @ptrCast(&BlockPci.event_process_queue),
+            block,
+        );
+    }
+    for (0..state.config_state.block_mmio_io_uring_count) |i| {
+        const read_only = config_device_state_bytes[0] == 1;
+        const path_len = config_device_state_bytes[1];
+        const path = config_device_state_bytes[2..][0..path_len];
+        config_device_state_bytes = config_device_state_bytes[2 + path_len ..];
+
+        var info = mmio_resources.allocate_mmio_virtio();
+        info.mem_ptr = mmio_regions.ptr;
+        mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+
+        const block = &state.block_mmio_io_uring[i];
+        block.restore(nix.System, &vmm_state.vm, read_only, path, info);
+        block.io_uring_device = vmm_state.io_uring.add_device(
+            @ptrCast(&BlockMmioIoUring.event_process_io_uring_event),
+            block,
+        );
+        vmm_state.mmio.add_device_virtio(.{
+            .ptr = block,
+            .read_ptr = @ptrCast(&BlockMmioIoUring.read),
+            .write_ptr = @ptrCast(&BlockMmioIoUring.write_default),
+        });
+        vmm_state.el.add_event(
+            nix.System,
+            block.context.queue_events[0].fd,
+            @ptrCast(&BlockMmioIoUring.event_process_queue),
+            block,
+        );
+    }
+    for (0..state.config_state.block_pci_io_uring_count) |i| {
+        const read_only = config_device_state_bytes[0] == 1;
+        const path_len = config_device_state_bytes[1];
+        const path = config_device_state_bytes[2..][0..path_len];
+        config_device_state_bytes = config_device_state_bytes[2 + path_len ..];
+
+        const info = mmio_resources.allocate_pci();
+
+        const block = &state.block_pci_io_uring[i];
+        block.restore(nix.System, &vmm_state.vm, read_only, path, info);
+        block.io_uring_device = vmm_state.io_uring.add_device(
+            @ptrCast(&BlockPciIoUring.event_process_io_uring_event),
+            block,
+        );
+        vmm_state.mmio.add_device_pci(.{
+            .ptr = block,
+            .read_ptr = @ptrCast(&BlockPciIoUring.read),
+            .write_ptr = @ptrCast(&BlockPciIoUring.write_default),
+        });
+        vmm_state.el.add_event(
+            nix.System,
+            block.context.queue_events[0].fd,
+            @ptrCast(&BlockPciIoUring.event_process_queue),
+            block,
+        );
+    }
+    var net_iov_ring = state.net_iov_ring;
+    for (0..state.config_state.net_mmio_count) |i| {
+        const path_len = config_device_state_bytes[0];
+        const path = config_device_state_bytes[1..][0..path_len];
+        config_device_state_bytes = config_device_state_bytes[1 + path_len ..];
+
+        const iov_ring_bytes = net_iov_ring[0..IovRing.BACKING_SIZE];
+        net_iov_ring = net_iov_ring[IovRing.BACKING_SIZE..];
+
+        var info = mmio_resources.allocate_mmio_virtio();
+        info.mem_ptr = mmio_regions.ptr;
+        mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+
+        const net = &state.net[i];
+        net.restore(nix.System, &vmm_state.vm, path, info, iov_ring_bytes);
+        vmm_state.mmio.add_device_virtio(.{
+            .ptr = net,
+            .read_ptr = @ptrCast(&VirtioNet.read),
+            .write_ptr = @ptrCast(&VirtioNet.write_default),
+        });
+        vmm_state.el.add_event(
+            nix.System,
+            net.context.queue_events[0].fd,
+            @ptrCast(&VirtioNet.event_process_rx),
+            net,
+        );
+        vmm_state.el.add_event(
+            nix.System,
+            net.context.queue_events[1].fd,
+            @ptrCast(&VirtioNet.event_process_tx),
+            net,
+        );
+        vmm_state.el.add_event(
+            nix.System,
+            net.tun,
+            @ptrCast(&VirtioNet.event_process_tap),
+            net,
+        );
+    }
+    for (0..state.config_state.net_vhost_mmio_count) |i| {
+        const path_len = config_device_state_bytes[0];
+        const path = config_device_state_bytes[1..][0..path_len];
+        config_device_state_bytes = config_device_state_bytes[1 + path_len ..];
+
+        var info = mmio_resources.allocate_mmio_virtio();
+        info.mem_ptr = mmio_regions.ptr;
+        mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+
+        const net = &state.vhost_net[i];
+        net.restore(nix.System, &vmm_state.vm, path, info);
+        vmm_state.mmio.add_device_virtio(.{
+            .ptr = net,
+            .read_ptr = @ptrCast(&VirtioNet.read),
+            .write_ptr = @ptrCast(&VirtioNet.write_default),
+        });
+        vmm_state.el.add_event(
+            nix.System,
+            net.context.queue_events[0].fd,
+            @ptrCast(&VirtioNet.event_process_rx),
+            net,
+        );
+        vmm_state.el.add_event(
+            nix.System,
+            net.context.queue_events[1].fd,
+            @ptrCast(&VirtioNet.event_process_tx),
+            net,
+        );
+        vmm_state.el.add_event(
+            nix.System,
+            net.tun,
+            @ptrCast(&VirtioNet.event_process_tap),
+            net,
+        );
+    }
+    var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
+    for (0..state.config_state.pmem_count) |_| {
+        const path_len = config_device_state_bytes[0];
+        const path = config_device_state_bytes[1..][0..path_len];
+        config_device_state_bytes = config_device_state_bytes[1 + path_len ..];
+        last_addr += Pmem.attach(nix.System, &vmm_state.vm, path, last_addr);
+    }
+    vmm_state.el.add_event(
+        nix.System,
+        vcpu_exit_event.fd,
+        @ptrCast(&EventLoop.stop),
+        &vmm_state.el,
+    );
+}
+
 fn configure_terminal(comptime System: type) nix.termios {
     var ttystate: nix.termios = undefined;
     var ttysave: nix.termios = undefined;
@@ -743,6 +1005,7 @@ pub const State = struct {
     rtc: *Rtc,
     vcpu_reg_list: *Vcpu.RegList,
     vcpu_regs: []u8,
+    vcpu_mp_states: []nix.kvm_mp_state,
     gicv2_state: *Gicv2.State,
     config_devices_state: []u8,
     config_state: *ConfigState,
@@ -807,13 +1070,15 @@ pub const State = struct {
         const vcpu_reg_list_bytes = @sizeOf(Vcpu.RegList);
         const vcpu_regs_bytes = config.machine.vcpus * Vcpu.PER_VCPU_REGS_BYTES;
         // 4 byte aligned
+        const vcpu_mpstates_bytes = config.machine.vcpus * @sizeOf(nix.kvm_mp_state);
         const gicv2_state_bytes = @sizeOf(Gicv2.State);
         // 1 byte aligned
         var config_devices_bytes: usize = 0;
         // The only thing needed saving for devices are paths and read_only flags
-        for (config.block.configs.items) |bc| config_devices_bytes += bc.path.len + 1 + 1;
-        for (config.network.configs.items) |nc| config_devices_bytes += nc.dev_name.len + 1;
-        for (config.pmem.configs.items) |pc| config_devices_bytes += pc.path.len + 1;
+        for (config.block.configs.slice_const()) |bc| config_devices_bytes += bc.path.len + 1 + 1;
+        for (config.network.configs.slice_const()) |nc|
+            config_devices_bytes += nc.dev_name.len + 1;
+        for (config.pmem.configs.slice_const()) |pc| config_devices_bytes += pc.path.len + 1;
         // 4 byte aligned
         const config_bytes: usize = @sizeOf(ConfigState);
 
@@ -837,6 +1102,7 @@ pub const State = struct {
             permanent_memory_size +=
                 vcpu_reg_list_bytes +
                 vcpu_regs_bytes +
+                vcpu_mpstates_bytes +
                 gicv2_state_bytes +
                 config_devices_bytes;
 
@@ -848,51 +1114,66 @@ pub const State = struct {
         log.info(@src(), "permanent memory size: {} bytes", .{permanent_memory_size});
         var result: State = undefined;
 
+        log.debug(@src(), "permanent_memory_size: {d}", .{permanent_memory_size});
         result.permanent_memory = .init(nix.System, permanent_memory_size);
         var pm: []u8 = result.permanent_memory.mem;
 
+        log.debug(@src(), "memory_bytes: {d}", .{memory_bytes});
         result.memory = .{ .mem = @alignCast(pm[0..memory_bytes]) };
         pm = pm[memory_bytes..];
 
+        log.debug(@src(), "mmio_regions_bytes: {d}", .{mmio_regions_bytes});
         result.mmio_regions = @alignCast(pm[0..mmio_regions_bytes]);
         pm = pm[mmio_regions_bytes..];
 
+        log.debug(@src(), "net_iov_ring_bytes: {d}", .{net_iov_ring_bytes});
         result.net_iov_ring = @alignCast(pm[0..net_iov_ring_bytes]);
         pm = pm[net_iov_ring_bytes..];
 
+        log.debug(@src(), "vcpu_bytes: {d}", .{vcpu_bytes});
         result.vcpus = @ptrCast(@alignCast(pm[0..vcpu_bytes]));
         pm = pm[vcpu_bytes..];
 
+        log.debug(@src(), "thread_bytes: {d}", .{thread_bytes});
         result.vcpu_threads = @ptrCast(@alignCast(pm[0..thread_bytes]));
         pm = pm[thread_bytes..];
 
+        log.debug(@src(), "block_mmio_bytes: {d}", .{block_mmio_bytes});
         result.block_mmio = @ptrCast(@alignCast(pm[0..block_mmio_bytes]));
         pm = pm[block_mmio_bytes..];
 
+        log.debug(@src(), "block_pci_bytes: {d}", .{block_pci_bytes});
         result.block_pci = @ptrCast(@alignCast(pm[0..block_pci_bytes]));
         pm = pm[block_pci_bytes..];
 
+        log.debug(@src(), "block_mmio_io_uring_bytes: {d}", .{block_mmio_io_uring_bytes});
         result.block_mmio_io_uring =
             @ptrCast(@alignCast(pm[0..block_mmio_io_uring_bytes]));
         pm = pm[block_mmio_io_uring_bytes..];
 
+        log.debug(@src(), "block_pci_io_uring_bytes: {d}", .{block_pci_io_uring_bytes});
         result.block_pci_io_uring =
             @ptrCast(@alignCast(pm[0..block_pci_io_uring_bytes]));
         pm = pm[block_pci_io_uring_bytes..];
 
+        log.debug(@src(), "net_bytes: {d}", .{net_bytes});
         result.net = @ptrCast(@alignCast(pm[0..net_bytes]));
         pm = pm[net_bytes..];
 
+        log.debug(@src(), "vhost_net_bytes: {d}", .{vhost_net_bytes});
         result.vhost_net = @ptrCast(@alignCast(pm[0..vhost_net_bytes]));
         pm = pm[vhost_net_bytes..];
 
+        log.debug(@src(), "ecam_bytes: {d}", .{ecam_bytes});
         result.ecam_memory = @ptrCast(@alignCast(pm[0..ecam_bytes]));
         pm = pm[ecam_bytes..];
 
         if (config.uart.enabled) {
+            log.debug(@src(), "uart_bytes: {d}", .{uart_bytes});
             result.uart = @ptrCast(@alignCast(pm[0..uart_bytes]));
             pm = pm[uart_bytes..];
         }
+        log.debug(@src(), "rtc_bytes: {d}", .{rtc_bytes});
         result.rtc = @ptrCast(@alignCast(pm[0..rtc_bytes]));
         result.rtc.* = .{};
         pm = pm[rtc_bytes..];
@@ -901,15 +1182,23 @@ pub const State = struct {
             result.vcpu_reg_list = @ptrCast(@alignCast(pm[0..vcpu_reg_list_bytes]));
             // First value is the number of ids in the list. Set to 0 to
             // be able to detect when list needs to be queried.
+            log.debug(@src(), "vcpu_reg_list_bytes: {d}", .{vcpu_reg_list_bytes});
             result.vcpu_reg_list[0] = 0;
             pm = pm[vcpu_reg_list_bytes..];
 
+            log.debug(@src(), "vcpu_regs_bytes: {d}", .{vcpu_regs_bytes});
             result.vcpu_regs = @ptrCast(@alignCast(pm[0..vcpu_regs_bytes]));
             pm = pm[vcpu_regs_bytes..];
 
+            log.debug(@src(), "vcpu_mpstates_bytes: {d}", .{vcpu_mpstates_bytes});
+            result.vcpu_mp_states = @ptrCast(@alignCast(pm[0..vcpu_mpstates_bytes]));
+            pm = pm[vcpu_mpstates_bytes..];
+
+            log.debug(@src(), "gicv2_state_bytes: {d}", .{gicv2_state_bytes});
             result.gicv2_state = @ptrCast(@alignCast(pm[0..gicv2_state_bytes]));
             pm = pm[gicv2_state_bytes..];
 
+            log.debug(@src(), "config_devices_bytes: {d}", .{config_devices_bytes});
             result.config_devices_state = @ptrCast(pm[0..config_devices_bytes]);
             pm = pm[config_devices_bytes..];
 
@@ -924,7 +1213,8 @@ pub const State = struct {
             result.config_state.block_pci_io_uring_count = block_pci_io_uring_count;
             result.config_state.net_mmio_count = net_mmio_count;
             result.config_state.net_vhost_mmio_count = net_vhost_mmio_count;
-            result.config_state.pmem_count = @truncate(config.pmem.configs.items.len);
+            result.config_state.pmem_count = @truncate(config.pmem.configs.slice_const().len);
+            log.debug(@src(), "Saved ConfigState: {any}", .{result.config_state});
             var config_device_state_bytes = result.config_devices_state;
 
             for (config.block.configs.slice_const()) |*bc| {
@@ -935,6 +1225,11 @@ pub const State = struct {
                     config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
                 }
             }
+            log.debug(
+                @src(),
+                "Saved BlockMmio devices. Bytes left: {d}",
+                .{config_device_state_bytes.len},
+            );
             for (config.block.configs.slice_const()) |*bc| {
                 if (bc.pci and !bc.io_uring) {
                     config_device_state_bytes[0] = @intFromBool(bc.read_only);
@@ -943,6 +1238,11 @@ pub const State = struct {
                     config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
                 }
             }
+            log.debug(
+                @src(),
+                "Saved BlockPci devices. Bytes left: {d}",
+                .{config_device_state_bytes.len},
+            );
             for (config.block.configs.slice_const()) |*bc| {
                 if (!bc.pci and bc.io_uring) {
                     config_device_state_bytes[0] = @intFromBool(bc.read_only);
@@ -951,6 +1251,11 @@ pub const State = struct {
                     config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
                 }
             }
+            log.debug(
+                @src(),
+                "Saved BlockMmioIoUring devices. Bytes left: {d}",
+                .{config_device_state_bytes.len},
+            );
             for (config.block.configs.slice_const()) |*bc| {
                 if (bc.pci and bc.io_uring) {
                     config_device_state_bytes[0] = @intFromBool(bc.read_only);
@@ -959,6 +1264,11 @@ pub const State = struct {
                     config_device_state_bytes = config_device_state_bytes[2 + bc.path.len ..];
                 }
             }
+            log.debug(
+                @src(),
+                "Saved BlockPciIoUring devices. Bytes left: {d}",
+                .{config_device_state_bytes.len},
+            );
             for (config.network.configs.slice_const()) |*nc| {
                 if (!nc.vhost) {
                     config_device_state_bytes[0] = @intCast(nc.dev_name.len);
@@ -966,6 +1276,11 @@ pub const State = struct {
                     config_device_state_bytes = config_device_state_bytes[nc.dev_name.len + 1 ..];
                 }
             }
+            log.debug(
+                @src(),
+                "Saved VirtioNet devices. Bytes left: {d}",
+                .{config_device_state_bytes.len},
+            );
             for (config.network.configs.slice_const()) |*nc| {
                 if (nc.vhost) {
                     config_device_state_bytes[0] = @intCast(nc.dev_name.len);
@@ -973,11 +1288,21 @@ pub const State = struct {
                     config_device_state_bytes = config_device_state_bytes[nc.dev_name.len + 1 ..];
                 }
             }
-            for (config.pmem.configs.items) |pc| {
+            log.debug(
+                @src(),
+                "Saved VhostNet devices. Bytes left: {d}",
+                .{config_device_state_bytes.len},
+            );
+            for (config.pmem.configs.slice_const()) |pc| {
                 config_device_state_bytes[0] = @intCast(pc.path.len);
                 @memcpy(config_device_state_bytes[1 .. 1 + pc.path.len], pc.path);
                 config_device_state_bytes = config_device_state_bytes[pc.path.len + 1 ..];
             }
+            log.debug(
+                @src(),
+                "Saved Pmem devices. Bytes left: {d}",
+                .{config_device_state_bytes.len},
+            );
             log.assert(
                 @src(),
                 config_device_state_bytes.len == 0,
@@ -985,6 +1310,135 @@ pub const State = struct {
                 .{config_device_state_bytes.len},
             );
         }
+
+        return result;
+    }
+
+    pub fn from_snapshot(comptime System: type, snapshot_path: []const u8) State {
+        var result: State = undefined;
+
+        result.permanent_memory = .init_from_snapshot(System, snapshot_path);
+        var pm: []u8 = result.permanent_memory.mem;
+
+        result.config_state = @ptrCast(@alignCast(pm[pm.len - @sizeOf(ConfigState) ..]));
+        log.debug(@src(), "Restored ConfigState: {any}", .{result.config_state});
+
+        const memory_bytes = result.config_state.memory_mb << 20;
+        const mmio_regions_bytes = Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE *
+            (result.config_state.block_mmio_count +
+                result.config_state.block_mmio_io_uring_count +
+                result.config_state.net_mmio_count +
+                result.config_state.net_vhost_mmio_count);
+        const net_iov_ring_bytes = IovRing.BACKING_SIZE * result.config_state.net_mmio_count;
+
+        const vcpu_bytes = @sizeOf(Vcpu) * result.config_state.vcpus;
+        const thread_bytes = @sizeOf(std.Thread) * result.config_state.vcpus;
+        const block_mmio_bytes =
+            @sizeOf(BlockMmio) * @as(usize, @intCast(result.config_state.block_mmio_count));
+        const block_pci_bytes =
+            @sizeOf(BlockPci) * @as(usize, @intCast(result.config_state.block_pci_count));
+        const block_mmio_io_uring_bytes = @sizeOf(BlockMmioIoUring) *
+            @as(usize, @intCast(result.config_state.block_mmio_io_uring_count));
+        const block_pci_io_uring_bytes = @sizeOf(BlockPciIoUring) *
+            @as(usize, @intCast(result.config_state.block_pci_io_uring_count));
+        const net_bytes =
+            @sizeOf(VirtioNet) * @as(usize, @intCast(result.config_state.net_mmio_count));
+        const vhost_net_bytes =
+            @sizeOf(VhostNet) * @as(usize, @intCast(result.config_state.net_vhost_mmio_count));
+
+        const pci_devices =
+            result.config_state.block_pci_count + result.config_state.block_pci_io_uring_count;
+        const ecam_bytes = @sizeOf(Ecam) +
+            @sizeOf(Ecam.Type0ConfigurationHeader) * pci_devices +
+            @sizeOf(Ecam.HeaderBarSizes) * pci_devices;
+
+        var uart_bytes: usize = 0;
+        if (result.config_state.uart_enabled)
+            uart_bytes = @sizeOf(Uart);
+        const rtc_bytes: usize = @sizeOf(Rtc);
+
+        const vcpu_reg_list_bytes = @sizeOf(Vcpu.RegList);
+        const vcpu_regs_bytes = result.config_state.vcpus * Vcpu.PER_VCPU_REGS_BYTES;
+        const vcpu_mpstates_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_mp_state);
+        const gicv2_state_bytes = @sizeOf(Gicv2.State);
+
+        log.debug(@src(), "memory_bytes: {d}", .{memory_bytes});
+        result.memory = .{ .mem = @alignCast(pm[0..memory_bytes]) };
+        pm = pm[memory_bytes..];
+
+        log.debug(@src(), "mmio_regions_bytes: {d}", .{mmio_regions_bytes});
+        result.mmio_regions = @alignCast(pm[0..mmio_regions_bytes]);
+        pm = pm[mmio_regions_bytes..];
+
+        log.debug(@src(), "net_iov_ring_bytes: {d}", .{net_iov_ring_bytes});
+        result.net_iov_ring = @alignCast(pm[0..net_iov_ring_bytes]);
+        pm = pm[net_iov_ring_bytes..];
+
+        log.debug(@src(), "vcpu_bytes: {d}", .{vcpu_bytes});
+        result.vcpus = @ptrCast(@alignCast(pm[0..vcpu_bytes]));
+        pm = pm[vcpu_bytes..];
+
+        log.debug(@src(), "thread_bytes: {d}", .{thread_bytes});
+        result.vcpu_threads = @ptrCast(@alignCast(pm[0..thread_bytes]));
+        pm = pm[thread_bytes..];
+
+        log.debug(@src(), "block_mmio_bytes: {d}", .{block_mmio_bytes});
+        result.block_mmio = @ptrCast(@alignCast(pm[0..block_mmio_bytes]));
+        pm = pm[block_mmio_bytes..];
+
+        log.debug(@src(), "block_pci_bytes: {d}", .{block_pci_bytes});
+        result.block_pci = @ptrCast(@alignCast(pm[0..block_pci_bytes]));
+        pm = pm[block_pci_bytes..];
+
+        log.debug(@src(), "block_mmio_io_uring_bytes: {d}", .{block_mmio_io_uring_bytes});
+        result.block_mmio_io_uring =
+            @ptrCast(@alignCast(pm[0..block_mmio_io_uring_bytes]));
+        pm = pm[block_mmio_io_uring_bytes..];
+
+        log.debug(@src(), "block_pci_io_uring_bytes: {d}", .{block_pci_io_uring_bytes});
+        result.block_pci_io_uring =
+            @ptrCast(@alignCast(pm[0..block_pci_io_uring_bytes]));
+        pm = pm[block_pci_io_uring_bytes..];
+
+        log.debug(@src(), "net_bytes: {d}", .{net_bytes});
+        result.net = @ptrCast(@alignCast(pm[0..net_bytes]));
+        pm = pm[net_bytes..];
+
+        log.debug(@src(), "vhost_net_bytes: {d}", .{vhost_net_bytes});
+        result.vhost_net = @ptrCast(@alignCast(pm[0..vhost_net_bytes]));
+        pm = pm[vhost_net_bytes..];
+
+        log.debug(@src(), "ecam_bytes: {d}", .{ecam_bytes});
+        result.ecam_memory = @ptrCast(@alignCast(pm[0..ecam_bytes]));
+        pm = pm[ecam_bytes..];
+
+        if (result.config_state.uart_enabled) {
+            log.debug(@src(), "uart_bytes: {d}", .{uart_bytes});
+            result.uart = @ptrCast(@alignCast(pm[0..uart_bytes]));
+            pm = pm[uart_bytes..];
+        }
+        log.debug(@src(), "rtc_bytes: {d}", .{rtc_bytes});
+        result.rtc = @ptrCast(@alignCast(pm[0..rtc_bytes]));
+        pm = pm[rtc_bytes..];
+
+        log.debug(@src(), "vcpu_reg_list_bytes: {d}", .{vcpu_reg_list_bytes});
+        result.vcpu_reg_list = @ptrCast(@alignCast(pm[0..vcpu_reg_list_bytes]));
+        pm = pm[vcpu_reg_list_bytes..];
+
+        log.debug(@src(), "vcpu_regs_bytes: {d}", .{vcpu_regs_bytes});
+        result.vcpu_regs = @ptrCast(@alignCast(pm[0..vcpu_regs_bytes]));
+        pm = pm[vcpu_regs_bytes..];
+
+        log.debug(@src(), "vcpu_mpstates_bytes: {d}", .{vcpu_mpstates_bytes});
+        result.vcpu_mp_states = @ptrCast(@alignCast(pm[0..vcpu_mpstates_bytes]));
+        pm = pm[vcpu_mpstates_bytes..];
+
+        log.debug(@src(), "gicv2_state_bytes: {d}", .{gicv2_state_bytes});
+        result.gicv2_state = @ptrCast(@alignCast(pm[0..gicv2_state_bytes]));
+        pm = pm[gicv2_state_bytes..];
+
+        log.debug(@src(), "config_devices_bytes: {d}", .{pm.len - @sizeOf(ConfigState)});
+        result.config_devices_state = @ptrCast(pm[0 .. pm.len - @sizeOf(ConfigState)]);
 
         return result;
     }

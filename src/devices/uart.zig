@@ -153,6 +153,17 @@ pub fn init(
     self.fifo = .empty;
 }
 
+pub fn restore(self: *Self, comptime System: type, vm: *const Vm) void {
+    self.irq_evt = EventFd.init(System, 0, nix.EFD_NONBLOCK);
+    const kvm_irqfd: nix.kvm_irqfd = .{ .fd = @intCast(self.irq_evt.fd), .gsi = Mmio.UART_IRQ };
+
+    _ = nix.assert(@src(), System, "ioctl", .{
+        vm.fd,
+        nix.KVM_IRQFD,
+        @intFromPtr(&kvm_irqfd),
+    });
+}
+
 pub fn add_to_cmdline(cmdline: *CmdLine) !void {
     const cmd = std.fmt.comptimePrint(
         " console=ttyS0 earlycon=uart,mmio,0x{x:.8}",

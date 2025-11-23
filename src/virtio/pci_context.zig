@@ -91,16 +91,16 @@ pub fn PciVirtioContext(
             queue_sizes: [NUM_QUEUES]u16,
             info: Mmio.Resources.PciInfo,
         ) Self {
-            var queues: [NUM_QUEUES]Queue = undefined;
-            for (&queues, queue_sizes) |*q, size|
-                q.* = .init(size);
-            const self = Self{
-                .queues = queues,
-                .queue_events = .{EventFd.init(System, 0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
-                .queue_irqs = .{EventFd.init(System, 0, nix.EFD_NONBLOCK)} ** NUM_QUEUES,
+            var self: Self = .{
+                .queues = undefined,
+                .queue_events = undefined,
+                .queue_irqs = undefined,
                 .config_irq = .init(System, 0, nix.EFD_NONBLOCK),
                 .vm = vm,
             };
+            for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
+            for (&self.queues, queue_sizes) |*q, size| q.* = .init(size);
+            for (&self.queue_irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
 
             for (&self.queue_events, 0..) |*queue_event, i| {
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{
@@ -116,6 +116,49 @@ pub fn PciVirtioContext(
                 });
             }
             return self;
+        }
+
+        pub fn restore(
+            self: *Self,
+            comptime System: type,
+            vm: *Vm,
+            info: Mmio.Resources.PciInfo,
+        ) void {
+            self.vm = vm;
+            for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
+            for (&self.queue_irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
+            self.config_irq = .init(System, 0, nix.EFD_NONBLOCK);
+            for (&self.queue_events, 0..) |*queue_event, i| {
+                const kvm_ioeventfd: nix.kvm_ioeventfd = .{
+                    .addr = info.bar_addr +
+                        Ecam.VIRTIO_PCI_NOTIFY_BAR_OFFSET +
+                        i * Ecam.VIRTIO_PCI_NOTIFY_MULTIPLIER,
+                    .fd = queue_event.fd,
+                };
+                _ = nix.assert(@src(), System, "ioctl", .{
+                    self.vm.fd,
+                    nix.KVM_IOEVENTFD,
+                    @intFromPtr(&kvm_ioeventfd),
+                });
+            }
+
+            for (self.msix_table, 0..) |entry, i| {
+                if (entry.vector_control != 0) continue;
+                const kvm_irqfd: nix.kvm_irqfd = .{
+                    .fd = if (i == self.config_msi)
+                        @intCast(self.config_irq.fd)
+                    else
+                        @intCast(self.queue_irqs[i - 1].fd),
+                    // The MSI number provided by the guest is converted to KVM
+                    // usable SPI by decrementing the KVM added offset
+                    .gsi = self.msix_table[i].message_data - Gicv2.GIC_INTERNAL_OFFSET,
+                };
+                _ = nix.assert(@src(), System, "ioctl", .{
+                    self.vm.fd,
+                    nix.KVM_IRQFD,
+                    @intFromPtr(&kvm_irqfd),
+                });
+            }
         }
 
         pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) VirtioAction {

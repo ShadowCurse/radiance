@@ -14,6 +14,7 @@ vcpu_threads: []std.Thread,
 vcpus_barrier: *std.Thread.ResetEvent,
 vcpu_reg_list: *Vcpu.RegList,
 vcpu_regs: []u8,
+vcpu_mpstates: []nix.kvm_mp_state,
 gicv2: Gicv2,
 gicv2_state: *Gicv2.State,
 permanent_memory: Memory.Permanent,
@@ -28,6 +29,7 @@ pub fn init(
     vcpus_barrier: *std.Thread.ResetEvent,
     vcpu_reg_list: *Vcpu.RegList,
     vcpu_regs: []u8,
+    vcpu_mpstates: []nix.kvm_mp_state,
     gicv2: Gicv2,
     gicv2_state: *Gicv2.State,
     permanent_memory: Memory.Permanent,
@@ -51,6 +53,7 @@ pub fn init(
         .vcpus_barrier = vcpus_barrier,
         .vcpu_reg_list = vcpu_reg_list,
         .vcpu_regs = vcpu_regs,
+        .vcpu_mpstates = vcpu_mpstates,
         .gicv2 = gicv2,
         .gicv2_state = gicv2_state,
         .permanent_memory = permanent_memory,
@@ -99,24 +102,23 @@ pub fn handle(self: *Self, comptime System: type) void {
 
             const snapshot_fd = nix.assert(@src(), System, "open", .{
                 snapshot_path,
-                .{ .ACCMODE = .WRONLY, .CREAT = true },
-                0,
+                .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true },
+                std.os.linux.S.IRWXU,
             });
             defer System.close(snapshot_fd);
+
+            _ = std.os.linux.ftruncate(snapshot_fd, @intCast(self.permanent_memory.mem.len));
 
             self.gicv2.save_state(nix.System, self.gicv2_state);
             // No reason to query list more than 1 time
             if (self.vcpu_reg_list[0] == 0) {
-                log.debug(@src(), "Getting the register list", .{});
                 self.vcpus[0].get_reg_list(nix.System, self.vcpu_reg_list);
             }
             var regs_bytes = self.vcpu_regs;
-            for (self.vcpus, 0..) |vcpu, i| {
-                log.debug(@src(), "Saving state for vcpu {d}", .{i});
-                const used = vcpu.save_regs(nix.System, self.vcpu_reg_list, regs_bytes);
+            for (self.vcpus, self.vcpu_mpstates) |*vcpu, *mpstate| {
+                const used = vcpu.save_regs(nix.System, self.vcpu_reg_list, regs_bytes, mpstate);
                 regs_bytes = regs_bytes[used..];
             }
-            log.debug(@src(), "Unused vcpu state bytes: {d}", .{regs_bytes.len});
 
             _ = nix.assert(
                 @src(),
@@ -124,6 +126,7 @@ pub fn handle(self: *Self, comptime System: type) void {
                 "write",
                 .{ snapshot_fd, self.permanent_memory.mem },
             );
+            _ = std.os.linux.fsync(snapshot_fd);
         }
     }
 }

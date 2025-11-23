@@ -71,6 +71,62 @@ pub fn init(comptime System: type, memory: []align(HOST_PAGE_SIZE) u8) Self {
     };
 }
 
+pub fn restore(self: *Self, comptime System: type, memory: []align(HOST_PAGE_SIZE) u8) void {
+    const memfd = nix.assert(@src(), System, "memfd_create", .{ "iov_ring", nix.FD_CLOEXEC });
+    nix.assert(@src(), System, "ftruncate", .{ memfd, HOST_PAGE_SIZE });
+    const mem = nix.assert(@src(), System, "mmap", .{
+        null,
+        HOST_PAGE_SIZE * 2,
+        nix.PROT.NONE,
+        nix.MAP{
+            .TYPE = .PRIVATE,
+            .ANONYMOUS = true,
+        },
+        -1,
+        0,
+    });
+    _ = nix.assert(@src(), System, "mmap", .{
+        mem.ptr,
+        HOST_PAGE_SIZE,
+        nix.PROT.READ | nix.PROT.WRITE,
+        nix.MAP{
+            .TYPE = .SHARED,
+            .FIXED = true,
+        },
+        memfd,
+        0,
+    });
+    _ = nix.assert(@src(), System, "mmap", .{
+        mem.ptr + HOST_PAGE_SIZE,
+        HOST_PAGE_SIZE,
+        nix.PROT.READ | nix.PROT.WRITE,
+        nix.MAP{
+            .TYPE = .SHARED,
+            .FIXED = true,
+        },
+        memfd,
+        0,
+    });
+    // `memory` will contain old state, copy it to new allocation before
+    // mmaping memfd on top of `memory`
+    @memcpy(mem[0..BACKING_SIZE], memory);
+    // This one mapps the provided memory to the same memfd. This way the same data
+    // will be available in 3 different virtual pages. This is done to be able to save
+    // the state of the iovecs.
+    _ = nix.assert(@src(), System, "mmap", .{
+        memory.ptr,
+        HOST_PAGE_SIZE,
+        nix.PROT.READ | nix.PROT.WRITE,
+        nix.MAP{
+            .TYPE = .SHARED,
+            .FIXED = true,
+        },
+        memfd,
+        0,
+    });
+    self.iovecs = @ptrCast(mem.ptr);
+}
+
 pub fn push_back(self: *Self, iovec: nix.iovec) void {
     log.assert(
         @src(),

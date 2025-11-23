@@ -125,6 +125,8 @@ pub const KVM_RUN = _IO(KVMIO, 0x80);
 pub const KVM_GET_ONE_REG = _IOW(KVMIO, 0xab, kvm_one_reg);
 pub const KVM_SET_ONE_REG = _IOW(KVMIO, 0xac, kvm_one_reg);
 pub const KVM_GET_REG_LIST = _IOWR(KVMIO, @as(c_int, 0xb0), kvm_reg_list);
+pub const KVM_GET_MP_STATE = _IOR(KVMIO, @as(c_int, 0x98), kvm_mp_state);
+pub const KVM_SET_MP_STATE = _IOW(KVMIO, @as(c_int, 0x99), kvm_mp_state);
 
 pub const KVM_SET_DEVICE_ATTR = _IOW(KVMIO, 0xe1, kvm_device_attr);
 pub const KVM_GET_DEVICE_ATTR = _IOW(KVMIO, 0xe2, kvm_device_attr);
@@ -286,6 +288,9 @@ pub const kvm_one_reg = extern struct {
 pub const kvm_reg_list = extern struct {
     n: u64 = 0,
     // regs: []u64,
+};
+pub const kvm_mp_state = extern struct {
+    mp_state: u32 = 0,
 };
 pub const user_pt_regs = extern struct {
     regs: [31]u64 = .{0} ** 31,
@@ -684,6 +689,8 @@ test "test_bindings" {
     try std.testing.expectEqual(KVM_GET_ONE_REG, C.KVM_GET_ONE_REG);
     try std.testing.expectEqual(KVM_SET_ONE_REG, C.KVM_SET_ONE_REG);
     try std.testing.expectEqual(KVM_GET_REG_LIST, C.KVM_GET_REG_LIST);
+    try std.testing.expectEqual(KVM_GET_MP_STATE, C.KVM_GET_MP_STATE);
+    try std.testing.expectEqual(KVM_SET_MP_STATE, C.KVM_SET_MP_STATE);
 
     try std.testing.expectEqual(KVM_SET_DEVICE_ATTR, C.KVM_SET_DEVICE_ATTR);
     try std.testing.expectEqual(KVM_GET_DEVICE_ATTR, C.KVM_GET_DEVICE_ATTR);

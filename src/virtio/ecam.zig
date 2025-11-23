@@ -274,25 +274,39 @@ pub const HeaderBarSizes = struct {
 
 const Self = @This();
 
-pub fn init(memory: []align(8) u8, pci_devices: usize) !*Self {
+pub fn init(memory: []align(8) u8, pci_devices: usize) *Self {
     var mem: []align(8) u8 = memory;
 
     var self: *Self = @ptrCast(mem[0..@sizeOf(Self)]);
     mem = mem[@sizeOf(Self)..];
 
     const headers_bytes = @sizeOf(Type0ConfigurationHeader) * pci_devices;
-    const headers: []Type0ConfigurationHeader = @ptrCast(mem[0..headers_bytes]);
+    self.headers = @ptrCast(mem[0..headers_bytes]);
     mem = @alignCast(mem[headers_bytes..]);
-    for (headers) |*h| h.* = .{};
+    for (self.headers) |*h| h.* = .{};
 
     const headers_meta_bytes = @sizeOf(HeaderBarSizes) * pci_devices;
-    const headers_meta: []HeaderBarSizes = @ptrCast(mem[0..headers_meta_bytes]);
-    for (headers_meta) |*h| h.* = .{};
+    self.headers_meta = @ptrCast(mem[0..headers_meta_bytes]);
+    for (self.headers_meta) |*h| h.* = .{};
 
-    self.headers = headers;
-    self.headers_meta = headers_meta;
     self.num_devices = 0;
     self.virtio_device_capability = .{};
+    return self;
+}
+
+pub fn restore(memory: []align(8) u8, pci_devices: usize) *Self {
+    var mem: []align(8) u8 = memory;
+
+    var self: *Self = @ptrCast(mem[0..@sizeOf(Self)]);
+    mem = mem[@sizeOf(Self)..];
+
+    const headers_bytes = @sizeOf(Type0ConfigurationHeader) * pci_devices;
+    self.headers = @ptrCast(mem[0..headers_bytes]);
+    mem = @alignCast(mem[headers_bytes..]);
+
+    const headers_meta_bytes = @sizeOf(HeaderBarSizes) * pci_devices;
+    self.headers_meta = @ptrCast(mem[0..headers_meta_bytes]);
+
     return self;
 }
 
