@@ -1,4 +1,5 @@
 const std = @import("std");
+const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
 // PL031 RTC
@@ -24,12 +25,16 @@ const ID = [_]u8{ 0x31, 0x10, 0x14, 0x00, 0x0d, 0xf0, 0x05, 0xb1 };
 
 const Self = @This();
 
-fn now() u32 {
-    const n = std.time.Instant.now() catch unreachable;
-    return @intCast(n.timestamp.sec);
+fn now(comptime System: type) u32 {
+    var tv: nix.timeval = undefined;
+    System.gettimeofday(&tv, null);
+    return @intCast(tv.sec);
 }
 
-pub fn write(self: *Self, offset: u64, data: []u8) void {
+pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+    self.write(nix.System, offset, data);
+}
+pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
     log.assert(
         @src(),
         data.len == @sizeOf(u32),
@@ -42,7 +47,7 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
         RTCMR => self.match = val,
         RTCLR => {
             self.load = val;
-            self.time_offset = self.load - now();
+            self.time_offset = self.load - now(System);
         },
         RTCCR => {},
         RTCIMSC => self.interrupt_mask_or_clear = val & 1,
@@ -58,7 +63,10 @@ pub fn write(self: *Self, offset: u64, data: []u8) void {
     }
 }
 
-pub fn read(self: *Self, offset: u64, data: []u8) void {
+pub fn read_default(self: *Self, offset: u64, data: []u8) void {
+    self.read(nix.System, offset, data);
+}
+pub fn read(self: *Self, comptime System: type, offset: u64, data: []u8) void {
     log.assert(
         @src(),
         data.len == @sizeOf(u32),
@@ -67,7 +75,7 @@ pub fn read(self: *Self, offset: u64, data: []u8) void {
     );
     const val: *u32 = @ptrCast(@alignCast(data.ptr));
     val.* = switch (offset) {
-        RTCDR => now() + self.time_offset,
+        RTCDR => now(System) + self.time_offset,
         RTCMR => self.match,
         RTCLR => self.load,
         RTCCR => 1,
