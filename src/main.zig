@@ -718,10 +718,7 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
     }
     vmm_state.gicv2.restore_state(nix.System, state.gicv2_state);
 
-    vmm_state.ecam = .restore(
-        state.ecam_memory,
-        state.block_pci.len + state.block_pci_io_uring.len,
-    );
+    vmm_state.ecam = @ptrCast(state.ecam_memory.ptr);
     vmm_state.mmio = .init(vmm_state.ecam);
     vmm_state.el = .init(nix.System);
     vmm_state.vcpu_barrier = .{};
