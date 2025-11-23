@@ -156,6 +156,30 @@ pub const Permanent = struct {
         });
         return .{ .mem = mem };
     }
+
+    pub fn init_from_snapshot(comptime System: type, snapshot_path: []const u8) Self {
+        const fd = nix.assert(@src(), System, "open", .{
+            snapshot_path,
+            .{ .ACCMODE = .RDWR },
+            0,
+        });
+        defer System.close(fd);
+        const statx = nix.assert(@src(), System, "statx", .{fd});
+
+        const mem = nix.assert(@src(), System, "mmap", .{
+            @ptrFromInt(LOCATION),
+            statx.size,
+            nix.PROT.READ | nix.PROT.WRITE,
+            .{
+                .TYPE = .PRIVATE,
+                .FIXED = true,
+                .NORESERVE = true,
+            },
+            fd,
+            0,
+        });
+        return .{ .mem = mem };
+    }
 };
 
 pub fn align_addr(addr: u64, align_to: u64) u64 {

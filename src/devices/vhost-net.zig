@@ -94,6 +94,47 @@ pub const VhostNet = struct {
         self.vhost = null;
     }
 
+    pub fn restore(
+        self: *Self,
+        comptime System: type,
+        vm: *Vm,
+        tap_name: []const u8,
+        mmio_info: Mmio.Resources.MmioVirtioInfo,
+    ) void {
+        self.tun = nix.assert(@src(), System, "open", .{
+            "/dev/net/tun",
+            .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
+            0,
+        });
+        var ifreq = nix.ifreq{
+            .flags = .{ .TAP = true, .NO_PI = true, .VNET_HDR = true },
+        };
+        log.assert(
+            @src(),
+            tap_name.len <= nix.IFNAMESIZE,
+            "VhostNet dev_name: {s} is larger than maxinum allowed size: {d}",
+            .{ tap_name, @as(u32, nix.IFNAMESIZE) },
+        );
+        @memcpy(ifreq.name[0..tap_name.len], tap_name);
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.tun,
+            nix.TUNSETIFF,
+            @intFromPtr(&ifreq),
+        });
+        const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.tun,
+            nix.TUNSETVNETHDRSZ,
+            @intFromPtr(&size),
+        });
+
+        self.activate(System);
+        self.context.restore(System, vm, mmio_info);
+
+        for (&self.context.queue_events) |*queue_event|
+            queue_event.write(System, 1);
+    }
+
     pub fn activate(
         self: *Self,
         comptime System: type,

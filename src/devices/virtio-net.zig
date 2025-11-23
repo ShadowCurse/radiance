@@ -108,6 +108,52 @@ pub const VirtioNet = struct {
         self.tx_chain = tx_chain;
     }
 
+    pub fn restore(
+        self: *Self,
+        comptime System: type,
+        vm: *Vm,
+        tap_name: []const u8,
+        mmio_info: Mmio.Resources.MmioVirtioInfo,
+        iov_ring_memory: []align(Memory.HOST_PAGE_SIZE) u8,
+    ) void {
+        self.rx_chains.restore(System, iov_ring_memory);
+
+        self.tun = nix.assert(@src(), System, "open", .{
+            "/dev/net/tun",
+            .{ .CLOEXEC = true, .NONBLOCK = true, .ACCMODE = .RDWR },
+            0,
+        });
+        var ifreq = nix.ifreq{
+            .flags = .{ .TAP = true, .NO_PI = true, .VNET_HDR = true },
+        };
+        log.assert(
+            @src(),
+            tap_name.len <= nix.IFNAMESIZE,
+            "VhostNet dev_name: {s} is larger than maxinum allowed size: {d}",
+            .{ tap_name, @as(u32, nix.IFNAMESIZE) },
+        );
+        @memcpy(ifreq.name[0..tap_name.len], tap_name);
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.tun,
+            nix.TUNSETIFF,
+            @intFromPtr(&ifreq),
+        });
+        const size = @as(i32, @sizeOf(nix.virtio_net_hdr_v1));
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.tun,
+            nix.TUNSETVNETHDRSZ,
+            @intFromPtr(&size),
+        });
+
+        self.activate(System);
+        self.context.restore(System, vm, mmio_info);
+
+        // Rerun rx/tx processing in case there was an event
+        // before state was saved
+        self.process_tap(System);
+        self.process_tx(System);
+    }
+
     pub fn activate(self: *Self, comptime System: type) void {
         // TUN_F_CSUM - L4 packet checksum offload
         // TUN_F_TSO4 - TCP Segmentation Offload - TSO for IPv4 packets
@@ -168,9 +214,9 @@ pub const VirtioNet = struct {
     }
 
     pub fn event_process_rx(self: *Self) void {
-        self.process_rx(nix.System);
+        self.process_rx_event(nix.System);
     }
-    pub fn process_rx(self: *Self, comptime System: type) void {
+    pub fn process_rx_event(self: *Self, comptime System: type) void {
         _ = self.context.queue_events[RX_INDEX].read(System);
         self.process_tap(System);
     }
@@ -178,8 +224,11 @@ pub const VirtioNet = struct {
     pub fn event_process_tx(self: *Self) void {
         self.process_tx(nix.System);
     }
-    pub fn process_tx(self: *Self, comptime System: type) void {
+    pub fn process_tx_event(self: *Self, comptime System: type) void {
         _ = self.context.queue_events[TX_INDEX].read(System);
+        self.process_tx(System);
+    }
+    pub fn process_tx(self: *Self, comptime System: type) void {
         const queue = &self.context.queues[TX_INDEX];
 
         while (queue.pop_desc_chain(self.memory)) |dc| {
@@ -264,6 +313,14 @@ const RxChains = struct {
             .iovec_ring = .init(System, iov_ring_memory),
             .chain_infos = .empty,
         };
+    }
+
+    pub fn restore(
+        self: *Self,
+        comptime System: type,
+        iov_ring_memory: []align(Memory.HOST_PAGE_SIZE) u8,
+    ) void {
+        self.iovec_ring.restore(System, iov_ring_memory);
     }
 
     pub fn first_chain_slice(self: *Self) []nix.iovec {

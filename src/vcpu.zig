@@ -177,11 +177,13 @@ pub fn save_regs(
     comptime System: type,
     reg_list: *const RegList,
     reg_bytes: []u8,
+    mp_state: *nix.kvm_mp_state,
 ) usize {
     var bytes = reg_bytes;
-    var value: u2048 = 0;
     for (0..reg_list[0]) |i| {
         const reg_id = reg_list[1 + i];
+        var value: u2048 = 0;
+
         const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
         _ = nix.assert(@src(), System, "ioctl", .{
             self.fd,
@@ -190,15 +192,16 @@ pub fn save_regs(
         });
 
         const rs = reg_size(reg_id);
-        log.debug(
-            @src(),
-            "Got reg 0x{x} size: {d}, remaining bytes: {d}",
-            .{ reg_id, rs, bytes.len },
-        );
         const value_bytes: []u8 = @ptrCast(&value);
-        @memcpy(bytes[0..rs], value_bytes[@sizeOf(u2048) - rs .. @sizeOf(u2048)]);
+        @memcpy(bytes[0..rs], value_bytes[0..rs]);
         bytes = bytes[rs..];
     }
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_GET_MP_STATE,
+        @intFromPtr(mp_state),
+    });
+
     return reg_bytes.len - bytes.len;
 }
 
@@ -207,20 +210,16 @@ pub fn restore_regs(
     comptime System: type,
     reg_list: *const RegList,
     reg_bytes: []const u8,
+    mp_state: *const nix.kvm_mp_state,
 ) usize {
     var bytes = reg_bytes;
-    var value: u2048 = 0;
     for (0..reg_list[0]) |i| {
         const reg_id = reg_list[1 + i];
+        var value: u2048 = 0;
 
         const rs = reg_size(reg_id);
-        log.debug(
-            @src(),
-            "Got reg 0x{x} size: {d}, remaining bytes: {d}",
-            .{ reg_id, rs, bytes.len },
-        );
         const value_bytes: []u8 = @ptrCast(&value);
-        @memcpy(value_bytes[@sizeOf(u2048) - rs .. @sizeOf(u2048)], bytes[0..rs]);
+        @memcpy(value_bytes[0..rs], bytes[0..rs]);
         bytes = bytes[rs..];
 
         const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
@@ -230,6 +229,11 @@ pub fn restore_regs(
             @intFromPtr(&kor),
         });
     }
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_SET_MP_STATE,
+        @intFromPtr(mp_state),
+    });
     return reg_bytes.len - bytes.len;
 }
 
