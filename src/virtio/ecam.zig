@@ -294,22 +294,6 @@ pub fn init(memory: []align(8) u8, pci_devices: usize) *Self {
     return self;
 }
 
-pub fn restore(memory: []align(8) u8, pci_devices: usize) *Self {
-    var mem: []align(8) u8 = memory;
-
-    var self: *Self = @ptrCast(mem[0..@sizeOf(Self)]);
-    mem = mem[@sizeOf(Self)..];
-
-    const headers_bytes = @sizeOf(Type0ConfigurationHeader) * pci_devices;
-    self.headers = @ptrCast(mem[0..headers_bytes]);
-    mem = @alignCast(mem[headers_bytes..]);
-
-    const headers_meta_bytes = @sizeOf(HeaderBarSizes) * pci_devices;
-    self.headers_meta = @ptrCast(mem[0..headers_meta_bytes]);
-
-    return self;
-}
-
 pub fn add_header(
     self: *Self,
     device_type: u16,
