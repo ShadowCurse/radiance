@@ -16,8 +16,9 @@ const BlockPci = block_devices.BlockPci;
 const BlockMmio = block_devices.BlockMmio;
 const BlockPciIoUring = block_devices.BlockPciIoUring;
 const BlockMmioIoUring = block_devices.BlockMmioIoUring;
-const VhostNet = @import("devices/vhost-net.zig").VhostNet;
-const VirtioNet = @import("devices/virtio-net.zig").VirtioNet;
+const net_devices = @import("devices/net.zig");
+const NetMmio = net_devices.NetMmio;
+const NetMmioVhost = net_devices.NetMmioVhost;
 
 const Ecam = @import("virtio/ecam.zig");
 const IovRing = @import("virtio/iov_ring.zig");
@@ -72,8 +73,8 @@ fn check_aligments() void {
         BlockPci,
         BlockMmioIoUring,
         BlockPciIoUring,
-        VirtioNet,
-        VhostNet,
+        NetMmio,
+        NetMmioVhost,
         Ecam,
         Ecam.Type0ConfigurationHeader,
         Ecam.HeaderBarSizes,
@@ -244,7 +245,7 @@ fn from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void 
     // preallocate all mmio regions for the devices. This is needed to
     // pass a single slice of mmio regions to the fdt builder.
     const block_mmio_info_count = state.block_mmio.len + state.block_mmio_io_uring.len;
-    const net_mmio_info_count = state.net.len + state.vhost_net.len;
+    const net_mmio_info_count = state.net_mmio.len + state.net_mmio_vhost.len;
     const mmio_info_count = block_mmio_info_count + net_mmio_info_count;
     const mmio_infos = try tmp_alloc.alloc(Mmio.Resources.MmioVirtioInfo, mmio_info_count);
     var mmio_regions = state.mmio_regions;
@@ -284,18 +285,18 @@ fn from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void 
     create_net_mmio(
         runtime,
         state,
-        mmio_net_infos[0..state.net.len],
+        mmio_net_infos[0..state.net_mmio.len],
         config.network.configs.slice_const(),
     );
-    mmio_net_infos = mmio_net_infos[state.net.len..];
+    mmio_net_infos = mmio_net_infos[state.net_mmio.len..];
 
     create_net_mmio_vhost(
         runtime,
         state,
-        mmio_net_infos[0..state.vhost_net.len],
+        mmio_net_infos[0..state.net_mmio_vhost.len],
         config.network.configs.slice_const(),
     );
-    mmio_net_infos = mmio_net_infos[state.vhost_net.len..];
+    mmio_net_infos = mmio_net_infos[state.net_mmio_vhost.len..];
 
     var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
     const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmem.configs.slice_const().len);
@@ -538,7 +539,7 @@ fn create_net_mmio(
     var iov_ring = state.net_iov_ring;
     for (configs) |*config| {
         if (!config.vhost) {
-            const net = &state.net[index];
+            const net = &state.net_mmio[index];
             const mmio_info = mmio_infos[index];
             const iov_ring_memory = iov_ring[0..IovRing.BACKING_SIZE];
             iov_ring = iov_ring[IovRing.BACKING_SIZE..];
@@ -555,25 +556,25 @@ fn create_net_mmio(
             );
             runtime.mmio.add_device_virtio(.{
                 .ptr = net,
-                .read_ptr = @ptrCast(&VirtioNet.read),
-                .write_ptr = @ptrCast(&VirtioNet.write_default),
+                .read_ptr = @ptrCast(&NetMmio.read),
+                .write_ptr = @ptrCast(&NetMmio.write_default),
             });
             runtime.el.add_event(
                 nix.System,
                 net.context.queue_events[0].fd,
-                @ptrCast(&VirtioNet.event_process_rx),
+                @ptrCast(&NetMmio.event_process_rx),
                 net,
             );
             runtime.el.add_event(
                 nix.System,
                 net.context.queue_events[1].fd,
-                @ptrCast(&VirtioNet.event_process_tx),
+                @ptrCast(&NetMmio.event_process_tx),
                 net,
             );
             runtime.el.add_event(
                 nix.System,
                 net.tun,
-                @ptrCast(&VirtioNet.event_process_tap),
+                @ptrCast(&NetMmio.event_process_tap),
                 net,
             );
         }
@@ -589,7 +590,7 @@ fn create_net_mmio_vhost(
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.vhost) {
-            const net = &state.vhost_net[index];
+            const net = &state.net_mmio_vhost[index];
             const mmio_info = mmio_infos[index];
             index += 1;
 
@@ -603,8 +604,8 @@ fn create_net_mmio_vhost(
             );
             runtime.mmio.add_device_virtio(.{
                 .ptr = net,
-                .read_ptr = @ptrCast(&VhostNet.read),
-                .write_ptr = @ptrCast(&VhostNet.write_default),
+                .read_ptr = @ptrCast(&NetMmioVhost.read),
+                .write_ptr = @ptrCast(&NetMmioVhost.write_default),
             });
         }
     }
@@ -789,29 +790,29 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         info.mem_ptr = mmio_regions.ptr;
         mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
 
-        const net = &state.net[i];
+        const net = &state.net_mmio[i];
         net.restore(nix.System, &runtime.vm, path, info, iov_ring_bytes);
         runtime.mmio.add_device_virtio(.{
             .ptr = net,
-            .read_ptr = @ptrCast(&VirtioNet.read),
-            .write_ptr = @ptrCast(&VirtioNet.write_default),
+            .read_ptr = @ptrCast(&NetMmio.read),
+            .write_ptr = @ptrCast(&NetMmio.write_default),
         });
         runtime.el.add_event(
             nix.System,
             net.context.queue_events[0].fd,
-            @ptrCast(&VirtioNet.event_process_rx),
+            @ptrCast(&NetMmio.event_process_rx),
             net,
         );
         runtime.el.add_event(
             nix.System,
             net.context.queue_events[1].fd,
-            @ptrCast(&VirtioNet.event_process_tx),
+            @ptrCast(&NetMmio.event_process_tx),
             net,
         );
         runtime.el.add_event(
             nix.System,
             net.tun,
-            @ptrCast(&VirtioNet.event_process_tap),
+            @ptrCast(&NetMmio.event_process_tap),
             net,
         );
     }
@@ -824,31 +825,13 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         info.mem_ptr = mmio_regions.ptr;
         mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
 
-        const net = &state.vhost_net[i];
+        const net = &state.net_mmio_vhost[i];
         net.restore(nix.System, &runtime.vm, path, info);
         runtime.mmio.add_device_virtio(.{
             .ptr = net,
-            .read_ptr = @ptrCast(&VirtioNet.read),
-            .write_ptr = @ptrCast(&VirtioNet.write_default),
+            .read_ptr = @ptrCast(&NetMmioVhost.read),
+            .write_ptr = @ptrCast(&NetMmioVhost.write_default),
         });
-        runtime.el.add_event(
-            nix.System,
-            net.context.queue_events[0].fd,
-            @ptrCast(&VirtioNet.event_process_rx),
-            net,
-        );
-        runtime.el.add_event(
-            nix.System,
-            net.context.queue_events[1].fd,
-            @ptrCast(&VirtioNet.event_process_tx),
-            net,
-        );
-        runtime.el.add_event(
-            nix.System,
-            net.tun,
-            @ptrCast(&VirtioNet.event_process_tap),
-            net,
-        );
     }
     var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
     for (0..state.config_state.pmem_count) |_| {
@@ -906,8 +889,8 @@ pub const State = struct {
     block_pci: []BlockPci,
     block_mmio_io_uring: []BlockMmioIoUring,
     block_pci_io_uring: []BlockPciIoUring,
-    net: []VirtioNet,
-    vhost_net: []VhostNet,
+    net_mmio: []NetMmio,
+    net_mmio_vhost: []NetMmioVhost,
     ecam_memory: []align(8) u8,
     uart: *Uart,
     rtc: *Rtc,
@@ -961,8 +944,8 @@ pub const State = struct {
             @as(usize, @intCast(block_mmio_io_uring_count));
         const block_pci_io_uring_bytes = @sizeOf(BlockPciIoUring) *
             @as(usize, @intCast(block_pci_io_uring_count));
-        const net_bytes = @sizeOf(VirtioNet) * @as(usize, @intCast(net_mmio_count));
-        const vhost_net_bytes = @sizeOf(VhostNet) * @as(usize, @intCast(net_vhost_mmio_count));
+        const net_bytes = @sizeOf(NetMmio) * @as(usize, @intCast(net_mmio_count));
+        const vhost_net_bytes = @sizeOf(NetMmioVhost) * @as(usize, @intCast(net_vhost_mmio_count));
 
         const ecam_bytes = @sizeOf(Ecam) +
             @sizeOf(Ecam.Type0ConfigurationHeader) * pci_devices +
@@ -1066,11 +1049,11 @@ pub const State = struct {
         pm = pm[block_pci_io_uring_bytes..];
 
         log.debug(@src(), "net_bytes: {d}", .{net_bytes});
-        result.net = @ptrCast(@alignCast(pm[0..net_bytes]));
+        result.net_mmio = @ptrCast(@alignCast(pm[0..net_bytes]));
         pm = pm[net_bytes..];
 
         log.debug(@src(), "vhost_net_bytes: {d}", .{vhost_net_bytes});
-        result.vhost_net = @ptrCast(@alignCast(pm[0..vhost_net_bytes]));
+        result.net_mmio_vhost = @ptrCast(@alignCast(pm[0..vhost_net_bytes]));
         pm = pm[vhost_net_bytes..];
 
         log.debug(@src(), "ecam_bytes: {d}", .{ecam_bytes});
@@ -1251,9 +1234,9 @@ pub const State = struct {
         const block_pci_io_uring_bytes = @sizeOf(BlockPciIoUring) *
             @as(usize, @intCast(result.config_state.block_pci_io_uring_count));
         const net_bytes =
-            @sizeOf(VirtioNet) * @as(usize, @intCast(result.config_state.net_mmio_count));
+            @sizeOf(NetMmio) * @as(usize, @intCast(result.config_state.net_mmio_count));
         const vhost_net_bytes =
-            @sizeOf(VhostNet) * @as(usize, @intCast(result.config_state.net_vhost_mmio_count));
+            @sizeOf(NetMmioVhost) * @as(usize, @intCast(result.config_state.net_vhost_mmio_count));
 
         const pci_devices =
             result.config_state.block_pci_count + result.config_state.block_pci_io_uring_count;
@@ -1311,11 +1294,11 @@ pub const State = struct {
         pm = pm[block_pci_io_uring_bytes..];
 
         log.debug(@src(), "net_bytes: {d}", .{net_bytes});
-        result.net = @ptrCast(@alignCast(pm[0..net_bytes]));
+        result.net_mmio = @ptrCast(@alignCast(pm[0..net_bytes]));
         pm = pm[net_bytes..];
 
         log.debug(@src(), "vhost_net_bytes: {d}", .{vhost_net_bytes});
-        result.vhost_net = @ptrCast(@alignCast(pm[0..vhost_net_bytes]));
+        result.net_mmio_vhost = @ptrCast(@alignCast(pm[0..vhost_net_bytes]));
         pm = pm[vhost_net_bytes..];
 
         log.debug(@src(), "ecam_bytes: {d}", .{ecam_bytes});
