@@ -43,7 +43,26 @@ const Register = struct {
     }
 
     fn with_bits_per_irq(offset: u32, bits: u32) Register {
-        return .{ .offset = offset, .len = bits * 1024 / 8 / @sizeOf(u32) };
+        // Skip KVM only registers
+        const start = offset + GIC_INTERNAL_OFFSET * bits / 8;
+        const size_in_bits = bits * IRQ_MAX;
+        const size_in_bytes = size_in_bits / 8;
+        log.comptime_assert(
+            @src(),
+            size_in_bits % 8 == 0,
+            "Number of bits must be multiple of 8, got: {d}",
+            .{size_in_bits},
+        );
+        log.comptime_assert(
+            @src(),
+            size_in_bytes % 4 == 0,
+            "Number of bytes must be multiple of 4, got: {d}",
+            .{size_in_bytes},
+        );
+        return .{
+            .offset = start,
+            .len = size_in_bytes / @sizeOf(u32),
+        };
     }
 };
 
@@ -72,8 +91,8 @@ const VGIC_CPU_REGS = [_]Register{
 // Only RW regs
 // Kernel defines:
 // https://elixir.bootlin.com/linux/v6.17.7/source/include/linux/irqchip/arm-gic.h#L42
-const GIC_DIST_CTRL: Register = .with_byte_len(0x000, 12);
-const GIC_DIST_IGROUP: Register = .with_bits_per_irq(0x080, 1);
+const GIC_DIST_CTRL: Register = .with_byte_len(0x0, 12);
+const GIC_DIST_IGROUP: Register = .with_bits_per_irq(0x80, 1);
 const GIC_DIST_ENABLE_SET: Register = .with_bits_per_irq(0x100, 1);
 const GIC_DIST_ENABLE_CLEAR: Register = .with_bits_per_irq(0x180, 1);
 const GIC_DIST_PENDING_SET: Register = .with_bits_per_irq(0x200, 1);
@@ -85,17 +104,20 @@ const GIC_DIST_CONFIG: Register = .with_bits_per_irq(0xc00, 2);
 const GIC_DIST_SGI_PENDING_CLEAR: Register = .with_byte_len(0xf10, 16);
 const GIC_DIST_SGI_PENDING_SET: Register = .with_byte_len(0xf20, 16);
 
+// The order here is different from definitions above because
+// of a dependency between CLEAR and SET registers
 const VGIC_DIST_REGS = [_]Register{
+    GIC_DIST_PRI,
     GIC_DIST_CTRL,
     GIC_DIST_IGROUP,
-    GIC_DIST_ENABLE_SET,
-    GIC_DIST_ENABLE_CLEAR,
-    GIC_DIST_PENDING_SET,
-    GIC_DIST_PENDING_CLEAR,
-    GIC_DIST_ACTIVE_SET,
-    GIC_DIST_ACTIVE_CLEAR,
-    GIC_DIST_PRI,
     GIC_DIST_CONFIG,
+    // Must restore CLEAR before SET, oterwise VM stalls
+    GIC_DIST_ENABLE_CLEAR,
+    GIC_DIST_ENABLE_SET,
+    GIC_DIST_PENDING_CLEAR,
+    GIC_DIST_PENDING_SET,
+    GIC_DIST_ACTIVE_CLEAR,
+    GIC_DIST_ACTIVE_SET,
     GIC_DIST_SGI_PENDING_CLEAR,
     GIC_DIST_SGI_PENDING_SET,
 };
