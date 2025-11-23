@@ -35,6 +35,8 @@ pub const System = struct {
     pub const bind = std.os.linux.bind;
     pub const listen = std.os.linux.listen;
 
+    pub const gettimeofday = std.posix.gettimeofday;
+
     pub fn statx(fd: fd_t) !Statx {
         var stx = std.mem.zeroes(Statx);
         const rcx = std.os.linux.statx(
@@ -482,6 +484,7 @@ pub const SOCK = std.posix.SOCK;
 pub const ReadError = std.posix.ReadError;
 pub const iovec = std.posix.iovec;
 pub const iovec_const = std.posix.iovec_const;
+pub const timeval = std.posix.timeval;
 
 pub const MSF = std.posix.MSF;
 

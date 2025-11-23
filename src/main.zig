@@ -267,8 +267,8 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
 
     vmm_state.mmio.add_device(.{
         .ptr = state.rtc,
-        .read_ptr = @ptrCast(&Rtc.read),
-        .write_ptr = @ptrCast(&Rtc.write),
+        .read_ptr = @ptrCast(&Rtc.read_default),
+        .write_ptr = @ptrCast(&Rtc.write_default),
     });
 
     if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
@@ -744,8 +744,8 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
 
     vmm_state.mmio.add_device(.{
         .ptr = state.rtc,
-        .read_ptr = @ptrCast(&Rtc.read),
-        .write_ptr = @ptrCast(&Rtc.write),
+        .read_ptr = @ptrCast(&Rtc.read_default),
+        .write_ptr = @ptrCast(&Rtc.write_default),
     });
 
     if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
