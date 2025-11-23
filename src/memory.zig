@@ -147,6 +147,7 @@ pub const Permanent = struct {
             nix.PROT.READ | nix.PROT.WRITE,
             nix.MAP{
                 .TYPE = .PRIVATE,
+                .FIXED = true,
                 .ANONYMOUS = true,
                 .NORESERVE = true,
             },
