@@ -211,7 +211,9 @@ fn from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void 
     const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
 
     for (state.vcpus, 0..) |*vcpu, i|
-        vcpu.* = .init(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
+        vcpu.* = .create(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size);
+    for (state.vcpus, 0..) |*vcpu, i| vcpu.init(nix.System, i, kvi);
+
     runtime.gicv2 = .init(nix.System, runtime.vm);
 
     if (config.uart.enabled) {
@@ -638,7 +640,8 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
     const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
 
     for (state.vcpus, 0..) |*vcpu, i|
-        vcpu.* = .init(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
+        vcpu.* = .create(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size);
+    for (state.vcpus, 0..) |*vcpu, i| vcpu.init(nix.System, i, kvi);
     runtime.gicv2 = .init(nix.System, runtime.vm);
 
     var regs_bytes = state.vcpu_regs;

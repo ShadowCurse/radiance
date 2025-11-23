@@ -82,13 +82,12 @@ pub fn pause(self: *const Self, comptime System: type) void {
     _ = System.tkill(self.tid, VCPU_SIGNAL);
 }
 
-pub fn init(
+pub fn create(
     comptime System: type,
     vm: Vm,
     index: u64,
     exit_event: EventFd,
     vcpu_mmap_size: u32,
-    preferred_target: nix.kvm_vcpu_init,
 ) Self {
     const fd = nix.assert(@src(), System, "ioctl", .{
         vm.fd,
@@ -110,24 +109,32 @@ pub fn init(
         @as(u64, 0),
     });
 
-    var kvi = preferred_target;
-    kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_PSCI_0_2;
-    // All vcpus are powered off except first one
-    if (0 < index) {
-        kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
-    }
-    _ = nix.assert(@src(), System, "ioctl", .{
-        fd,
-        nix.KVM_ARM_VCPU_INIT,
-        @intFromPtr(&kvi),
-    });
-
     return Self{
         .fd = fd,
         .kvm_run = @ptrCast(kvm_run.ptr),
         .tid = 0,
         .exit_event = exit_event,
     };
+}
+
+/// Init must be called after all vcpus have been created
+pub fn init(
+    self: *const Self,
+    comptime System: type,
+    index: u64,
+    preferred_target: nix.kvm_vcpu_init,
+) void {
+    var kvi = preferred_target;
+    kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_PSCI_0_2;
+    // All vcpus are powered off except first one
+    if (0 < index) kvi.features[0] |= 1 << nix.KVM_ARM_VCPU_POWER_OFF;
+
+    _ = nix.assert(
+        @src(),
+        System,
+        "ioctl",
+        .{ self.fd, nix.KVM_ARM_VCPU_INIT, @intFromPtr(&kvi) },
+    );
 }
 
 pub fn set_reg(
