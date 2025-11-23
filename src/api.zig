@@ -15,8 +15,8 @@ vcpus_barrier: *std.Thread.ResetEvent,
 vcpu_reg_list: *Vcpu.RegList,
 vcpu_regs: []u8,
 vcpu_mpstates: []nix.kvm_mp_state,
-gicv2: Gicv2,
-gicv2_state: *Gicv2.State,
+gicv2: *const Gicv2,
+gicv2_state: []u32,
 permanent_memory: Memory.Permanent,
 
 const Self = @This();
@@ -30,8 +30,8 @@ pub fn init(
     vcpu_reg_list: *Vcpu.RegList,
     vcpu_regs: []u8,
     vcpu_mpstates: []nix.kvm_mp_state,
-    gicv2: Gicv2,
-    gicv2_state: *Gicv2.State,
+    gicv2: *const Gicv2,
+    gicv2_state: []u32,
     permanent_memory: Memory.Permanent,
 ) Self {
     const address = std.net.Address.initUnix(socket_path) catch |err| {
@@ -109,7 +109,7 @@ pub fn handle(self: *Self, comptime System: type) void {
 
             _ = std.os.linux.ftruncate(snapshot_fd, @intCast(self.permanent_memory.mem.len));
 
-            self.gicv2.save_state(nix.System, self.gicv2_state);
+            self.gicv2.save_state(nix.System, self.gicv2_state, @intCast(self.vcpus.len));
             // No reason to query list more than 1 time
             if (self.vcpu_reg_list[0] == 0) {
                 self.vcpus[0].get_reg_list(nix.System, self.vcpu_reg_list);
