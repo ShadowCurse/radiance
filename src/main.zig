@@ -39,7 +39,7 @@ pub const std_options = std.Options{
 };
 
 pub const log_options = log.Options{
-    .level = .Info,
+    .level = .Debug,
     .colors = true,
 };
 
@@ -193,7 +193,7 @@ fn from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void 
             state.vcpu_reg_list,
             state.vcpu_regs,
             state.vcpu_mp_states,
-            runtime.gicv2,
+            &runtime.gicv2,
             state.gicv2_state,
             state.permanent_memory,
         );
@@ -649,7 +649,7 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         const used = vcpu.restore_regs(nix.System, state.vcpu_reg_list, regs_bytes, mp_state);
         regs_bytes = regs_bytes[used..];
     }
-    runtime.gicv2.restore_state(nix.System, state.gicv2_state);
+    runtime.gicv2.restore_state(nix.System, state.gicv2_state, @intCast(state.vcpus.len));
 
     if (state.config_state.uart_enabled) {
         runtime.terminal_state = configure_terminal(nix.System);
@@ -914,7 +914,7 @@ pub const State = struct {
     vcpu_reg_list: *Vcpu.RegList,
     vcpu_regs: []u8,
     vcpu_mp_states: []nix.kvm_mp_state,
-    gicv2_state: *Gicv2.State,
+    gicv2_state: []u32,
     config_devices_state: []u8,
     config_state: *ConfigState,
 
@@ -979,7 +979,8 @@ pub const State = struct {
         const vcpu_regs_bytes = config.machine.vcpus * Vcpu.PER_VCPU_REGS_BYTES;
         // 4 byte aligned
         const vcpu_mpstates_bytes = config.machine.vcpus * @sizeOf(nix.kvm_mp_state);
-        const gicv2_state_bytes = @sizeOf(Gicv2.State);
+        const gicv2_state_bytes =
+            config.machine.vcpus * Gicv2.VGIC_CPU_REGS_BYTES + Gicv2.VGIC_DIST_REGS_BYTES;
         // 1 byte aligned
         var config_devices_bytes: usize = 0;
         // The only thing needed saving for devices are paths and read_only flags
@@ -1268,7 +1269,8 @@ pub const State = struct {
         const vcpu_reg_list_bytes = @sizeOf(Vcpu.RegList);
         const vcpu_regs_bytes = result.config_state.vcpus * Vcpu.PER_VCPU_REGS_BYTES;
         const vcpu_mpstates_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_mp_state);
-        const gicv2_state_bytes = @sizeOf(Gicv2.State);
+        const gicv2_state_bytes =
+            result.config_state.vcpus * Gicv2.VGIC_CPU_REGS_BYTES + Gicv2.VGIC_DIST_REGS_BYTES;
 
         log.debug(@src(), "memory_bytes: {d}", .{memory_bytes});
         result.memory = .{ .mem = @alignCast(pm[0..memory_bytes]) };

@@ -128,9 +128,8 @@ fn total_regs_entries(regs: []const Register) u32 {
     return total;
 }
 
-const VGIC_INTERFACE_REGS_BYTES = total_regs_entries(&VGIC_CPU_REGS);
-const VGIC_DIST_REGS_BYTES = total_regs_entries(&VGIC_DIST_REGS);
-pub const State = [VGIC_INTERFACE_REGS_BYTES + VGIC_DIST_REGS_BYTES]u32;
+pub const VGIC_CPU_REGS_BYTES = total_regs_entries(&VGIC_CPU_REGS) * @sizeOf(u32);
+pub const VGIC_DIST_REGS_BYTES = total_regs_entries(&VGIC_DIST_REGS) * @sizeOf(u32);
 
 fd: nix.fd_t,
 
@@ -187,24 +186,35 @@ pub fn init(comptime System: type, vm: Vm) Self {
     return .{ .fd = fd };
 }
 
-pub fn save_state(self: *const Self, comptime System: type, state: *State) void {
+fn cpu_register_offset(base_offset: u64, reg_index: u64, vcpu_index: u64) u64 {
+    // The CPUID for KVM is just an index into `kvm->vcpu_array`
+    // https://elixir.bootlin.com/linux/v6.17.7/source/include/linux/kvm_host.h#L780)
+    var result: u64 = base_offset + reg_index * @sizeOf(u32);
+    result &= nix.KVM_DEV_ARM_VGIC_OFFSET_MASK;
+    result |= vcpu_index << nix.KVM_DEV_ARM_VGIC_CPUID_SHIFT;
+    return result;
+}
+pub fn save_state(self: *const Self, comptime System: type, state: []u32, num_vcpus: u32) void {
     var current_reg: u32 = 0;
-    for (VGIC_CPU_REGS) |reg| {
-        for (0..reg.len) |i| {
-            get_attribute(
-                System,
-                self.fd,
-                0,
-                nix.KVM_DEV_ARM_VGIC_GRP_CPU_REGS,
-                reg.offset + i * @sizeOf(u32),
-                @intFromPtr(&state[current_reg]),
-            );
-            log.debug(
-                @src(),
-                "Reading GICv2 cpu reg: 0x{x} value: 0x{x}",
-                .{ reg.offset + i * @sizeOf(u32), state[current_reg] },
-            );
-            current_reg += 1;
+    for (0..num_vcpus) |v| {
+        for (VGIC_CPU_REGS) |reg| {
+            for (0..reg.len) |i| {
+                const offset = cpu_register_offset(reg.offset, i, v);
+                get_attribute(
+                    System,
+                    self.fd,
+                    0,
+                    nix.KVM_DEV_ARM_VGIC_GRP_CPU_REGS,
+                    offset,
+                    @intFromPtr(&state[current_reg]),
+                );
+                log.debug(
+                    @src(),
+                    "Reading GICv2 cpu reg: 0x{x} value: 0x{x}",
+                    .{ offset, state[current_reg] },
+                );
+                current_reg += 1;
+            }
         }
     }
 
@@ -228,24 +238,32 @@ pub fn save_state(self: *const Self, comptime System: type, state: *State) void 
     }
 }
 
-pub fn restore_state(self: *const Self, comptime System: type, state: *const State) void {
+pub fn restore_state(
+    self: *const Self,
+    comptime System: type,
+    state: []const u32,
+    num_vcpus: u32,
+) void {
     var current_reg: u32 = 0;
-    for (VGIC_CPU_REGS) |reg| {
-        for (0..reg.len) |i| {
-            set_attribute(
-                System,
-                self.fd,
-                0,
-                nix.KVM_DEV_ARM_VGIC_GRP_CPU_REGS,
-                reg.offset + i * @sizeOf(u32),
-                @intFromPtr(&state[current_reg]),
-            );
-            log.debug(
-                @src(),
-                "Setting GICv2 cpu reg: 0x{x} value: 0x{x}",
-                .{ reg.offset + i * @sizeOf(u32), state[current_reg] },
-            );
-            current_reg += 1;
+    for (0..num_vcpus) |v| {
+        for (VGIC_CPU_REGS) |reg| {
+            for (0..reg.len) |i| {
+                const offset = cpu_register_offset(reg.offset, i, v);
+                set_attribute(
+                    System,
+                    self.fd,
+                    0,
+                    nix.KVM_DEV_ARM_VGIC_GRP_CPU_REGS,
+                    offset,
+                    @intFromPtr(&state[current_reg]),
+                );
+                log.debug(
+                    @src(),
+                    "Setting GICv2 cpu reg: 0x{x} value: 0x{x}",
+                    .{ offset, state[current_reg] },
+                );
+                current_reg += 1;
+            }
         }
     }
 
