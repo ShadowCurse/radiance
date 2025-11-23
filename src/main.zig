@@ -99,13 +99,13 @@ pub fn main() !void {
     const start_time = try std.time.Instant.now();
     const args = try args_parser.parse(Args);
 
+    var runtime: Runtime = undefined;
     var state: State = undefined;
-    var vmm_state: VmmState = undefined;
 
     if (args.config_path) |config_path| {
-        try from_config(config_path, &state, &vmm_state);
+        try from_config(config_path, &runtime, &state);
     } else if (args.snapshot_path) |snapshot_path| {
-        try from_snapshot(snapshot_path, &state, &vmm_state);
+        try from_snapshot(snapshot_path, &runtime, &state);
     } else {
         try args_parser.print_help(Args);
         return;
@@ -117,7 +117,7 @@ pub fn main() !void {
         t.* = try nix.System.spawn_thread(
             .{},
             Vcpu.run_threaded,
-            .{ vcpu, nix.System, &vmm_state.vcpu_barrier, &vmm_state.mmio, &start_time },
+            .{ vcpu, nix.System, &runtime.vcpu_barrier, &runtime.mmio, &start_time },
         );
 
     // Disable gdb for now as it is not operational anyway
@@ -144,18 +144,18 @@ pub fn main() !void {
     //     el.run(nix.System);
     // } else {
     // start vcpus
-    vmm_state.vcpu_barrier.set();
+    runtime.vcpu_barrier.set();
 
     // start event loop
-    vmm_state.el.run(nix.System);
+    runtime.el.run(nix.System);
     // }
 
     log.info(@src(), "Shutting down", .{});
-    if (vmm_state.terminal_state) |ts| restore_terminal(nix.System, &ts);
+    if (runtime.terminal_state) |ts| restore_terminal(nix.System, &ts);
     return;
 }
 
-fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !void {
+fn from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void {
     const config_parse_result = try config_parser.parse_file(nix.System, config_path);
     defer config_parse_result.deinit(nix.System);
 
@@ -163,40 +163,82 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
 
     state.* = .from_config(config);
 
-    var load_result = state.memory.load_linux_kernel(nix.System, config.kernel.path);
-    const tmp_alloc = load_result.post_kernel_allocator.allocator();
-
-    // create vm
-    vmm_state.kvm = .init(nix.System);
-    vmm_state.vm = .init(nix.System, vmm_state.kvm);
-    vmm_state.vm.set_memory(nix.System, .{
+    runtime.kvm = .init(nix.System);
+    runtime.vm = .init(nix.System, runtime.kvm);
+    runtime.vm.set_memory(nix.System, .{
         .guest_phys_addr = Memory.DRAM_START,
         .memory_size = state.memory.mem.len,
         .userspace_addr = @intFromPtr(state.memory.mem.ptr),
     });
-
-    // create vcpu
-    const kvi = vmm_state.vm.get_preferred_target(nix.System);
-    const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
-    const vcpu_mmap_size = vmm_state.kvm.vcpu_mmap_size(nix.System);
-    for (state.vcpus, 0..) |*vcpu, i|
-        vcpu.* = .init(nix.System, vmm_state.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
-
-    // create interrupt controller
-    vmm_state.gicv2 = .init(nix.System, vmm_state.vm);
-
-    // attach pmem
-    var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
-    const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmem.configs.len);
-    for (config.pmem.configs.slice_const(), pmem_infos) |*pmem_config, *info| {
-        info.start = last_addr;
-        info.len = Pmem.attach(nix.System, &vmm_state.vm, pmem_config.path, info.start);
-        last_addr += info.len;
+    runtime.ecam = .init(state.ecam_memory, state.block_pci.len + state.block_pci_io_uring.len);
+    runtime.mmio = .init(runtime.ecam);
+    runtime.el = .init(nix.System);
+    if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
+        runtime.io_uring = IoUring.init(nix.System, 256);
+        runtime.el.add_event(
+            nix.System,
+            runtime.io_uring.eventfd.fd,
+            @ptrCast(&IoUring.event_process_event),
+            @ptrCast(&runtime.io_uring),
+        );
+    }
+    runtime.vcpu_barrier = .{};
+    if (config.api.socket_path) |socket_path| {
+        runtime.api = .init(
+            nix.System,
+            socket_path,
+            state.vcpus,
+            state.vcpu_threads,
+            &runtime.vcpu_barrier,
+            state.vcpu_reg_list,
+            state.vcpu_regs,
+            state.vcpu_mp_states,
+            runtime.gicv2,
+            state.gicv2_state,
+            state.permanent_memory,
+        );
+        runtime.el.add_event(
+            nix.System,
+            runtime.api.fd,
+            @ptrCast(&Api.handle_default),
+            &runtime.api,
+        );
     }
 
-    // create mmio devices
-    var mmio_resources: Mmio.Resources = .{};
+    const kvi = runtime.vm.get_preferred_target(nix.System);
+    const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
+    runtime.el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &runtime.el);
+    const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
 
+    for (state.vcpus, 0..) |*vcpu, i|
+        vcpu.* = .init(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
+    runtime.gicv2 = .init(nix.System, runtime.vm);
+
+    if (config.uart.enabled) {
+        runtime.terminal_state = configure_terminal(nix.System);
+        state.uart.init(nix.System, &runtime.vm, nix.STDIN_FILENO, nix.STDOUT_FILENO);
+        runtime.mmio.add_device(.{
+            .ptr = state.uart,
+            .read_ptr = @ptrCast(&Uart.read),
+            .write_ptr = @ptrCast(&Uart.write_default),
+        });
+        runtime.el.add_event(
+            nix.System,
+            nix.STDIN,
+            @ptrCast(&Uart.event_read_input),
+            state.uart,
+        );
+    }
+    runtime.mmio.add_device(.{
+        .ptr = state.rtc,
+        .read_ptr = @ptrCast(&Rtc.read_default),
+        .write_ptr = @ptrCast(&Rtc.write_default),
+    });
+
+    var load_result = state.memory.load_linux_kernel(nix.System, config.kernel.path);
+    const tmp_alloc = load_result.post_kernel_allocator.allocator();
+
+    var mmio_resources: Mmio.Resources = .{};
     // preallocate all mmio regions for the devices. This is needed to
     // pass a single slice of mmio regions to the fdt builder.
     const block_mmio_info_count = state.block_mmio.len + state.block_mmio_io_uring.len;
@@ -213,147 +255,54 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
     var mmio_block_infos = mmio_infos[0..block_mmio_info_count];
     var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
 
-    vmm_state.ecam = .init(
-        state.ecam_memory,
-        state.block_pci.len + state.block_pci_io_uring.len,
-    );
-    vmm_state.mmio = .init(vmm_state.ecam);
-    vmm_state.el = .init(nix.System);
-    vmm_state.vcpu_barrier = .{};
-
-    if (config.api.socket_path) |socket_path| {
-        vmm_state.api = .init(
-            nix.System,
-            socket_path,
-            state.vcpus,
-            state.vcpu_threads,
-            &vmm_state.vcpu_barrier,
-            state.vcpu_reg_list,
-            state.vcpu_regs,
-            state.vcpu_mp_states,
-            vmm_state.gicv2,
-            state.gicv2_state,
-            state.permanent_memory,
-        );
-        vmm_state.el.add_event(
-            nix.System,
-            vmm_state.api.fd,
-            @ptrCast(&Api.handle_default),
-            &vmm_state.api,
-        );
-    }
-
-    // configure terminal for uart in/out
-    if (config.uart.enabled) {
-        vmm_state.terminal_state = configure_terminal(nix.System);
-        state.uart.init(
-            nix.System,
-            &vmm_state.vm,
-            nix.STDIN_FILENO,
-            nix.STDOUT_FILENO,
-        );
-        vmm_state.mmio.add_device(.{
-            .ptr = state.uart,
-            .read_ptr = @ptrCast(&Uart.read),
-            .write_ptr = @ptrCast(&Uart.write_default),
-        });
-        vmm_state.el.add_event(
-            nix.System,
-            nix.STDIN,
-            @ptrCast(&Uart.event_read_input),
-            state.uart,
-        );
-    } else undefined;
-
-    vmm_state.mmio.add_device(.{
-        .ptr = state.rtc,
-        .read_ptr = @ptrCast(&Rtc.read_default),
-        .write_ptr = @ptrCast(&Rtc.write_default),
-    });
-
-    if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
-        vmm_state.io_uring = IoUring.init(nix.System, 256);
-        vmm_state.el.add_event(
-            nix.System,
-            vmm_state.io_uring.eventfd.fd,
-            @ptrCast(&IoUring.event_process_event),
-            @ptrCast(&vmm_state.io_uring),
-        );
-    }
-
-    try create_block_mmio(
-        state.block_mmio,
-        &vmm_state.vm,
-        &vmm_state.mmio,
-        state.memory,
-        &vmm_state.el,
+    create_block_mmio(
+        runtime,
+        state,
         mmio_block_infos[0..state.block_mmio.len],
         config.block.configs.slice_const(),
     );
     mmio_block_infos = mmio_block_infos[state.block_mmio.len..];
     defer for (state.block_mmio) |*block| block.sync(nix.System);
 
-    try create_block_mmio_io_uring(
-        state.block_mmio_io_uring,
-        &vmm_state.vm,
-        &vmm_state.mmio,
-        state.memory,
-        &vmm_state.el,
-        &vmm_state.io_uring,
+    create_block_mmio_io_uring(
+        runtime,
+        state,
         mmio_block_infos[0..state.block_mmio_io_uring.len],
         config.block.configs.slice_const(),
     );
     mmio_block_infos = mmio_block_infos[state.block_mmio_io_uring.len..];
     defer for (state.block_mmio_io_uring) |*block| block.sync(nix.System);
 
-    try create_block_pci(
-        state.block_pci,
-        &vmm_state.vm,
-        &vmm_state.mmio,
-        &mmio_resources,
-        state.memory,
-        &vmm_state.el,
-        vmm_state.ecam,
-        config.block.configs.slice_const(),
-    );
+    create_block_pci(runtime, state, &mmio_resources, config.block.configs.slice_const());
     defer for (state.block_pci) |*block| block.sync(nix.System);
 
-    try create_block_pci_io_uring(
-        state.block_pci_io_uring,
-        &vmm_state.vm,
-        &vmm_state.mmio,
-        &mmio_resources,
-        state.memory,
-        &vmm_state.el,
-        &vmm_state.io_uring,
-        vmm_state.ecam,
-        config.block.configs.slice_const(),
-    );
+    create_block_pci_io_uring(runtime, state, &mmio_resources, config.block.configs.slice_const());
     defer for (state.block_pci_io_uring) |*block| block.sync(nix.System);
 
-    try create_net_mmio(
-        state.net,
-        state.net_iov_ring,
-        &vmm_state.vm,
-        &vmm_state.mmio,
-        state.memory,
-        &vmm_state.el,
+    create_net_mmio(
+        runtime,
+        state,
         mmio_net_infos[0..state.net.len],
         config.network.configs.slice_const(),
     );
     mmio_net_infos = mmio_net_infos[state.net.len..];
 
-    try create_net_mmio_vhost(
-        state.vhost_net,
-        &vmm_state.vm,
-        &vmm_state.mmio,
-        state.memory,
+    create_net_mmio_vhost(
+        runtime,
+        state,
         mmio_net_infos[0..state.vhost_net.len],
         config.network.configs.slice_const(),
     );
     mmio_net_infos = mmio_net_infos[state.vhost_net.len..];
 
-    // create kernel cmdline
+    var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
+    const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmem.configs.slice_const().len);
+    for (config.pmem.configs.slice_const(), pmem_infos) |*pmem_config, *info| {
+        info.start = last_addr;
+        info.len = Pmem.attach(nix.System, &runtime.vm, pmem_config.path, info.start);
+        last_addr += info.len;
+    }
+
     var cmdline = try CmdLine.init(tmp_alloc, 128);
     try cmdline.append(config.machine.cmdline);
     for (config.block.configs.slice_const(), 0..) |*block_config, i| {
@@ -362,10 +311,8 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
             const mod = if (block_config.read_only) "ro" else "rw";
             var letter: u8 = 'a' + @as(u8, @intCast(i));
             // pci block will be initialized after mmio ones
-            if (block_config.pci) {
-                // There can only be less than 256 blocks
-                letter += @intCast(block_mmio_info_count);
-            }
+            // There can only be less than 256 blocks
+            if (block_config.pci) letter += @intCast(block_mmio_info_count);
             const name = try std.fmt.bufPrint(
                 &name_buff,
                 " root=/dev/vd{c} {s}",
@@ -388,15 +335,13 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
             break;
         }
     } else {
-        @panic("No rootfs device selected");
+        log.err(@src(), "No rootfs device selected", .{});
+        return error.NoRootDevice;
     }
     if (config.uart.enabled) try Uart.add_to_cmdline(&cmdline);
 
-    // create fdt
     const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
-    for (mpidrs, state.vcpus) |*mpidr, *vcpu|
-        mpidr.* = vcpu.get_reg(nix.System, Vcpu.MPIDR_EL1);
-
+    for (mpidrs, state.vcpus) |*mpidr, *vcpu| mpidr.* = vcpu.get_reg(nix.System, Vcpu.MPIDR_EL1);
     const fdt_addr = FDT.create_fdt(
         nix.System,
         tmp_alloc,
@@ -408,32 +353,22 @@ fn from_config(config_path: []const u8, state: *State, vmm_state: *VmmState) !vo
         pmem_infos,
     );
 
-    // configure vcpus
     state.vcpus[0].set_reg(nix.System, u64, Vcpu.PC, load_result.start);
     state.vcpus[0].set_reg(nix.System, u64, Vcpu.REGS0, @as(u64, fdt_addr));
     for (state.vcpus) |*vcpu|
         vcpu.set_reg(nix.System, u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
-    vmm_state.el.add_event(
-        nix.System,
-        vcpu_exit_event.fd,
-        @ptrCast(&EventLoop.stop),
-        &vmm_state.el,
-    );
 }
 
 fn create_block_mmio(
-    blocks: []BlockMmio,
-    vm: *Vm,
-    mmio: *Mmio,
-    memory: Memory.Guest,
-    event_loop: *EventLoop,
+    runtime: *Runtime,
+    state: *State,
     mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.BlockConfig,
-) !void {
+) void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (!config.io_uring and !config.pci) {
-            const block = &blocks[index];
+            const block = &state.block_mmio[index];
             const info = mmio_infos[index];
             index += 1;
 
@@ -442,16 +377,16 @@ fn create_block_mmio(
                 config.path,
                 config.read_only,
                 config.id,
-                vm,
-                memory,
+                &runtime.vm,
+                state.memory,
                 info,
             );
-            mmio.add_device_virtio(.{
+            runtime.mmio.add_device_virtio(.{
                 .ptr = block,
                 .read_ptr = @ptrCast(&BlockMmio.read),
                 .write_ptr = @ptrCast(&BlockMmio.write_default),
             });
-            event_loop.add_event(
+            runtime.el.add_event(
                 nix.System,
                 block.context.queue_events[0].fd,
                 @ptrCast(&BlockMmio.event_process_queue),
@@ -462,19 +397,15 @@ fn create_block_mmio(
 }
 
 fn create_block_mmio_io_uring(
-    blocks: []BlockMmioIoUring,
-    vm: *Vm,
-    mmio: *Mmio,
-    memory: Memory.Guest,
-    event_loop: *EventLoop,
-    io_uring: *IoUring,
+    runtime: *Runtime,
+    state: *State,
     mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.BlockConfig,
-) !void {
+) void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.io_uring and !config.pci) {
-            const block = &blocks[index];
+            const block = &state.block_mmio_io_uring[index];
             const info = mmio_infos[index];
             index += 1;
             block.init(
@@ -482,20 +413,20 @@ fn create_block_mmio_io_uring(
                 config.path,
                 config.read_only,
                 config.id,
-                vm,
-                memory,
+                &runtime.vm,
+                state.memory,
                 info,
             );
-            block.io_uring_device = io_uring.add_device(
+            block.io_uring_device = runtime.io_uring.add_device(
                 @ptrCast(&BlockMmioIoUring.event_process_io_uring_event),
                 block,
             );
-            mmio.add_device_virtio(.{
+            runtime.mmio.add_device_virtio(.{
                 .ptr = block,
                 .read_ptr = @ptrCast(&BlockMmioIoUring.read),
                 .write_ptr = @ptrCast(&BlockMmioIoUring.write_default),
             });
-            event_loop.add_event(
+            runtime.el.add_event(
                 nix.System,
                 block.context.queue_events[0].fd,
                 @ptrCast(&BlockMmioIoUring.event_process_queue),
@@ -506,23 +437,19 @@ fn create_block_mmio_io_uring(
 }
 
 fn create_block_pci(
-    blocks: []BlockPci,
-    vm: *Vm,
-    mmio: *Mmio,
+    runtime: *Runtime,
+    state: *State,
     mmio_resources: *Mmio.Resources,
-    memory: Memory.Guest,
-    event_loop: *EventLoop,
-    ecam: *Ecam,
     configs: []const config_parser.BlockConfig,
-) !void {
+) void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (!config.io_uring and config.pci) {
-            const block = &blocks[index];
+            const block = &state.block_pci[index];
             index += 1;
 
             const info = mmio_resources.allocate_pci();
-            ecam.add_header(
+            runtime.ecam.add_header(
                 block_devices.TYPE_BLOCK,
                 @intFromEnum(Ecam.PciClass.MassStorage),
                 @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
@@ -533,16 +460,16 @@ fn create_block_pci(
                 config.path,
                 config.read_only,
                 config.id,
-                vm,
-                memory,
+                &runtime.vm,
+                state.memory,
                 info,
             );
-            mmio.add_device_pci(.{
+            runtime.mmio.add_device_pci(.{
                 .ptr = block,
                 .read_ptr = @ptrCast(&BlockPci.read),
                 .write_ptr = @ptrCast(&BlockPci.write_default),
             });
-            event_loop.add_event(
+            runtime.el.add_event(
                 nix.System,
                 block.context.queue_events[0].fd,
                 @ptrCast(&BlockPci.event_process_queue),
@@ -553,24 +480,19 @@ fn create_block_pci(
 }
 
 fn create_block_pci_io_uring(
-    blocks: []BlockPciIoUring,
-    vm: *Vm,
-    mmio: *Mmio,
+    runtime: *Runtime,
+    state: *State,
     mmio_resources: *Mmio.Resources,
-    memory: Memory.Guest,
-    event_loop: *EventLoop,
-    io_uring: *IoUring,
-    ecam: *Ecam,
     configs: []const config_parser.BlockConfig,
-) !void {
+) void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.io_uring and config.pci) {
-            const block = &blocks[index];
+            const block = &state.block_pci_io_uring[index];
             index += 1;
 
             const info = mmio_resources.allocate_pci();
-            ecam.add_header(
+            runtime.ecam.add_header(
                 block_devices.TYPE_BLOCK,
                 @intFromEnum(Ecam.PciClass.MassStorage),
                 @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
@@ -581,20 +503,20 @@ fn create_block_pci_io_uring(
                 config.path,
                 config.read_only,
                 config.id,
-                vm,
-                memory,
+                &runtime.vm,
+                state.memory,
                 info,
             );
-            block.io_uring_device = io_uring.add_device(
+            block.io_uring_device = runtime.io_uring.add_device(
                 @ptrCast(&BlockPciIoUring.event_process_io_uring_event),
                 block,
             );
-            mmio.add_device_pci(.{
+            runtime.mmio.add_device_pci(.{
                 .ptr = block,
                 .read_ptr = @ptrCast(&BlockPciIoUring.read),
                 .write_ptr = @ptrCast(&BlockPciIoUring.write_default),
             });
-            event_loop.add_event(
+            runtime.el.add_event(
                 nix.System,
                 block.context.queue_events[0].fd,
                 @ptrCast(&BlockPciIoUring.event_process_queue),
@@ -605,20 +527,16 @@ fn create_block_pci_io_uring(
 }
 
 fn create_net_mmio(
-    nets: []VirtioNet,
-    net_iov_ring: []align(Memory.HOST_PAGE_SIZE) u8,
-    vm: *Vm,
-    mmio: *Mmio,
-    memory: Memory.Guest,
-    event_loop: *EventLoop,
+    runtime: *Runtime,
+    state: *State,
     mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.NetConfig,
-) !void {
+) void {
     var index: u8 = 0;
-    var iov_ring = net_iov_ring;
+    var iov_ring = state.net_iov_ring;
     for (configs) |*config| {
         if (!config.vhost) {
-            const net = &nets[index];
+            const net = &state.net[index];
             const mmio_info = mmio_infos[index];
             const iov_ring_memory = iov_ring[0..IovRing.BACKING_SIZE];
             iov_ring = iov_ring[IovRing.BACKING_SIZE..];
@@ -626,31 +544,31 @@ fn create_net_mmio(
 
             net.init(
                 nix.System,
-                vm,
+                &runtime.vm,
                 config.dev_name,
                 config.mac,
-                memory,
+                state.memory,
                 mmio_info,
                 iov_ring_memory,
             );
-            mmio.add_device_virtio(.{
+            runtime.mmio.add_device_virtio(.{
                 .ptr = net,
                 .read_ptr = @ptrCast(&VirtioNet.read),
                 .write_ptr = @ptrCast(&VirtioNet.write_default),
             });
-            event_loop.add_event(
+            runtime.el.add_event(
                 nix.System,
                 net.context.queue_events[0].fd,
                 @ptrCast(&VirtioNet.event_process_rx),
                 net,
             );
-            event_loop.add_event(
+            runtime.el.add_event(
                 nix.System,
                 net.context.queue_events[1].fd,
                 @ptrCast(&VirtioNet.event_process_tx),
                 net,
             );
-            event_loop.add_event(
+            runtime.el.add_event(
                 nix.System,
                 net.tun,
                 @ptrCast(&VirtioNet.event_process_tap),
@@ -661,29 +579,27 @@ fn create_net_mmio(
 }
 
 fn create_net_mmio_vhost(
-    nets: []VhostNet,
-    vm: *Vm,
-    mmio: *Mmio,
-    memory: Memory.Guest,
+    runtime: *Runtime,
+    state: *State,
     mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.NetConfig,
-) !void {
+) void {
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.vhost) {
-            const net = &nets[index];
+            const net = &state.vhost_net[index];
             const mmio_info = mmio_infos[index];
             index += 1;
 
             net.init(
                 nix.System,
-                vm,
+                &runtime.vm,
                 config.dev_name,
                 config.mac,
-                memory,
+                state.memory,
                 mmio_info,
             );
-            mmio.add_device_virtio(.{
+            runtime.mmio.add_device_virtio(.{
                 .ptr = net,
                 .read_ptr = @ptrCast(&VhostNet.read),
                 .write_ptr = @ptrCast(&VhostNet.write_default),
@@ -692,68 +608,66 @@ fn create_net_mmio_vhost(
     }
 }
 
-fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState) !void {
+fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !void {
     state.* = .from_snapshot(nix.System, snapshot_path);
 
-    vmm_state.kvm = .init(nix.System);
-    vmm_state.vm = .init(nix.System, vmm_state.kvm);
-    vmm_state.vm.set_memory(nix.System, .{
+    runtime.kvm = .init(nix.System);
+    runtime.vm = .init(nix.System, runtime.kvm);
+    runtime.vm.set_memory(nix.System, .{
         .guest_phys_addr = Memory.DRAM_START,
         .memory_size = state.memory.mem.len,
         .userspace_addr = @intFromPtr(state.memory.mem.ptr),
     });
+    runtime.ecam = @ptrCast(state.ecam_memory.ptr);
+    runtime.mmio = .init(runtime.ecam);
+    runtime.el = .init(nix.System);
+    if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
+        runtime.io_uring = IoUring.init(nix.System, 256);
+        runtime.el.add_event(
+            nix.System,
+            runtime.io_uring.eventfd.fd,
+            @ptrCast(&IoUring.event_process_event),
+            @ptrCast(&runtime.io_uring),
+        );
+    }
+    runtime.vcpu_barrier = .{};
 
-    const kvi = vmm_state.vm.get_preferred_target(nix.System);
+    const kvi = runtime.vm.get_preferred_target(nix.System);
     const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
-    const vcpu_mmap_size = vmm_state.kvm.vcpu_mmap_size(nix.System);
+    runtime.el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &runtime.el);
+    const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
 
     for (state.vcpus, 0..) |*vcpu, i|
-        vcpu.* = .init(nix.System, vmm_state.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
-    vmm_state.gicv2 = .init(nix.System, vmm_state.vm);
+        vcpu.* = .init(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size, kvi);
+    runtime.gicv2 = .init(nix.System, runtime.vm);
 
     var regs_bytes = state.vcpu_regs;
     for (state.vcpus, state.vcpu_mp_states) |*vcpu, *mp_state| {
         const used = vcpu.restore_regs(nix.System, state.vcpu_reg_list, regs_bytes, mp_state);
         regs_bytes = regs_bytes[used..];
     }
-    vmm_state.gicv2.restore_state(nix.System, state.gicv2_state);
-
-    vmm_state.ecam = @ptrCast(state.ecam_memory.ptr);
-    vmm_state.mmio = .init(vmm_state.ecam);
-    vmm_state.el = .init(nix.System);
-    vmm_state.vcpu_barrier = .{};
+    runtime.gicv2.restore_state(nix.System, state.gicv2_state);
 
     if (state.config_state.uart_enabled) {
-        vmm_state.terminal_state = configure_terminal(nix.System);
-        state.uart.restore(nix.System, &vmm_state.vm);
-        vmm_state.mmio.add_device(.{
+        runtime.terminal_state = configure_terminal(nix.System);
+        state.uart.restore(nix.System, &runtime.vm);
+        runtime.mmio.add_device(.{
             .ptr = state.uart,
             .read_ptr = @ptrCast(&Uart.read),
             .write_ptr = @ptrCast(&Uart.write_default),
         });
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             nix.STDIN,
             @ptrCast(&Uart.event_read_input),
             state.uart,
         );
     }
-
-    vmm_state.mmio.add_device(.{
+    runtime.mmio.add_device(.{
         .ptr = state.rtc,
         .read_ptr = @ptrCast(&Rtc.read_default),
         .write_ptr = @ptrCast(&Rtc.write_default),
     });
-
-    if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
-        vmm_state.io_uring = IoUring.init(nix.System, 256);
-        vmm_state.el.add_event(
-            nix.System,
-            vmm_state.io_uring.eventfd.fd,
-            @ptrCast(&IoUring.event_process_event),
-            @ptrCast(&vmm_state.io_uring),
-        );
-    }
 
     var mmio_resources: Mmio.Resources = .{};
     var mmio_regions = state.mmio_regions;
@@ -770,13 +684,13 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
         mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
 
         const block = &state.block_mmio[i];
-        block.restore(nix.System, &vmm_state.vm, read_only, path, info);
-        vmm_state.mmio.add_device_virtio(.{
+        block.restore(nix.System, &runtime.vm, read_only, path, info);
+        runtime.mmio.add_device_virtio(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockMmio.read),
             .write_ptr = @ptrCast(&BlockMmio.write_default),
         });
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
             @ptrCast(&BlockMmio.event_process_queue),
@@ -792,13 +706,13 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
         const info = mmio_resources.allocate_pci();
 
         const block = &state.block_pci[i];
-        block.restore(nix.System, &vmm_state.vm, read_only, path, info);
-        vmm_state.mmio.add_device_pci(.{
+        block.restore(nix.System, &runtime.vm, read_only, path, info);
+        runtime.mmio.add_device_pci(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockPci.read),
             .write_ptr = @ptrCast(&BlockPci.write_default),
         });
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
             @ptrCast(&BlockPci.event_process_queue),
@@ -816,17 +730,17 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
         mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
 
         const block = &state.block_mmio_io_uring[i];
-        block.restore(nix.System, &vmm_state.vm, read_only, path, info);
-        block.io_uring_device = vmm_state.io_uring.add_device(
+        block.restore(nix.System, &runtime.vm, read_only, path, info);
+        block.io_uring_device = runtime.io_uring.add_device(
             @ptrCast(&BlockMmioIoUring.event_process_io_uring_event),
             block,
         );
-        vmm_state.mmio.add_device_virtio(.{
+        runtime.mmio.add_device_virtio(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockMmioIoUring.read),
             .write_ptr = @ptrCast(&BlockMmioIoUring.write_default),
         });
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
             @ptrCast(&BlockMmioIoUring.event_process_queue),
@@ -842,17 +756,17 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
         const info = mmio_resources.allocate_pci();
 
         const block = &state.block_pci_io_uring[i];
-        block.restore(nix.System, &vmm_state.vm, read_only, path, info);
-        block.io_uring_device = vmm_state.io_uring.add_device(
+        block.restore(nix.System, &runtime.vm, read_only, path, info);
+        block.io_uring_device = runtime.io_uring.add_device(
             @ptrCast(&BlockPciIoUring.event_process_io_uring_event),
             block,
         );
-        vmm_state.mmio.add_device_pci(.{
+        runtime.mmio.add_device_pci(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockPciIoUring.read),
             .write_ptr = @ptrCast(&BlockPciIoUring.write_default),
         });
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
             @ptrCast(&BlockPciIoUring.event_process_queue),
@@ -873,25 +787,25 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
         mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
 
         const net = &state.net[i];
-        net.restore(nix.System, &vmm_state.vm, path, info, iov_ring_bytes);
-        vmm_state.mmio.add_device_virtio(.{
+        net.restore(nix.System, &runtime.vm, path, info, iov_ring_bytes);
+        runtime.mmio.add_device_virtio(.{
             .ptr = net,
             .read_ptr = @ptrCast(&VirtioNet.read),
             .write_ptr = @ptrCast(&VirtioNet.write_default),
         });
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             net.context.queue_events[0].fd,
             @ptrCast(&VirtioNet.event_process_rx),
             net,
         );
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             net.context.queue_events[1].fd,
             @ptrCast(&VirtioNet.event_process_tx),
             net,
         );
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             net.tun,
             @ptrCast(&VirtioNet.event_process_tap),
@@ -908,25 +822,25 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
         mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
 
         const net = &state.vhost_net[i];
-        net.restore(nix.System, &vmm_state.vm, path, info);
-        vmm_state.mmio.add_device_virtio(.{
+        net.restore(nix.System, &runtime.vm, path, info);
+        runtime.mmio.add_device_virtio(.{
             .ptr = net,
             .read_ptr = @ptrCast(&VirtioNet.read),
             .write_ptr = @ptrCast(&VirtioNet.write_default),
         });
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             net.context.queue_events[0].fd,
             @ptrCast(&VirtioNet.event_process_rx),
             net,
         );
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             net.context.queue_events[1].fd,
             @ptrCast(&VirtioNet.event_process_tx),
             net,
         );
-        vmm_state.el.add_event(
+        runtime.el.add_event(
             nix.System,
             net.tun,
             @ptrCast(&VirtioNet.event_process_tap),
@@ -938,14 +852,8 @@ fn from_snapshot(snapshot_path: []const u8, state: *State, vmm_state: *VmmState)
         const path_len = config_device_state_bytes[0];
         const path = config_device_state_bytes[1..][0..path_len];
         config_device_state_bytes = config_device_state_bytes[1 + path_len ..];
-        last_addr += Pmem.attach(nix.System, &vmm_state.vm, path, last_addr);
+        last_addr += Pmem.attach(nix.System, &runtime.vm, path, last_addr);
     }
-    vmm_state.el.add_event(
-        nix.System,
-        vcpu_exit_event.fd,
-        @ptrCast(&EventLoop.stop),
-        &vmm_state.el,
-    );
 }
 
 fn configure_terminal(comptime System: type) nix.termios {
@@ -971,7 +879,7 @@ fn restore_terminal(comptime System: type, state: *const nix.termios) void {
     _ = System.tcsetattr(nix.STDIN, nix.TCSA.NOW, state);
 }
 
-pub const VmmState = struct {
+pub const Runtime = struct {
     kvm: Kvm,
     vm: Vm,
     gicv2: Gicv2,
