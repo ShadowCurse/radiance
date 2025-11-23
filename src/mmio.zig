@@ -18,10 +18,11 @@ pub const MMIO_DEVICE_ALLOCATED_REGION_SIZE: u64 = Memory.HOST_PAGE_SIZE;
 pub const UART_ADDR = MMIO_MEM_START;
 pub const UART_IRQ = Gicv2.IRQ_BASE;
 pub const RTC_ADDR = UART_ADDR + MMIO_DEVICE_ALLOCATED_REGION_SIZE;
+pub const VIRTIO_IRQ_START = UART_IRQ + 1;
 pub const VIRTIO_ADDRESS_START = RTC_ADDR + MMIO_DEVICE_ALLOCATED_REGION_SIZE;
 
 pub const Resources = struct {
-    last_irq: u16 = UART_IRQ,
+    last_irq: u16 = VIRTIO_IRQ_START,
     last_address: u64 = VIRTIO_ADDRESS_START,
     last_bar_address: u64 = Memory.PCI_START,
 
