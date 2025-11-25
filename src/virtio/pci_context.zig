@@ -49,6 +49,8 @@ const MsixEntry = extern struct {
     message_data: u32 = 0,
     vector_control: u32 = 1,
 };
+const CONFIG_MSI_INDEX = 0;
+
 pub fn PciVirtioContext(
     comptime NUM_QUEUES: usize,
     comptime CONFIG: type,
@@ -72,10 +74,10 @@ pub fn PciVirtioContext(
         queues: [NUM_QUEUES]Queue,
         queue_msi: [NUM_QUEUES]u8 = .{0} ** NUM_QUEUES,
         queue_events: [NUM_QUEUES]EventFd,
-        queue_irqs: [NUM_QUEUES]EventFd,
 
-        config_msi: u8 = 0,
-        config_irq: EventFd,
+        // 0 - config irq
+        // rest - queues irqs
+        irqs: [NUM_QUEUES + 1]EventFd,
 
         config: CONFIG = undefined,
         msix_table: [NUM_IRQS]MsixEntry = .{MsixEntry{}} ** NUM_IRQS,
@@ -94,13 +96,12 @@ pub fn PciVirtioContext(
             var self: Self = .{
                 .queues = undefined,
                 .queue_events = undefined,
-                .queue_irqs = undefined,
-                .config_irq = .init(System, 0, nix.EFD_NONBLOCK),
+                .irqs = undefined,
                 .vm = vm,
             };
             for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
             for (&self.queues, queue_sizes) |*q, size| q.* = .init(size);
-            for (&self.queue_irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
+            for (&self.irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
 
             for (&self.queue_events, 0..) |*queue_event, i| {
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{
@@ -126,8 +127,7 @@ pub fn PciVirtioContext(
         ) void {
             self.vm = vm;
             for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
-            for (&self.queue_irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
-            self.config_irq = .init(System, 0, nix.EFD_NONBLOCK);
+            for (&self.irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
             for (&self.queue_events, 0..) |*queue_event, i| {
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{
                     .addr = info.bar_addr +
@@ -145,10 +145,7 @@ pub fn PciVirtioContext(
             for (self.msix_table, 0..) |entry, i| {
                 if (entry.vector_control != 0) continue;
                 const kvm_irqfd: nix.kvm_irqfd = .{
-                    .fd = if (i == self.config_msi)
-                        @intCast(self.config_irq.fd)
-                    else
-                        @intCast(self.queue_irqs[i - 1].fd),
+                    .fd = @intCast(self.irqs[i].fd),
                     // The MSI number provided by the guest is converted to KVM
                     // usable SPI by decrementing the KVM added offset
                     .gsi = self.msix_table[i].message_data - Gicv2.GIC_INTERNAL_OFFSET,
@@ -183,12 +180,11 @@ pub fn PciVirtioContext(
                         }
                     },
                     @offsetOf(virtio_pci_common_cfg, "config_msix_vector") => {
-                        self.config_msi = data[0];
                         log.assert(
                             @src(),
-                            self.config_msi == 0,
-                            "Config MSIX should be 0, but it is {d}",
-                            .{self.config_msi},
+                            data[0] == CONFIG_MSI_INDEX,
+                            "Config MSIX should be {d}, but it is {d}",
+                            .{ @as(u32, CONFIG_MSI_INDEX), data[0] },
                         );
                     },
                     @offsetOf(virtio_pci_common_cfg, "num_queues") => unreachable,
@@ -268,10 +264,7 @@ pub fn PciVirtioContext(
                     self.msix_table[msi].vector_control == 0)
                 {
                     const kvm_irqfd: nix.kvm_irqfd = .{
-                        .fd = if (msi == self.config_msi)
-                            @intCast(self.config_irq.fd)
-                        else
-                            @intCast(self.queue_irqs[msi - 1].fd),
+                        .fd = @intCast(self.irqs[msi].fd),
                         // The MSI number provided by the guest is converted to KVM
                         // usable SPI by decrementing the KVM added offset
                         .gsi = self.msix_table[msi].message_data - Gicv2.GIC_INTERNAL_OFFSET,
@@ -321,7 +314,7 @@ pub fn PciVirtioContext(
                     @offsetOf(virtio_pci_common_cfg, "driver_feature_select") => unreachable,
                     @offsetOf(virtio_pci_common_cfg, "driver_feature") => unreachable,
                     @offsetOf(virtio_pci_common_cfg, "config_msix_vector") => {
-                        data[0] = self.config_msi;
+                        data[0] = CONFIG_MSI_INDEX;
                     },
                     @offsetOf(virtio_pci_common_cfg, "num_queues") => {
                         data[0] = NUM_QUEUES;
@@ -405,7 +398,7 @@ pub fn PciVirtioContext(
         }
 
         pub fn notify_current_queue(self: *const Self, comptime System: type) void {
-            self.queue_irqs[self.selected_queue].write(System, 1);
+            self.irqs[self.selected_queue + 1].write(System, 1);
         }
     };
 }
