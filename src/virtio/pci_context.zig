@@ -88,35 +88,20 @@ pub fn PciVirtioContext(
         const Self = @This();
 
         pub fn init(
+            self: *Self,
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
             info: Mmio.Resources.PciInfo,
-        ) Self {
-            var self: Self = .{
+        ) void {
+            self.* = .{
                 .queues = undefined,
                 .queue_events = undefined,
                 .irqs = undefined,
                 .vm = vm,
             };
-            for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
             for (&self.queues, queue_sizes) |*q, size| q.* = .init(size);
-            for (&self.irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
-
-            for (&self.queue_events, 0..) |*queue_event, i| {
-                const kvm_ioeventfd: nix.kvm_ioeventfd = .{
-                    .addr = info.bar_addr +
-                        Ecam.VIRTIO_PCI_NOTIFY_BAR_OFFSET +
-                        i * Ecam.VIRTIO_PCI_NOTIFY_MULTIPLIER,
-                    .fd = queue_event.fd,
-                };
-                _ = nix.assert(@src(), System, "ioctl", .{
-                    vm.fd,
-                    nix.KVM_IOEVENTFD,
-                    @intFromPtr(&kvm_ioeventfd),
-                });
-            }
-            return self;
+            self.init_events_and_irqs(System, info);
         }
 
         pub fn restore(
@@ -126,9 +111,18 @@ pub fn PciVirtioContext(
             info: Mmio.Resources.PciInfo,
         ) void {
             self.vm = vm;
-            for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
+            self.init_events_and_irqs(System, info);
+            for (0..self.msix_table.len) |i| self.init_msix(System, i);
+        }
+
+        fn init_events_and_irqs(
+            self: *Self,
+            comptime System: type,
+            info: Mmio.Resources.PciInfo,
+        ) void {
             for (&self.irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
             for (&self.queue_events, 0..) |*queue_event, i| {
+                queue_event.* = .init(System, 0, nix.EFD_NONBLOCK);
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{
                     .addr = info.bar_addr +
                         Ecam.VIRTIO_PCI_NOTIFY_BAR_OFFSET +
@@ -141,21 +135,22 @@ pub fn PciVirtioContext(
                     @intFromPtr(&kvm_ioeventfd),
                 });
             }
+        }
 
-            for (self.msix_table, 0..) |entry, i| {
-                if (entry.vector_control != 0) continue;
-                const kvm_irqfd: nix.kvm_irqfd = .{
-                    .fd = @intCast(self.irqs[i].fd),
-                    // The MSI number provided by the guest is converted to KVM
-                    // usable SPI by decrementing the KVM added offset
-                    .gsi = self.msix_table[i].message_data - Gicv2.GIC_INTERNAL_OFFSET,
-                };
-                _ = nix.assert(@src(), System, "ioctl", .{
-                    self.vm.fd,
-                    nix.KVM_IRQFD,
-                    @intFromPtr(&kvm_irqfd),
-                });
-            }
+        fn init_msix(self: *const Self, comptime System: type, index: u64) void {
+            const entry = &self.msix_table[index];
+            if (entry.vector_control != 0) return;
+            const kvm_irqfd: nix.kvm_irqfd = .{
+                .fd = @intCast(self.irqs[index].fd),
+                // The MSI number provided by the guest is converted to KVM
+                // usable SPI by decrementing the KVM added offset
+                .gsi = self.msix_table[index].message_data - Gicv2.GIC_INTERNAL_OFFSET,
+            };
+            _ = nix.assert(@src(), System, "ioctl", .{
+                self.vm.fd,
+                nix.KVM_IRQFD,
+                @intFromPtr(&kvm_irqfd),
+            });
         }
 
         pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) VirtioAction {
@@ -260,21 +255,8 @@ pub fn PciVirtioContext(
 
                 const msi = table_offset / @sizeOf(MsixEntry);
                 const field_offset = table_offset - msi * @sizeOf(MsixEntry);
-                if (field_offset == @offsetOf(MsixEntry, "vector_control") and
-                    self.msix_table[msi].vector_control == 0)
-                {
-                    const kvm_irqfd: nix.kvm_irqfd = .{
-                        .fd = @intCast(self.irqs[msi].fd),
-                        // The MSI number provided by the guest is converted to KVM
-                        // usable SPI by decrementing the KVM added offset
-                        .gsi = self.msix_table[msi].message_data - Gicv2.GIC_INTERNAL_OFFSET,
-                    };
-                    _ = nix.assert(@src(), System, "ioctl", .{
-                        self.vm.fd,
-                        nix.KVM_IRQFD,
-                        @intFromPtr(&kvm_irqfd),
-                    });
-                }
+                if (field_offset == @offsetOf(MsixEntry, "vector_control"))
+                    self.init_msix(System, msi);
             } else {
                 t = "msix_pba";
             }

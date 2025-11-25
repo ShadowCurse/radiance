@@ -138,12 +138,13 @@ pub fn VirtioContext(
         const Self = @This();
 
         pub fn init(
+            self: *Self,
             comptime System: type,
             vm: *Vm,
             queue_sizes: [NUM_QUEUES]u16,
             info: Mmio.Resources.MmioVirtioInfo,
-        ) Self {
-            var self: Self = .{
+        ) void {
+            self.* = .{
                 .queues = undefined,
                 .queue_events = undefined,
                 .irq_evt = .init(System, 0, nix.EFD_NONBLOCK),
@@ -151,34 +152,8 @@ pub fn VirtioContext(
                 .addr = info.addr,
                 .mem_ptr = info.mem_ptr,
             };
-            for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
             for (&self.queues, queue_sizes) |*q, size| q.* = .init(size);
-
-            const kvm_irqfd: nix.kvm_irqfd = .{
-                .fd = @intCast(self.irq_evt.fd),
-                .gsi = info.irq,
-            };
-            _ = nix.assert(@src(), System, "ioctl", .{
-                vm.fd,
-                nix.KVM_IRQFD,
-                @intFromPtr(&kvm_irqfd),
-            });
-
-            for (&self.queue_events, 0..) |*queue_event, i| {
-                const kvm_ioeventfd: nix.kvm_ioeventfd = .{
-                    .datamatch = i,
-                    .len = @sizeOf(u32),
-                    .addr = info.addr + 0x50,
-                    .fd = queue_event.fd,
-                    .flags = nix.KVM_IOEVENTFD_FLAG_NR_DATAMATCH,
-                };
-                _ = nix.assert(@src(), System, "ioctl", .{
-                    vm.fd,
-                    nix.KVM_IOEVENTFD,
-                    @intFromPtr(&kvm_ioeventfd),
-                });
-            }
-            return self;
+            self.init_events_and_irqs(System, info);
         }
 
         pub fn restore(
@@ -188,21 +163,17 @@ pub fn VirtioContext(
             info: Mmio.Resources.MmioVirtioInfo,
         ) void {
             self.vm = vm;
+            self.init_events_and_irqs(System, info);
+            if (self.device_status.driver_ok) self.set_memory(System);
+        }
 
-            self.irq_evt = .init(System, 0, nix.EFD_NONBLOCK);
-            const kvm_irqfd: nix.kvm_irqfd = .{
-                .fd = @intCast(self.irq_evt.fd),
-                .gsi = info.irq,
-            };
-            _ = nix.assert(@src(), System, "ioctl", .{
-                vm.fd,
-                nix.KVM_IRQFD,
-                @intFromPtr(&kvm_irqfd),
-            });
-
+        fn init_events_and_irqs(
+            self: *Self,
+            comptime System: type,
+            info: Mmio.Resources.MmioVirtioInfo,
+        ) void {
+            for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
             for (&self.queue_events, 0..) |*queue_event, i| {
-                queue_event.* = .init(System, 0, nix.EFD_NONBLOCK);
-
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{
                     .datamatch = i,
                     .len = @sizeOf(u32),
@@ -211,13 +182,19 @@ pub fn VirtioContext(
                     .flags = nix.KVM_IOEVENTFD_FLAG_NR_DATAMATCH,
                 };
                 _ = nix.assert(@src(), System, "ioctl", .{
-                    vm.fd,
+                    self.vm.fd,
                     nix.KVM_IOEVENTFD,
                     @intFromPtr(&kvm_ioeventfd),
                 });
             }
 
-            if (self.device_status.driver_ok) self.set_memory(System);
+            self.irq_evt = .init(System, 0, nix.EFD_NONBLOCK);
+            const kvm_irqfd: nix.kvm_irqfd = .{ .fd = @intCast(self.irq_evt.fd), .gsi = info.irq };
+            _ = nix.assert(@src(), System, "ioctl", .{
+                self.vm.fd,
+                nix.KVM_IRQFD,
+                @intFromPtr(&kvm_irqfd),
+            });
         }
 
         pub fn set_memory(self: *Self, comptime System: type) void {

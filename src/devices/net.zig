@@ -93,14 +93,9 @@ pub const NetMmio = struct {
         iov_ring_memory: []align(Memory.HOST_PAGE_SIZE) u8,
     ) void {
         const tun = open_tap(System, tap_name);
-        var virtio_context = VIRTIO_CONTEXT.init(
-            System,
-            vm,
-            QueueSizes,
-            mmio_info,
-        );
 
-        virtio_context.avail_features =
+        self.context.init(System, vm, QueueSizes, mmio_info);
+        self.context.avail_features =
             1 << nix.VIRTIO_F_VERSION_1 |
             1 << nix.VIRTIO_RING_F_EVENT_IDX |
             1 << nix.VIRTIO_NET_F_GUEST_CSUM |
@@ -112,15 +107,14 @@ pub const NetMmio = struct {
             1 << nix.VIRTIO_NET_F_GUEST_UFO |
             1 << nix.VIRTIO_NET_F_HOST_UFO | 1 << nix.VIRTIO_NET_F_MRG_RXBUF;
         if (mac) |m| {
-            virtio_context.config.mac = m;
-            virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
+            self.context.config.mac = m;
+            self.context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
         }
 
         const rx_chains = RxChains.init(System, iov_ring_memory);
         const tx_chain = TxChain.init();
 
         self.memory = memory;
-        self.context = virtio_context;
         self.tun = tun;
         self.rx_chains = rx_chains;
         self.tx_chain = tx_chain;
@@ -412,14 +406,8 @@ pub const NetMmioVhost = struct {
     ) void {
         const tun = open_tap(System, tap_name);
 
-        var virtio_context = VIRTIO_CONTEXT.init(
-            System,
-            vm,
-            QueueSizes,
-            mmio_info,
-        );
-
-        virtio_context.avail_features =
+        self.context.init(System, vm, QueueSizes, mmio_info);
+        self.context.avail_features =
             1 << nix.VIRTIO_F_VERSION_1 |
             1 << nix.VIRTIO_RING_F_INDIRECT_DESC |
             1 << nix.VIRTIO_RING_F_EVENT_IDX |
@@ -436,12 +424,11 @@ pub const NetMmioVhost = struct {
             1 << nix.VIRTIO_NET_F_HOST_USO |
             1 << nix.VIRTIO_NET_F_MRG_RXBUF;
         if (mac) |m| {
-            virtio_context.config.mac = m;
-            virtio_context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
+            self.context.config.mac = m;
+            self.context.avail_features |= 1 << nix.VIRTIO_NET_F_MAC;
         }
 
         self.memory = memory;
-        self.context = virtio_context;
         self.tun = tun;
         self.vhost = 0;
     }

@@ -59,6 +59,9 @@ pub fn Block(comptime Context: type) type {
             memory: Memory.Guest,
             info: anytype,
         ) void {
+            self.read_only = read_only;
+            self.memory = memory;
+
             const fd = nix.assert(@src(), System, "open", .{
                 file_path,
                 .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
@@ -67,7 +70,7 @@ pub fn Block(comptime Context: type) type {
             defer System.close(fd);
 
             const statx = nix.assert(@src(), System, "statx", .{fd});
-            const file_mem = nix.assert(@src(), System, "mmap", .{
+            self.file_mem = nix.assert(@src(), System, "mmap", .{
                 null,
                 statx.size,
                 if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
@@ -77,28 +80,21 @@ pub fn Block(comptime Context: type) type {
             });
 
             const nsectors = statx.size >> SECTOR_SHIFT;
-            const block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
+            self.block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
 
-            var context: Context = .init(
+            self.context.init(
                 System,
                 vm,
                 QUEUE_SIZES,
                 info,
             );
-            context.avail_features =
+            self.context.avail_features =
                 (1 << nix.VIRTIO_F_VERSION_1) |
                 (1 << nix.VIRTIO_RING_F_EVENT_IDX) |
                 (1 << nix.VIRTIO_BLK_F_SEG_MAX);
-            if (read_only)
-                context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
-            context.config.capacity = nsectors;
-            context.config.seg_max = MAX_SEGMENTS;
-
-            self.read_only = read_only;
-            self.memory = memory;
-            self.context = context;
-            self.file_mem = file_mem;
-            self.block_id = block_id;
+            if (read_only) self.context.avail_features |= 1 << nix.VIRTIO_BLK_F_RO;
+            self.context.config.capacity = nsectors;
+            self.context.config.seg_max = MAX_SEGMENTS;
         }
 
         pub fn restore(
@@ -320,37 +316,33 @@ pub fn BlockIoUring(comptime Context: type) type {
             memory: Memory.Guest,
             info: anytype,
         ) void {
-            const file_fd = nix.assert(@src(), System, "open", .{
+            self.read_only = read_only;
+            self.memory = memory;
+            self.file_fd = nix.assert(@src(), System, "open", .{
                 file_path,
                 .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
                 0,
             });
 
-            const statx = nix.assert(@src(), System, "statx", .{file_fd});
+            const statx = nix.assert(@src(), System, "statx", .{self.file_fd});
             const nsectors = statx.size >> SECTOR_SHIFT;
-            const block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
+            self.block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
 
-            var context: Context = .init(
+            self.io_uring_device = undefined;
+            self.submission_ring = .{};
+
+            self.context.init(
                 System,
                 vm,
                 QUEUE_SIZES,
                 info,
             );
-            context.avail_features =
+            self.context.avail_features =
                 (1 << nix.VIRTIO_F_VERSION_1) |
                 (1 << nix.VIRTIO_RING_F_EVENT_IDX);
-            if (read_only)
-                context.avail_features |= (1 << nix.VIRTIO_BLK_F_RO);
-            context.config.capacity = nsectors;
-            context.config.seg_max = MAX_SEGMENTS_IO_URING;
-
-            self.read_only = read_only;
-            self.memory = memory;
-            self.file_fd = file_fd;
-            self.context = context;
-            self.block_id = block_id;
-            self.io_uring_device = undefined;
-            self.submission_ring = .{};
+            if (read_only) self.context.avail_features |= (1 << nix.VIRTIO_BLK_F_RO);
+            self.context.config.capacity = nsectors;
+            self.context.config.seg_max = MAX_SEGMENTS_IO_URING;
         }
 
         pub fn restore(
