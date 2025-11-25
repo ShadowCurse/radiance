@@ -172,10 +172,10 @@ pub fn add_to_cmdline(cmdline: *CmdLine) !void {
     try cmdline.append(cmd);
 }
 
-pub fn event_read_input(self: *Self) void {
+pub fn read_input_with_system(self: *Self) void {
     self.read_input(nix.System);
 }
-pub fn read_input(self: *Self, comptime System: type) void {
+fn read_input(self: *Self, comptime System: type) void {
     var buff: [8]u8 = undefined;
     const n = nix.assert(@src(), System, "read", .{ self.in, &buff });
     if (n <= self.fifo.remaining_len() and !self.mcr.loopback_mode) {
@@ -205,10 +205,10 @@ fn received_data_interrupt(self: *Self, comptime System: type) void {
     }
 }
 
-pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+pub fn write_with_system(self: *Self, offset: u64, data: []u8) void {
     self.write(nix.System, offset, data);
 }
-pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
     log.assert(@src(), data.len == 1, "Invalid uart wrtie data length: {d} != 1", .{data.len});
     const value = data[0];
     switch (offset) {

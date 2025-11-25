@@ -223,19 +223,19 @@ fn from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void 
         runtime.mmio.add_device(.{
             .ptr = state.uart,
             .read_ptr = @ptrCast(&Uart.read),
-            .write_ptr = @ptrCast(&Uart.write_default),
+            .write_ptr = @ptrCast(&Uart.write_with_system),
         });
         runtime.el.add_event(
             nix.System,
             nix.STDIN,
-            @ptrCast(&Uart.event_read_input),
+            @ptrCast(&Uart.read_input_with_system),
             state.uart,
         );
     }
     runtime.mmio.add_device(.{
         .ptr = state.rtc,
-        .read_ptr = @ptrCast(&Rtc.read_default),
-        .write_ptr = @ptrCast(&Rtc.write_default),
+        .read_ptr = @ptrCast(&Rtc.read_with_system),
+        .write_ptr = @ptrCast(&Rtc.write_with_system),
     });
 
     var load_result = state.memory.load_linux_kernel(nix.System, config.kernel.path);
@@ -387,12 +387,12 @@ fn create_block_mmio(
             runtime.mmio.add_device_virtio(.{
                 .ptr = block,
                 .read_ptr = @ptrCast(&BlockMmio.read),
-                .write_ptr = @ptrCast(&BlockMmio.write_default),
+                .write_ptr = @ptrCast(&BlockMmio.write_with_system),
             });
             runtime.el.add_event(
                 nix.System,
                 block.context.queue_events[0].fd,
-                @ptrCast(&BlockMmio.event_process_queue),
+                @ptrCast(&BlockMmio.process_queue_event_with_system),
                 block,
             );
         }
@@ -421,18 +421,18 @@ fn create_block_mmio_io_uring(
                 info,
             );
             block.io_uring_device = runtime.io_uring.add_device(
-                @ptrCast(&BlockMmioIoUring.event_process_io_uring_event),
+                @ptrCast(&BlockMmioIoUring.process_io_uring_event_with_system),
                 block,
             );
             runtime.mmio.add_device_virtio(.{
                 .ptr = block,
                 .read_ptr = @ptrCast(&BlockMmioIoUring.read),
-                .write_ptr = @ptrCast(&BlockMmioIoUring.write_default),
+                .write_ptr = @ptrCast(&BlockMmioIoUring.write_with_system),
             });
             runtime.el.add_event(
                 nix.System,
                 block.context.queue_events[0].fd,
-                @ptrCast(&BlockMmioIoUring.event_process_queue),
+                @ptrCast(&BlockMmioIoUring.process_queue_event_with_system),
                 block,
             );
         }
@@ -470,12 +470,12 @@ fn create_block_pci(
             runtime.mmio.add_device_pci(.{
                 .ptr = block,
                 .read_ptr = @ptrCast(&BlockPci.read),
-                .write_ptr = @ptrCast(&BlockPci.write_default),
+                .write_ptr = @ptrCast(&BlockPci.write_with_system),
             });
             runtime.el.add_event(
                 nix.System,
                 block.context.queue_events[0].fd,
-                @ptrCast(&BlockPci.event_process_queue),
+                @ptrCast(&BlockPci.process_queue_event_with_system),
                 block,
             );
         }
@@ -511,18 +511,18 @@ fn create_block_pci_io_uring(
                 info,
             );
             block.io_uring_device = runtime.io_uring.add_device(
-                @ptrCast(&BlockPciIoUring.event_process_io_uring_event),
+                @ptrCast(&BlockPciIoUring.process_io_uring_event_with_system),
                 block,
             );
             runtime.mmio.add_device_pci(.{
                 .ptr = block,
                 .read_ptr = @ptrCast(&BlockPciIoUring.read),
-                .write_ptr = @ptrCast(&BlockPciIoUring.write_default),
+                .write_ptr = @ptrCast(&BlockPciIoUring.write_with_system),
             });
             runtime.el.add_event(
                 nix.System,
                 block.context.queue_events[0].fd,
-                @ptrCast(&BlockPciIoUring.event_process_queue),
+                @ptrCast(&BlockPciIoUring.process_queue_event_with_system),
                 block,
             );
         }
@@ -557,24 +557,24 @@ fn create_net_mmio(
             runtime.mmio.add_device_virtio(.{
                 .ptr = net,
                 .read_ptr = @ptrCast(&NetMmio.read),
-                .write_ptr = @ptrCast(&NetMmio.write_default),
+                .write_ptr = @ptrCast(&NetMmio.write_with_system),
             });
             runtime.el.add_event(
                 nix.System,
                 net.context.queue_events[0].fd,
-                @ptrCast(&NetMmio.event_process_rx),
+                @ptrCast(&NetMmio.process_rx_event_with_system),
                 net,
             );
             runtime.el.add_event(
                 nix.System,
                 net.context.queue_events[1].fd,
-                @ptrCast(&NetMmio.event_process_tx),
+                @ptrCast(&NetMmio.process_tx_event_with_system),
                 net,
             );
             runtime.el.add_event(
                 nix.System,
                 net.tun,
-                @ptrCast(&NetMmio.event_process_tap),
+                @ptrCast(&NetMmio.process_tap_event_with_system),
                 net,
             );
         }
@@ -605,7 +605,7 @@ fn create_net_mmio_vhost(
             runtime.mmio.add_device_virtio(.{
                 .ptr = net,
                 .read_ptr = @ptrCast(&NetMmioVhost.read),
-                .write_ptr = @ptrCast(&NetMmioVhost.write_default),
+                .write_ptr = @ptrCast(&NetMmioVhost.write_with_system),
             });
         }
     }
@@ -658,19 +658,19 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         runtime.mmio.add_device(.{
             .ptr = state.uart,
             .read_ptr = @ptrCast(&Uart.read),
-            .write_ptr = @ptrCast(&Uart.write_default),
+            .write_ptr = @ptrCast(&Uart.write_with_system),
         });
         runtime.el.add_event(
             nix.System,
             nix.STDIN,
-            @ptrCast(&Uart.event_read_input),
+            @ptrCast(&Uart.read_input_with_system),
             state.uart,
         );
     }
     runtime.mmio.add_device(.{
         .ptr = state.rtc,
-        .read_ptr = @ptrCast(&Rtc.read_default),
-        .write_ptr = @ptrCast(&Rtc.write_default),
+        .read_ptr = @ptrCast(&Rtc.read_with_system),
+        .write_ptr = @ptrCast(&Rtc.write_with_system),
     });
 
     var mmio_resources: Mmio.Resources = .{};
@@ -692,12 +692,12 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         runtime.mmio.add_device_virtio(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockMmio.read),
-            .write_ptr = @ptrCast(&BlockMmio.write_default),
+            .write_ptr = @ptrCast(&BlockMmio.write_with_system),
         });
         runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
-            @ptrCast(&BlockMmio.event_process_queue),
+            @ptrCast(&BlockMmio.process_queue_event_with_system),
             block,
         );
     }
@@ -714,12 +714,12 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         runtime.mmio.add_device_pci(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockPci.read),
-            .write_ptr = @ptrCast(&BlockPci.write_default),
+            .write_ptr = @ptrCast(&BlockPci.write_with_system),
         });
         runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
-            @ptrCast(&BlockPci.event_process_queue),
+            @ptrCast(&BlockPci.process_queue_event_with_system),
             block,
         );
     }
@@ -736,18 +736,18 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         const block = &state.block_mmio_io_uring[i];
         block.restore(nix.System, &runtime.vm, read_only, path, info);
         block.io_uring_device = runtime.io_uring.add_device(
-            @ptrCast(&BlockMmioIoUring.event_process_io_uring_event),
+            @ptrCast(&BlockMmioIoUring.process_io_uring_event_with_system),
             block,
         );
         runtime.mmio.add_device_virtio(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockMmioIoUring.read),
-            .write_ptr = @ptrCast(&BlockMmioIoUring.write_default),
+            .write_ptr = @ptrCast(&BlockMmioIoUring.write_with_system),
         });
         runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
-            @ptrCast(&BlockMmioIoUring.event_process_queue),
+            @ptrCast(&BlockMmioIoUring.process_queue_event_with_system),
             block,
         );
     }
@@ -762,18 +762,18 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         const block = &state.block_pci_io_uring[i];
         block.restore(nix.System, &runtime.vm, read_only, path, info);
         block.io_uring_device = runtime.io_uring.add_device(
-            @ptrCast(&BlockPciIoUring.event_process_io_uring_event),
+            @ptrCast(&BlockPciIoUring.process_io_uring_event_with_system),
             block,
         );
         runtime.mmio.add_device_pci(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockPciIoUring.read),
-            .write_ptr = @ptrCast(&BlockPciIoUring.write_default),
+            .write_ptr = @ptrCast(&BlockPciIoUring.write_with_system),
         });
         runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
-            @ptrCast(&BlockPciIoUring.event_process_queue),
+            @ptrCast(&BlockPciIoUring.process_queue_event_with_system),
             block,
         );
     }
@@ -795,24 +795,24 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         runtime.mmio.add_device_virtio(.{
             .ptr = net,
             .read_ptr = @ptrCast(&NetMmio.read),
-            .write_ptr = @ptrCast(&NetMmio.write_default),
+            .write_ptr = @ptrCast(&NetMmio.write_with_system),
         });
         runtime.el.add_event(
             nix.System,
             net.context.queue_events[0].fd,
-            @ptrCast(&NetMmio.event_process_rx),
+            @ptrCast(&NetMmio.process_rx_event_with_system),
             net,
         );
         runtime.el.add_event(
             nix.System,
             net.context.queue_events[1].fd,
-            @ptrCast(&NetMmio.event_process_tx),
+            @ptrCast(&NetMmio.process_tx_event_with_system),
             net,
         );
         runtime.el.add_event(
             nix.System,
             net.tun,
-            @ptrCast(&NetMmio.event_process_tap),
+            @ptrCast(&NetMmio.process_tap_event_with_system),
             net,
         );
     }
@@ -830,7 +830,7 @@ fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !v
         runtime.mmio.add_device_virtio(.{
             .ptr = net,
             .read_ptr = @ptrCast(&NetMmioVhost.read),
-            .write_ptr = @ptrCast(&NetMmioVhost.write_default),
+            .write_ptr = @ptrCast(&NetMmioVhost.write_with_system),
         });
     }
     var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
