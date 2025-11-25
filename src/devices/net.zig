@@ -144,10 +144,10 @@ pub const NetMmio = struct {
         configure_tun_flags(System, self.tun, self.context.acked_features);
     }
 
-    pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+    pub fn write_with_system(self: *Self, offset: u64, data: []u8) void {
         self.write(nix.System, offset, data);
     }
-    pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+    fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
         switch (self.context.write(System, offset, data)) {
             .NoAction => {},
             .ActivateDevice => {
@@ -175,22 +175,22 @@ pub const NetMmio = struct {
         }
     }
 
-    pub fn event_process_rx(self: *Self) void {
-        self.process_rx_event(nix.System);
+    pub fn process_rx_event_with_system(self: *Self) void {
+        self.process_rx(nix.System);
     }
-    pub fn process_rx_event(self: *Self, comptime System: type) void {
+    fn process_rx(self: *Self, comptime System: type) void {
         _ = self.context.queue_events[RX_INDEX].read(System);
         self.process_tap(System);
     }
 
-    pub fn event_process_tx(self: *Self) void {
-        self.process_tx(nix.System);
+    pub fn process_tx_event_with_system(self: *Self) void {
+        self.ack_and_process_tx(nix.System);
     }
-    pub fn process_tx_event(self: *Self, comptime System: type) void {
+    fn ack_and_process_tx(self: *Self, comptime System: type) void {
         _ = self.context.queue_events[TX_INDEX].read(System);
         self.process_tx(System);
     }
-    pub fn process_tx(self: *Self, comptime System: type) void {
+    fn process_tx(self: *Self, comptime System: type) void {
         const queue = &self.context.queues[TX_INDEX];
 
         while (queue.pop_desc_chain(self.memory)) |dc| {
@@ -204,10 +204,10 @@ pub const NetMmio = struct {
         if (queue.send_notification(self.memory)) self.context.irq_evt.write(System, 1);
     }
 
-    pub fn event_process_tap(self: *Self) void {
+    pub fn process_tap_event_with_system(self: *Self) void {
         self.process_tap(nix.System);
     }
-    pub fn process_tap(self: *Self, comptime System: type) void {
+    fn process_tap(self: *Self, comptime System: type) void {
         if (!self.activated) return;
         const queue = &self.context.queues[RX_INDEX];
 
@@ -585,10 +585,10 @@ pub const NetMmioVhost = struct {
         self.vhost = vhost;
     }
 
-    pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+    pub fn write_with_system(self: *Self, offset: u64, data: []u8) void {
         self.write(nix.System, offset, data);
     }
-    pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+    fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
         switch (self.context.write(System, offset, data)) {
             .NoAction => {},
             .ActivateDevice => self.activate(System),

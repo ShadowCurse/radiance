@@ -31,10 +31,10 @@ fn now(comptime System: type) u32 {
     return @intCast(tv.sec);
 }
 
-pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+pub fn write_with_system(self: *Self, offset: u64, data: []u8) void {
     self.write(nix.System, offset, data);
 }
-pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
     log.assert(
         @src(),
         data.len == @sizeOf(u32),
@@ -63,10 +63,10 @@ pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
     }
 }
 
-pub fn read_default(self: *Self, offset: u64, data: []u8) void {
+pub fn read_with_system(self: *Self, offset: u64, data: []u8) void {
     self.read(nix.System, offset, data);
 }
-pub fn read(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+fn read(self: *Self, comptime System: type, offset: u64, data: []u8) void {
     log.assert(
         @src(),
         data.len == @sizeOf(u32),

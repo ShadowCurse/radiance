@@ -129,10 +129,10 @@ pub fn Block(comptime Context: type) type {
             self.process_queue(System);
         }
 
-        pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+        pub fn write_with_system(self: *Self, offset: u64, data: []u8) void {
             self.write(nix.System, offset, data);
         }
-        pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+        fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
             switch (self.context.write(System, offset, data)) {
                 .NoAction => {},
                 .ActivateDevice => {
@@ -163,15 +163,15 @@ pub fn Block(comptime Context: type) type {
                 nix.assert(@src(), System, "msync", .{ self.file_mem, nix.MSF.ASYNC });
         }
 
-        pub fn event_process_queue(self: *Self) void {
+        pub fn process_queue_event_with_system(self: *Self) void {
             self.process_queue_event(nix.System);
         }
-        pub fn process_queue_event(self: *Self, comptime System: type) void {
+        fn process_queue_event(self: *Self, comptime System: type) void {
             const queue_event = &self.context.queue_events[self.context.selected_queue];
             _ = queue_event.read(System);
             self.process_queue(System);
         }
-        pub fn process_queue(self: *Self, comptime System: type) void {
+        fn process_queue(self: *Self, comptime System: type) void {
             var segments: [MAX_SEGMENTS][]volatile u8 = undefined;
             var segments_n: u32 = 0;
             var total_segments_len: u32 = 0;
@@ -365,10 +365,10 @@ pub fn BlockIoUring(comptime Context: type) type {
             self.process_queue(System);
         }
 
-        pub fn write_default(self: *Self, offset: u64, data: []u8) void {
+        pub fn write_with_system(self: *Self, offset: u64, data: []u8) void {
             self.write(nix.System, offset, data);
         }
-        pub fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
+        fn write(self: *Self, comptime System: type, offset: u64, data: []u8) void {
             switch (self.context.write(System, offset, data)) {
                 .NoAction => {},
                 .ActivateDevice => {
@@ -399,14 +399,14 @@ pub fn BlockIoUring(comptime Context: type) type {
                 nix.assert(@src(), System, "fsync", .{self.file_fd});
         }
 
-        pub fn event_process_queue(self: *Self) void {
+        pub fn process_queue_event_with_system(self: *Self) void {
             self.process_queue_event(nix.System);
         }
-        pub fn process_queue_event(self: *Self, comptime System: type) void {
+        fn process_queue_event(self: *Self, comptime System: type) void {
             _ = self.context.queue_events[self.context.selected_queue].read(System);
             self.process_queue(System);
         }
-        pub fn process_queue(self: *Self, comptime System: type) void {
+        fn process_queue(self: *Self, comptime System: type) void {
             var segments: [MAX_SEGMENTS_IO_URING][]volatile u8 = undefined;
             var segments_n: u32 = 0;
             var total_segments_len: u32 = 0;
@@ -500,10 +500,7 @@ pub fn BlockIoUring(comptime Context: type) type {
             self.io_uring_device.submit(System);
         }
 
-        pub fn event_process_io_uring_event(
-            self: *Self,
-            cqe: *const nix.io_uring_cqe,
-        ) void {
+        pub fn process_io_uring_event_with_system(self: *Self, cqe: *const nix.io_uring_cqe) void {
             self.process_io_uring_event(nix.System, cqe);
         }
         pub fn process_io_uring_event(
