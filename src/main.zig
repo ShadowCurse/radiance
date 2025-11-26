@@ -5,6 +5,7 @@ const nix = @import("nix.zig");
 const gdb = @import("gdb.zig");
 const args_parser = @import("args_parser.zig");
 const config_parser = @import("config_parser.zig");
+const profiler = @import("profiler.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -40,8 +41,36 @@ pub const std_options = std.Options{
 };
 
 pub const log_options = log.Options{
-    .level = .Debug,
+    .level = .Info,
     .colors = true,
+};
+
+pub const profiler_options = profiler.Options{
+    .enabled = false,
+};
+
+pub const MEASUREMENTS = profiler.Measurements("main", &.{
+    "build_from_config",
+    "create_block_mmio",
+    "create_block_mmio_io_uring",
+    "create_block_pci",
+    "create_block_pci_io_uring",
+    "create_net_mmio",
+    "create_net_mmio_vhost",
+    "build_from_snapshot",
+    "State.from_config",
+    "State.from_snapshot",
+});
+
+const ALL_MEASUREMENTS = &.{
+    MEASUREMENTS,
+    args_parser.MEASUREMENTS,
+    config_parser.MEASUREMENTS,
+    block_devices.MEASUREMENTS,
+    net_devices.MEASUREMENTS,
+    @import("virtio/context.zig").MEASUREMENTS,
+    @import("virtio/pci_context.zig").MEASUREMENTS,
+    nix.MEASUREMENTS,
 };
 
 const Args = struct {
@@ -97,16 +126,16 @@ fn check_aligments() void {
 pub fn main() !void {
     comptime check_aligments();
 
-    const start_time = try std.time.Instant.now();
+    profiler.start();
     const args = try args_parser.parse(Args);
 
     var runtime: Runtime = undefined;
     var state: State = undefined;
 
     if (args.config_path) |config_path| {
-        try from_config(config_path, &runtime, &state);
+        try build_from_config(config_path, &runtime, &state);
     } else if (args.snapshot_path) |snapshot_path| {
-        try from_snapshot(snapshot_path, &runtime, &state);
+        try build_from_snapshot(snapshot_path, &runtime, &state);
     } else {
         try args_parser.print_help(Args);
         return;
@@ -118,7 +147,7 @@ pub fn main() !void {
         t.* = try nix.System.spawn_thread(
             .{},
             Vcpu.run_threaded,
-            .{ vcpu, nix.System, &runtime.vcpu_barrier, &runtime.mmio, &start_time },
+            .{ vcpu, nix.System, &runtime.vcpu_barrier, &runtime.mmio },
         );
 
     // Disable gdb for now as it is not operational anyway
@@ -144,6 +173,9 @@ pub fn main() !void {
     //     // start event loop
     //     el.run(nix.System);
     // } else {
+
+    profiler.print(ALL_MEASUREMENTS);
+
     // start vcpus
     runtime.vcpu_barrier.set();
 
@@ -156,7 +188,10 @@ pub fn main() !void {
     return;
 }
 
-fn from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void {
+fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
     const config_parse_result = try config_parser.parse_file(nix.System, config_path);
     defer config_parse_result.deinit(nix.System);
 
@@ -368,6 +403,9 @@ fn create_block_mmio(
     mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.BlockConfig,
 ) void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
     var index: u8 = 0;
     for (configs) |*config| {
         if (!config.io_uring and !config.pci) {
@@ -405,6 +443,9 @@ fn create_block_mmio_io_uring(
     mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.BlockConfig,
 ) void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.io_uring and !config.pci) {
@@ -445,6 +486,9 @@ fn create_block_pci(
     mmio_resources: *Mmio.Resources,
     configs: []const config_parser.BlockConfig,
 ) void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
     var index: u8 = 0;
     for (configs) |*config| {
         if (!config.io_uring and config.pci) {
@@ -488,6 +532,9 @@ fn create_block_pci_io_uring(
     mmio_resources: *Mmio.Resources,
     configs: []const config_parser.BlockConfig,
 ) void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.io_uring and config.pci) {
@@ -535,6 +582,9 @@ fn create_net_mmio(
     mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.NetConfig,
 ) void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
     var index: u8 = 0;
     var iov_ring = state.net_iov_ring;
     for (configs) |*config| {
@@ -587,6 +637,9 @@ fn create_net_mmio_vhost(
     mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
     configs: []const config_parser.NetConfig,
 ) void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
     var index: u8 = 0;
     for (configs) |*config| {
         if (config.vhost) {
@@ -611,7 +664,10 @@ fn create_net_mmio_vhost(
     }
 }
 
-fn from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !void {
+fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
     state.* = .from_snapshot(nix.System, snapshot_path);
 
     runtime.kvm = .init(nix.System);
@@ -902,6 +958,9 @@ pub const State = struct {
     config_state: *ConfigState,
 
     pub fn from_config(config: *const config_parser.Config) State {
+        const prof_point = MEASUREMENTS.start_named("State.from_config");
+        defer MEASUREMENTS.end(prof_point);
+
         var net_mmio_count: u8 = 0;
         var net_vhost_mmio_count: u8 = 0;
         for (config.network.configs.slice_const()) |*net_config| {
@@ -1207,6 +1266,9 @@ pub const State = struct {
     }
 
     pub fn from_snapshot(comptime System: type, snapshot_path: []const u8) State {
+        const prof_point = MEASUREMENTS.start_named("State.from_snapshot");
+        defer MEASUREMENTS.end(prof_point);
+
         var result: State = undefined;
 
         result.permanent_memory = .init_from_snapshot(System, snapshot_path);

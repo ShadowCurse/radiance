@@ -2,6 +2,7 @@ const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const arch = @import("arch.zig");
+const profiler = @import("profiler.zig");
 const Kvm = @import("kvm.zig");
 const Mmio = @import("mmio.zig");
 const Vm = @import("vm.zig");
@@ -348,13 +349,11 @@ pub fn run_threaded(
     comptime System: type,
     barrier: *std.Thread.ResetEvent,
     mmio: *Mmio,
-    start_time: *const std.time.Instant,
 ) void {
+    profiler.thread_take_id();
     Self.set_thread_handler(System);
     self.tid = std.Thread.getCurrentId();
     barrier.wait();
-    const now = std.time.Instant.now() catch unreachable;
-    log.info(@src(), "startup time: {}us", .{now.since(start_time.*) / std.time.ns_per_us});
     while (true) {
         while (self.run(System, mmio)) {}
         barrier.wait();

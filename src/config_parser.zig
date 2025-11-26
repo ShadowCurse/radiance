@@ -1,12 +1,17 @@
 const std = @import("std");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
+const profiler = @import("profiler.zig");
 const BoundedArray = @import("bounded_array.zig").BoundedArray;
 
 const HOST_PAGE_SIZE = @import("memory.zig").HOST_PAGE_SIZE;
 
 const Allocator = std.mem.Allocator;
 const SplitIterator = std.mem.SplitIterator;
+
+pub const MEASUREMENTS = profiler.Measurements("config_parser", &.{
+    "parse_file",
+});
 
 pub const MachineConfig = struct {
     vcpus: u32 = 0,
@@ -144,6 +149,9 @@ pub const ParseResult = struct {
 };
 
 pub fn parse_file(comptime System: type, config_path: []const u8) !ParseResult {
+    const prof_point = MEASUREMENTS.start_named("parse_file");
+    defer MEASUREMENTS.end(prof_point);
+
     const fd = try System.open(
         config_path,
         .{

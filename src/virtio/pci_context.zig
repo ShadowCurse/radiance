@@ -1,6 +1,7 @@
 const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
+const profiler = @import("../profiler.zig");
 
 const Memory = @import("../memory.zig");
 const HOST_PAGE_SIZE = Memory.HOST_PAGE_SIZE;
@@ -15,6 +16,11 @@ const EventFd = @import("../eventfd.zig");
 const _virtio = @import("context.zig");
 const DeviceStatus = _virtio.DeviceStatus;
 const VirtioAction = _virtio.VirtioAction;
+
+pub const MEASUREMENTS = profiler.Measurements("virtio_pci_context", &.{
+    "init",
+    "init_events_and_irqs",
+});
 
 pub const virtio_pci_common_cfg = extern struct {
     // About the whole device
@@ -94,6 +100,9 @@ pub fn PciVirtioContext(
             queue_sizes: [NUM_QUEUES]u16,
             info: Mmio.Resources.PciInfo,
         ) void {
+            const prof_point = MEASUREMENTS.start_named("init");
+            defer MEASUREMENTS.end(prof_point);
+
             self.* = .{
                 .queues = undefined,
                 .queue_events = undefined,
@@ -120,6 +129,9 @@ pub fn PciVirtioContext(
             comptime System: type,
             info: Mmio.Resources.PciInfo,
         ) void {
+            const prof_point = MEASUREMENTS.start_named("init_events_and_irqs");
+            defer MEASUREMENTS.end(prof_point);
+
             for (&self.irqs) |*qi| qi.* = .init(System, 0, nix.EFD_NONBLOCK);
             for (&self.queue_events, 0..) |*queue_event, i| {
                 queue_event.* = .init(System, 0, nix.EFD_NONBLOCK);

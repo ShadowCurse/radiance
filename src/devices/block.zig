@@ -1,6 +1,7 @@
 const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
+const profiler = @import("../profiler.zig");
 
 const Vm = @import("../vm.zig");
 const CmdLine = @import("../cmdline.zig");
@@ -13,6 +14,12 @@ const HOST_PAGE_SIZE = Memory.HOST_PAGE_SIZE;
 
 const _virtio = @import("../virtio/context.zig");
 const VirtioContext = _virtio.VirtioContext;
+
+pub const MEASUREMENTS = profiler.Measurements("block", &.{
+    "init",
+    "restore",
+    "process_queue_event_with_system",
+});
 
 const IoUring = @import("../io_uring.zig");
 
@@ -59,6 +66,9 @@ pub fn Block(comptime Context: type) type {
             memory: Memory.Guest,
             info: anytype,
         ) void {
+            const prof_point = MEASUREMENTS.start_named("init");
+            defer MEASUREMENTS.end(prof_point);
+
             self.read_only = read_only;
             self.memory = memory;
 
@@ -105,6 +115,9 @@ pub fn Block(comptime Context: type) type {
             file_path: []const u8,
             info: anytype,
         ) void {
+            const prof_point = MEASUREMENTS.start_named("restore");
+            defer MEASUREMENTS.end(prof_point);
+
             const fd = nix.assert(@src(), System, "open", .{
                 file_path,
                 .{ .ACCMODE = if (read_only) .RDONLY else .RDWR },
@@ -164,6 +177,9 @@ pub fn Block(comptime Context: type) type {
         }
 
         pub fn process_queue_event_with_system(self: *Self) void {
+            const prof_point = MEASUREMENTS.start(@src());
+            defer MEASUREMENTS.end(prof_point);
+
             self.process_queue_event(nix.System);
         }
         fn process_queue_event(self: *Self, comptime System: type) void {

@@ -2,6 +2,7 @@ const std = @import("std");
 const log = @import("../log.zig");
 const nix = @import("../nix.zig");
 const arch = @import("../arch.zig");
+const profiler = @import("../profiler.zig");
 
 const Vm = @import("../vm.zig");
 const Mmio = @import("../mmio.zig");
@@ -14,6 +15,14 @@ const DescriptorChain = _queue.DescriptorChain;
 const IovRing = @import("../virtio/iov_ring.zig");
 const RingBuffer = @import("../ring_buffer.zig").RingBuffer;
 const BoundedArray = @import("../bounded_array.zig").BoundedArray;
+
+pub const MEASUREMENTS = profiler.Measurements("net", &.{
+    "init",
+    "restore",
+    "process_rx_event_with_system",
+    "process_tx_event_with_system",
+    "process_tap_event_with_system",
+});
 
 pub const TYPE_NET: u32 = 1;
 
@@ -92,6 +101,9 @@ pub const NetMmio = struct {
         mmio_info: Mmio.Resources.MmioVirtioInfo,
         iov_ring_memory: []align(Memory.HOST_PAGE_SIZE) u8,
     ) void {
+        const prof_point = MEASUREMENTS.start_named("init");
+        defer MEASUREMENTS.end(prof_point);
+
         const tun = open_tap(System, tap_name);
 
         self.context.init(System, vm, QueueSizes, mmio_info);
@@ -128,6 +140,9 @@ pub const NetMmio = struct {
         mmio_info: Mmio.Resources.MmioVirtioInfo,
         iov_ring_memory: []align(Memory.HOST_PAGE_SIZE) u8,
     ) void {
+        const prof_point = MEASUREMENTS.start_named("restore");
+        defer MEASUREMENTS.end(prof_point);
+
         self.rx_chains.restore(System, iov_ring_memory);
         self.tun = open_tap(System, tap_name);
 
@@ -176,6 +191,9 @@ pub const NetMmio = struct {
     }
 
     pub fn process_rx_event_with_system(self: *Self) void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+
         self.process_rx(nix.System);
     }
     fn process_rx(self: *Self, comptime System: type) void {
@@ -184,6 +202,9 @@ pub const NetMmio = struct {
     }
 
     pub fn process_tx_event_with_system(self: *Self) void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+
         self.ack_and_process_tx(nix.System);
     }
     fn ack_and_process_tx(self: *Self, comptime System: type) void {
@@ -205,6 +226,9 @@ pub const NetMmio = struct {
     }
 
     pub fn process_tap_event_with_system(self: *Self) void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+
         self.process_tap(nix.System);
     }
     fn process_tap(self: *Self, comptime System: type) void {
