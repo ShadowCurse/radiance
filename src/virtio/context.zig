@@ -1,12 +1,18 @@
 const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
+const profiler = @import("../profiler.zig");
 
 const Vm = @import("../vm.zig");
 const Mmio = @import("../mmio.zig");
 const Memory = @import("../memory.zig");
 const EventFd = @import("../eventfd.zig");
 const Queue = @import("queue.zig").Queue;
+
+pub const MEASUREMENTS = profiler.Measurements("virtio_context", &.{
+    "init",
+    "init_events_and_irqs",
+});
 
 // The VIRTIO space allocation strategy is:
 //            Page without memory backing                       Page with memory backing
@@ -144,6 +150,9 @@ pub fn VirtioContext(
             queue_sizes: [NUM_QUEUES]u16,
             info: Mmio.Resources.MmioVirtioInfo,
         ) void {
+            const prof_point = MEASUREMENTS.start_named("init");
+            defer MEASUREMENTS.end(prof_point);
+
             self.* = .{
                 .queues = undefined,
                 .queue_events = undefined,
@@ -172,6 +181,9 @@ pub fn VirtioContext(
             comptime System: type,
             info: Mmio.Resources.MmioVirtioInfo,
         ) void {
+            const prof_point = MEASUREMENTS.start_named("init_events_and_irqs");
+            defer MEASUREMENTS.end(prof_point);
+
             for (&self.queue_events) |*qe| qe.* = .init(System, 0, nix.EFD_NONBLOCK);
             for (&self.queue_events, 0..) |*queue_event, i| {
                 const kvm_ioeventfd: nix.kvm_ioeventfd = .{

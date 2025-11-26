@@ -1,6 +1,14 @@
 const std = @import("std");
+const profiler = @import("profiler.zig");
+
+pub const MEASUREMENTS = profiler.Measurements("args_parser", &.{
+    "parse",
+});
 
 pub fn parse(comptime T: type) !T {
+    const prof_point = MEASUREMENTS.start_named("parse");
+    defer MEASUREMENTS.end(prof_point);
+
     const type_fields = @typeInfo(T).@"struct".fields;
 
     var t: T = .{};

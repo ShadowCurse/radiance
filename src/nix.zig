@@ -1,43 +1,212 @@
 const std = @import("std");
 const log = @import("log.zig");
+const memory = @import("memory.zig");
+const profiler = @import("profiler.zig");
+
+pub const MEASUREMENTS = profiler.Measurements("nix", type_decl_names(System));
+
+fn type_decl_names(comptime T: type) []const [:0]const u8 {
+    const type_info = @typeInfo(T);
+    var result: []const [:0]const u8 = &.{};
+    for (type_info.@"struct".decls) |decl|
+        result = result ++ &[1][:0]const u8{decl.name};
+    return result;
+}
 
 pub const System = struct {
-    pub const epoll_ctl = std.posix.epoll_ctl;
-    pub const epoll_wait = std.posix.epoll_wait;
-    pub const epoll_create1 = std.posix.epoll_create1;
-    pub const memfd_create = std.posix.memfd_create;
-    pub const ftruncate = std.posix.ftruncate;
-    pub const eventfd = std.posix.eventfd;
-    pub const getpid = std.os.linux.getpid;
+    pub fn epoll_ctl(
+        epfd: i32,
+        op: u32,
+        fd: i32,
+        event: ?*epoll_event,
+    ) EpollCtlError!void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.epoll_ctl(epfd, op, fd, event);
+    }
+    pub fn epoll_wait(epfd: i32, events: []epoll_event, timeout: i32) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.epoll_wait(epfd, events, timeout);
+    }
+    pub fn epoll_create1(flags: u32) EpollCreateError!i32 {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.epoll_create1(flags);
+    }
+    pub fn memfd_create(name: []const u8, flags: u32) MemFdCreateError!fd_t {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.memfd_create(name, flags);
+    }
+    pub fn ftruncate(fd: fd_t, length: u64) TruncateError!void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.ftruncate(fd, length);
+    }
+    pub fn eventfd(initval: u32, flags: u32) EventFdError!i32 {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.eventfd(initval, flags);
+    }
+    pub fn getpid() pid_t {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.getpid();
+    }
     pub fn tkill(tid: u32, sig: i32) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
         return std.os.linux.tkill(@bitCast(tid), sig);
     }
-    pub const tcgetattr = std.os.linux.tcgetattr;
-    pub const tcsetattr = std.os.linux.tcsetattr;
-    pub const mmap = std.posix.mmap;
-    pub const munmap = std.posix.munmap;
-    pub const sigaction = std.os.linux.sigaction;
-    pub const open = std.posix.open;
-    pub const close = std.posix.close;
-    pub const read = std.posix.read;
-    pub const readv = std.posix.readv;
-    pub const write = std.posix.write;
-    pub const writev = std.posix.writev;
-    pub const accept = std.posix.accept;
-    pub const ioctl = std.os.linux.ioctl;
-    pub const msync = std.posix.msync;
-    pub const fsync = std.posix.fsync;
-    pub const io_uring_setup = std.os.linux.io_uring_setup;
-    pub const io_uring_register = std.os.linux.io_uring_register;
-    pub const io_uring_enter = std.os.linux.io_uring_enter;
+    pub fn tcgetattr(fd: fd_t, termios_p: *termios) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.tcgetattr(fd, termios_p);
+    }
+    pub fn tcsetattr(
+        fd: fd_t,
+        optional_action: TCSA,
+        termios_p: *const termios,
+    ) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.tcsetattr(fd, optional_action, termios_p);
+    }
+    pub fn mmap(
+        ptr: ?[*]align(memory.HOST_PAGE_SIZE) u8,
+        length: usize,
+        prot: u32,
+        flags: MAP,
+        fd: fd_t,
+        offset: u64,
+    ) MMapError![]align(memory.HOST_PAGE_SIZE) u8 {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.mmap(ptr, length, prot, flags, fd, offset);
+    }
+    pub fn munmap(mem: []align(memory.HOST_PAGE_SIZE) const u8) void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.munmap(mem);
+    }
+    pub fn sigaction(sig: u8, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.sigaction(sig, act, oact);
+    }
+    pub fn open(
+        file_path: []const u8,
+        flags: std.posix.O,
+        perm: mode_t,
+    ) OpenError!fd_t {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.open(file_path, flags, perm);
+    }
+    pub fn close(fd: fd_t) void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.close(fd);
+    }
+    pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.read(fd, buf);
+    }
+    pub fn readv(fd: fd_t, iov: []const iovec) ReadError!usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.readv(fd, iov);
+    }
+    pub fn write(fd: fd_t, bytes: []const u8) WriteError!usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.write(fd, bytes);
+    }
+    pub fn writev(fd: fd_t, iov: []const iovec_const) WriteError!usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.writev(fd, iov);
+    }
+    pub fn accept(
+        sock: socket_t,
+        addr: ?*sockaddr,
+        addr_size: ?*socklen_t,
+        flags: u32,
+    ) AcceptError!socket_t {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.accept(sock, addr, addr_size, flags);
+    }
+    pub fn ioctl(fd: fd_t, request: u32, arg: usize) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.ioctl(fd, request, arg);
+    }
+    pub fn msync(mem: []align(memory.HOST_PAGE_SIZE) u8, flags: i32) MSyncError!void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.msync(mem, flags);
+    }
+    pub fn fsync(fd: fd_t) SyncError!void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.fsync(fd);
+    }
+    pub fn io_uring_setup(entries: u32, p: *io_uring_params) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.io_uring_setup(entries, p);
+    }
+    pub fn io_uring_register(
+        fd: i32,
+        opcode: std.os.linux.IORING_REGISTER,
+        arg: ?*const anyopaque,
+        nr_args: u32,
+    ) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.io_uring_register(fd, opcode, arg, nr_args);
+    }
+    pub fn io_uring_enter(
+        fd: i32,
+        to_submit: u32,
+        min_complete: u32,
+        flags: u32,
+        sig: ?*sigset_t,
+    ) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.io_uring_enter(fd, to_submit, min_complete, flags, sig);
+    }
 
-    pub const socket = std.os.linux.socket;
-    pub const bind = std.os.linux.bind;
-    pub const listen = std.os.linux.listen;
+    pub fn socket(domain: u32, socket_type: u32, protocol: u32) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.socket(domain, socket_type, protocol);
+    }
+    pub fn bind(fd: i32, addr: *const sockaddr, len: socklen_t) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.bind(fd, addr, len);
+    }
+    pub fn listen(fd: i32, backlog: u32) usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.os.linux.listen(fd, backlog);
+    }
 
-    pub const gettimeofday = std.posix.gettimeofday;
+    pub fn gettimeofday(tv: ?*timeval, tz: ?*timezone) void {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        return std.posix.gettimeofday(tv, tz);
+    }
 
     pub fn statx(fd: fd_t) !Statx {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+
         var stx = std.mem.zeroes(Statx);
         const rcx = std.os.linux.statx(
             fd,
@@ -58,7 +227,15 @@ pub const System = struct {
         return stx;
     }
 
-    pub const spawn_thread = std.Thread.spawn;
+    pub fn spawn_thread(
+        config: std.Thread.SpawnConfig,
+        comptime function: anytype,
+        args: anytype,
+    ) std.Thread.SpawnError!std.Thread {
+        const prof_point = MEASUREMENTS.start_named("spawn_thread");
+        defer MEASUREMENTS.end(prof_point);
+        return std.Thread.spawn(config, function, args);
+    }
 };
 
 pub const STDIN = std.os.linux.STDIN_FILENO;
@@ -473,6 +650,24 @@ pub const vhost_vring_addr = extern struct {
 pub const EFD_NONBLOCK = 0o4000;
 pub const SIGUSR1 = 10;
 
+pub const ReadError = std.posix.ReadError;
+pub const MMapError = std.posix.MMapError;
+pub const OpenError = std.posix.OpenError;
+pub const SyncError = std.posix.SyncError;
+pub const WriteError = std.posix.WriteError;
+pub const MSyncError = std.posix.MSyncError;
+pub const AcceptError = std.posix.AcceptError;
+pub const EventFdError = std.posix.EventFdError;
+pub const EpollCtlError = std.posix.EpollCtlError;
+pub const TruncateError = std.posix.TruncateError;
+pub const EpollCreateError = std.posix.EpollCreateError;
+pub const MemFdCreateError = std.posix.MemFdCreateError;
+
+pub const fd_t = std.posix.fd_t;
+pub const mode_t = std.posix.mode_t;
+pub const pid_t = std.os.linux.pid_t;
+pub const socket_t = std.posix.socket_t;
+
 pub const PROT = std.os.linux.PROT;
 pub const MAP = std.os.linux.MAP;
 pub const MAP_TYPE = std.os.linux.MAP_TYPE;
@@ -480,15 +675,15 @@ pub const Sigaction = std.os.linux.Sigaction;
 pub const sigset_t = std.os.linux.sigset_t;
 pub const TCSA = std.os.linux.TCSA;
 pub const termios = std.posix.termios;
-pub const fd_t = std.posix.fd_t;
+pub const sockaddr = std.posix.sockaddr;
 pub const socklen_t = std.posix.socklen_t;
 pub const STDIN_FILENO = std.posix.STDIN_FILENO;
 pub const STDOUT_FILENO = std.posix.STDOUT_FILENO;
 pub const SOCK = std.posix.SOCK;
-pub const ReadError = std.posix.ReadError;
 pub const iovec = std.posix.iovec;
 pub const iovec_const = std.posix.iovec_const;
 pub const timeval = std.posix.timeval;
+pub const timezone = std.posix.timezone;
 
 pub const MSF = std.posix.MSF;
 
