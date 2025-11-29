@@ -255,7 +255,7 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
     if (config.uart.enabled) {
         runtime.terminal_state = configure_terminal(nix.System);
         state.uart.init(nix.System, &runtime.vm, nix.STDIN_FILENO, nix.STDOUT_FILENO);
-        runtime.mmio.add_device(.{
+        runtime.mmio.set_uart(.{
             .ptr = state.uart,
             .read_ptr = @ptrCast(&Uart.read),
             .write_ptr = @ptrCast(&Uart.write_with_system),
@@ -267,7 +267,7 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
             state.uart,
         );
     }
-    runtime.mmio.add_device(.{
+    runtime.mmio.set_rtc(.{
         .ptr = state.rtc,
         .read_ptr = @ptrCast(&Rtc.read_with_system),
         .write_ptr = @ptrCast(&Rtc.write_with_system),
@@ -711,7 +711,7 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
     if (state.config_state.uart_enabled) {
         runtime.terminal_state = configure_terminal(nix.System);
         state.uart.restore(nix.System, &runtime.vm);
-        runtime.mmio.add_device(.{
+        runtime.mmio.set_uart(.{
             .ptr = state.uart,
             .read_ptr = @ptrCast(&Uart.read),
             .write_ptr = @ptrCast(&Uart.write_with_system),
@@ -723,7 +723,7 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
             state.uart,
         );
     }
-    runtime.mmio.add_device(.{
+    runtime.mmio.set_rtc(.{
         .ptr = state.rtc,
         .read_ptr = @ptrCast(&Rtc.read_with_system),
         .write_ptr = @ptrCast(&Rtc.write_with_system),
