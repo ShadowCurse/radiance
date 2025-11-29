@@ -593,6 +593,7 @@ fn create_virtio_node(
     builder.begin_node(name);
     defer builder.end_node();
 
+    builder.add_property(void, "dma-coherent", {});
     builder.add_property([:0]const u8, "compatible", "virtio,mmio");
     builder.add_property([]const u64, "reg", &.{ device_info.addr, device_info.len });
     builder.add_property(
