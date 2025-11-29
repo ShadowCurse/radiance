@@ -47,7 +47,7 @@ pub fn RadianceCmd(comptime config_path: []const u8) [4][]const u8 {
     return [_][]const u8{
         "sudo",
         RadianceBin,
-        "--config_path",
+        "--config-path",
         config_path,
     };
 }
@@ -232,6 +232,7 @@ pub const ProcessResourceUsage = struct {
 pub const ProcessStartupTime = struct {
     file: std.fs.File,
 
+    const LINE_START = "[profiler.zig:162:INFO] Total ";
     const Self = @This();
 
     pub fn init(comptime result_path: []const u8) !Self {
@@ -250,8 +251,10 @@ pub const ProcessStartupTime = struct {
     pub fn update(self: *Self, output: *const Process.Output) !void {
         var iter = std.mem.splitScalar(u8, output.stderr.items, '\n');
         while (iter.next()) |line| {
-            if (std.mem.indexOf(u8, line, "startup time")) |_| {
-                _ = try self.file.write(line);
+            if (std.mem.indexOf(u8, line, LINE_START)) |_| {
+                const time = line[LINE_START.len..];
+                const time_ms = time[0 .. time.len - "ms".len];
+                _ = try self.file.write(time_ms);
                 _ = try self.file.write("\n");
             }
         }
