@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
+const arch = @import("arch.zig");
 const builtin = @import("builtin");
 
 pub var global_start: u64 = 0;
@@ -19,18 +20,6 @@ pub const options: Options = if (@hasDecl(root, "profiler_options"))
 else
     .{};
 
-pub fn get_perf_counter() u64 {
-    return asm volatile ("mrs %[ret], cntvct_el0"
-        : [ret] "=r" (-> u64),
-    );
-}
-
-pub fn get_perf_counter_frequency() u64 {
-    return asm volatile ("mrs %[ret], cntfrq_el0"
-        : [ret] "=r" (-> u64),
-    );
-}
-
 pub const Measurement = struct {
     without_children: u64 = 0,
     with_children: u64 = 0,
@@ -38,8 +27,8 @@ pub const Measurement = struct {
 };
 
 pub fn start() void {
-    global_freq = get_perf_counter_frequency();
-    global_start = get_perf_counter();
+    global_freq = arch.get_perf_counter_frequency();
+    global_start = arch.get_perf_counter();
     thread_take_id();
 }
 
@@ -90,7 +79,7 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
                 const parent = current;
                 current = &measurements[thread_id][index];
                 return .{
-                    .start_time = get_perf_counter(),
+                    .start_time = arch.get_perf_counter(),
                     .parent = parent,
                     .current = current.?,
                     .current_with_children = current.?.with_children,
@@ -98,7 +87,7 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
             }
 
             pub fn end(point: Point) void {
-                const end_time = get_perf_counter();
+                const end_time = arch.get_perf_counter();
                 const elapsed = end_time - point.start_time;
                 point.current.hit_count += 1;
                 point.current.without_children +%= elapsed;
@@ -115,7 +104,7 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
 
             pub fn print(comptime NAME_ALIGN: u64) void {
                 const freq: f64 = @floatFromInt(global_freq);
-                const global_end = get_perf_counter();
+                const global_end = arch.get_perf_counter();
                 const global_elapsed: f64 = @floatFromInt(global_end - global_start);
                 for (0..options.num_threads) |ti| {
                     inline for (NAMES, measurements[ti]) |name, m| {
@@ -167,7 +156,7 @@ pub fn print(comptime types: []const type) void {
     }
 
     const freq: f64 = @floatFromInt(global_freq);
-    const global_end = get_perf_counter();
+    const global_end = arch.get_perf_counter();
     const global_elapsed: f64 = @floatFromInt(global_end - global_start);
     const global_time_ms = global_elapsed / freq * 1000.0;
     log.info(@src(), "Total {d:>6.6}ms", .{global_time_ms});
