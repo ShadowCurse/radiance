@@ -14,7 +14,8 @@ Defining characteristics:
 - minimal memory overhead over requested VM memory size
 - support for Block,Net,Pmem,Uart,Rtc devices
 - support for PCI (currently only for Block)
-- optimized MMIO device path which makes MMIO devices as fast as PCI ones.
+- optimized MMIO device path which makes MMIO devices as fast as PCI ones
+- snapshot creation/restoration
 
 ### Build:
 ```bash
@@ -28,8 +29,22 @@ Usage:
 ```
 
 #### Example:
+
+Start VM from config
 ```bash
 radiance --config-path config.toml
+```
+
+Pause/Snapshot/Resume
+```bash
+echo "pause" | sudo socat - UNIX-CONNECT:./test.socket
+echo "snapshot snap.rad" | sudo socat - UNIX-CONNECT:./test.socket
+echo "resume" | sudo socat - UNIX-CONNECT:./test.socket
+```
+
+Restore VM from snapshot
+```bash
+radiance --snapshot-path ./snap.rad
 ```
 
 ### Example config file:
@@ -38,6 +53,9 @@ radiance --config-path config.toml
 vcpus = 2
 memory_mb = 128
 cmdline = "reboot=k panic=1"
+
+[api]
+socket_path = "./test.socket"
 
 [uart]
 enabled = true
