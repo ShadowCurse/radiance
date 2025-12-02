@@ -29,7 +29,6 @@ pub const Measurement = struct {
 pub fn start() void {
     global_freq = arch.get_perf_counter_frequency();
     global_start = arch.get_perf_counter();
-    thread_take_id();
 }
 
 pub fn thread_take_id() void {

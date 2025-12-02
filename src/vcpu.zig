@@ -350,12 +350,24 @@ pub fn run_threaded(
     barrier: *std.Thread.ResetEvent,
     mmio: *Mmio,
 ) void {
-    profiler.thread_take_id();
     Self.set_thread_handler(System);
     self.tid = std.Thread.getCurrentId();
-    barrier.wait();
     while (true) {
-        while (self.run(System, mmio)) {}
         barrier.wait();
+        while (self.run(System, mmio)) {}
+
+        // If exit event was signaled, exit
+        var buf: u64 = undefined;
+        const buf_slice: []u8 = @ptrCast(&buf);
+        _ = System.read(self.exit_event.fd, buf_slice) catch |e| {
+            log.assert(
+                @src(),
+                e == nix.ReadError.WouldBlock,
+                "readv error: {}",
+                .{e},
+            );
+            continue;
+        };
+        break;
     }
 }

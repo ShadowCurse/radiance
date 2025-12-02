@@ -33,6 +33,15 @@ pub const Resources = struct {
         len: u32,
         irq: u32,
         mem_ptr: [*]align(Memory.HOST_PAGE_SIZE) u8,
+
+        pub fn format(value: *const MmioVirtioInfo, writer: anytype) !void {
+            try writer.print("addr: 0x{x} len: 0x{x} irq: {d} mem_ptr: {*}", .{
+                value.addr,
+                value.len,
+                value.irq,
+                value.mem_ptr,
+            });
+        }
     };
     // VIRTIO devices should be allocated after all MMIO devices
     // are allocated. VIRTIO MMIO space will be offset from the
@@ -47,8 +56,8 @@ pub const Resources = struct {
         self.last_irq += 1;
         log.debug(
             @src(),
-            "allocate mmio opt region: addr: 0x{x}, len: 0x{x}, irq: {}",
-            .{ addr, MMIO_DEVICE_ALLOCATED_REGION_SIZE, irq },
+            "Thread: {d}: allocate mmio opt region: addr: 0x{x}, len: 0x{x}, irq: {}",
+            .{ @import("profiler.zig").thread_id, addr, MMIO_DEVICE_ALLOCATED_REGION_SIZE, irq },
         );
         return .{
             .addr = addr,
@@ -64,8 +73,8 @@ pub const Resources = struct {
         self.last_bar_address += Memory.PCI_BAR_SIZE;
         log.debug(
             @src(),
-            "allocate pci region: addr: 0x{x}, len: 0x{x}",
-            .{ addr, @as(u32, Memory.PCI_BAR_SIZE) },
+            "Thread: {d}: allocate pci region: addr: 0x{x}, len: 0x{x}",
+            .{ @import("profiler.zig").thread_id, addr, @as(u32, Memory.PCI_BAR_SIZE) },
         );
         return .{ .bar_addr = addr };
     }
@@ -116,26 +125,24 @@ pub fn set_rtc(self: *Self, device: MmioDevice) void {
     self.mmio_devices[RTC_INDEX] = device;
 }
 
-pub fn add_device_virtio(self: *Self, device: MmioDevice) void {
+pub fn set_device_virtio(self: *Self, device: MmioDevice, index: u8) void {
     log.assert(
         @src(),
-        self.virtio_num_devices < MAX_VIRTIO_DEVICES,
+        index <= MAX_VIRTIO_DEVICES,
         "Trying to attach more virtio devices to mmio bus than maximum: {d}",
         .{@as(u32, MAX_VIRTIO_DEVICES)},
     );
-    self.virtio_devices[self.virtio_num_devices] = device;
-    self.virtio_num_devices += 1;
+    self.virtio_devices[index] = device;
 }
 
-pub fn add_device_pci(self: *Self, device: MmioDevice) void {
+pub fn set_device_pci(self: *Self, device: MmioDevice, index: u8) void {
     log.assert(
         @src(),
-        self.pci_num_devices < MAX_VIRTIO_DEVICES,
+        index <= MAX_VIRTIO_DEVICES,
         "Trying to attach more ci devices to mmio bus than maximum: {d}",
         .{@as(u32, MAX_VIRTIO_DEVICES)},
     );
-    self.pci_devices[self.pci_num_devices] = device;
-    self.pci_num_devices += 1;
+    self.pci_devices[index] = device;
 }
 
 pub fn write(self: *Self, addr: u64, data: []u8) void {

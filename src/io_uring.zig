@@ -165,22 +165,18 @@ pub fn add_device(
     callback: CallbackFn,
     parameter: CallbackParam,
 ) Device {
+    const idx = @atomicRmw(u8, &self.callbacks_num, .Add, 1, .acq_rel);
     log.assert(
         @src(),
-        self.callbacks_num < MAX_DEVICES,
+        idx <= MAX_DEVICES,
         "Trying to attach more devices to io_uring than maxinum: {d}",
         .{@as(u32, MAX_DEVICES)},
     );
-    const idx = self.callbacks_num;
     self.callbacks[idx] = .{
         .callback = callback,
         .parameter = parameter,
     };
-    self.callbacks_num += 1;
-    return .{
-        .io_uring = self,
-        .device_idx = idx,
-    };
+    return .{ .io_uring = self, .device_idx = idx };
 }
 
 pub fn next_sqe(self: *Self) ?*nix.io_uring_sqe {

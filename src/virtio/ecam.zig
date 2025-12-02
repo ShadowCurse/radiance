@@ -294,12 +294,13 @@ pub fn init(memory: []align(8) u8, pci_devices: usize) *Self {
     return self;
 }
 
-pub fn add_header(
+pub fn set_header(
     self: *Self,
     device_type: u16,
     sub_class_code: u8,
     base_class_code: u8,
     bar_addr: u64,
+    index: u8,
 ) void {
     log.debug(
         @src(),
@@ -313,7 +314,7 @@ pub fn add_header(
             @as(u32, Memory.PCI_BAR_SIZE),
         },
     );
-    self.headers[self.num_devices] =
+    self.headers[index] =
         .{
             .reg0 = .{
                 .vendor_id = VIRTIO_VENDOR_ID,
@@ -350,11 +351,10 @@ pub fn add_header(
                 .capabilities_pointer = @sizeOf(Type0ConfigurationHeader),
             },
         };
-    self.headers_meta[self.num_devices] =
+    self.headers_meta[index] =
         .{
             .sizes = .{HeaderBarSizes.Size{ .size = Memory.PCI_BAR_SIZE }} ++ .{} ** 5,
         };
-    self.num_devices += 1;
 }
 
 // https://elixir.bootlin.com/linux/v6.15.3/source/drivers/pci/probe.c#L1974

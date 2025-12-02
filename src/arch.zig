@@ -24,3 +24,24 @@ pub fn get_perf_counter_frequency() u64 {
         : [ret] "=r" (-> u64),
     );
 }
+
+pub const Barrier = struct {
+    generation: u32 = 0,
+    arrived: u32 = 0,
+    total_workers: u32 = 0,
+
+    const Self = @This();
+
+    pub fn wait(self: *Self) void {
+        const current_gen = @atomicLoad(u32, &self.generation, .acquire);
+        const old_arrived = @atomicRmw(u32, &self.arrived, .Add, 1, .acq_rel) + 1;
+        if (old_arrived == self.total_workers) {
+            @atomicStore(u32, &self.arrived, 0, .unordered);
+            _ = @atomicRmw(u32, &self.generation, .Add, 1, .release);
+        } else {
+            while (@atomicLoad(u32, &self.generation, .acquire) == current_gen) {
+                asm volatile ("yield" ::: .{ .memory = true });
+            }
+        }
+    }
+};

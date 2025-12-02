@@ -40,14 +40,15 @@ pub fn add_event(
     callback: CallbackFn,
     parameter: CallbackParam,
 ) void {
+    const event_idx = @atomicRmw(u64, &self.events_info_num, .Add, 1, .acq_rel);
     log.assert(
         @src(),
-        self.events_info_num != MAX_EVENTS,
+        event_idx != MAX_EVENTS + 1,
         "too much events added. Max: {}",
         .{@as(u32, MAX_EVENTS)},
     );
 
-    self.events_info[self.events_info_num] = .{
+    self.events_info[event_idx] = .{
         .fd = fd,
         .callback = .{
             .callback = callback,
@@ -57,9 +58,8 @@ pub fn add_event(
 
     var event: nix.epoll_event = .{
         .events = nix.EPOLLIN,
-        .data = .{ .u64 = self.events_info_num },
+        .data = .{ .u64 = event_idx },
     };
-    self.events_info_num += 1;
 
     nix.assert(
         @src(),

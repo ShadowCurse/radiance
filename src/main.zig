@@ -3,9 +3,10 @@ const build_options = @import("build_options");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const gdb = @import("gdb.zig");
+const arch = @import("arch.zig");
+const profiler = @import("profiler.zig");
 const args_parser = @import("args_parser.zig");
 const config_parser = @import("config_parser.zig");
-const profiler = @import("profiler.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -51,6 +52,9 @@ pub const profiler_options = profiler.Options{
 
 pub const MEASUREMENTS = profiler.Measurements("main", &.{
     "build_from_config",
+    "build_from_config_thread",
+    "threaded_creation",
+    "threaded_creation2",
     "create_block_mmio",
     "create_block_mmio_io_uring",
     "create_block_pci",
@@ -129,66 +133,16 @@ pub fn main() !void {
     profiler.start();
     const args = try args_parser.parse(Args);
 
-    var runtime: Runtime = undefined;
-    var state: State = undefined;
-
     if (args.config_path) |config_path| {
-        try build_from_config(config_path, &runtime, &state);
+        try build_from_config(config_path);
     } else if (args.snapshot_path) |snapshot_path| {
-        try build_from_snapshot(snapshot_path, &runtime, &state);
+        try build_from_snapshot(snapshot_path);
     } else {
         try args_parser.print_help(Args);
-        return;
     }
-
-    // start vcpu threads
-    log.debug(@src(), "starting vcpu threads", .{});
-    for (state.vcpu_threads, state.vcpus) |*t, *vcpu|
-        t.* = try nix.System.spawn_thread(
-            .{},
-            Vcpu.run_threaded,
-            .{ vcpu, nix.System, &runtime.vcpu_barrier, &runtime.mmio },
-        );
-
-    // Disable gdb for now as it is not operational anyway
-    // if (config.gdb) |gdb_config| {
-    //     // start gdb server
-    //     var gdb_server = try gdb.GdbServer.init(
-    //         nix.System,
-    //         gdb_config.socket_path,
-    //         state.vcpus,
-    //         state.vcpu_threads,
-    //         &vcpu_barrier,
-    //         state.memory,
-    //         &mmio,
-    //         &el,
-    //     );
-    //     el.add_event(
-    //         nix.System,
-    //         gdb_server.connection.stream.handle,
-    //         @ptrCast(&gdb.GdbServer.process_request),
-    //         &gdb_server,
-    //     );
-    //
-    //     // start event loop
-    //     el.run(nix.System);
-    // } else {
-
-    profiler.print(ALL_MEASUREMENTS);
-
-    // start vcpus
-    runtime.vcpu_barrier.set();
-
-    // start event loop
-    runtime.el.run(nix.System);
-    // }
-
-    log.info(@src(), "Shutting down", .{});
-    if (runtime.terminal_state) |ts| restore_terminal(nix.System, &ts);
-    return;
 }
 
-fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void {
+fn build_from_config(config_path: []const u8) !void {
     const prof_point = MEASUREMENTS.start(@src());
     defer MEASUREMENTS.end(prof_point);
 
@@ -197,15 +151,13 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
 
     const config = &config_parse_result.config;
 
-    state.* = .from_config(config);
+    var runtime: Runtime = undefined;
+    var state: State = .from_config(config);
+    var barrier: arch.Barrier = .{ .total_workers = config.machine.vcpus + 1 };
 
+    // Setup needed for multithreading
     runtime.kvm = .init(nix.System);
     runtime.vm = .init(nix.System, runtime.kvm);
-    runtime.vm.set_memory(nix.System, .{
-        .guest_phys_addr = Memory.DRAM_START,
-        .memory_size = state.memory.mem.len,
-        .userspace_addr = @intFromPtr(state.memory.mem.ptr),
-    });
     runtime.ecam = .init(state.ecam_memory, state.block_pci.len + state.block_pci_io_uring.len);
     runtime.mmio = .init(runtime.ecam);
     runtime.el = .init(nix.System);
@@ -219,456 +171,979 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
         );
     }
     runtime.vcpu_barrier = .{};
-    if (config.api.socket_path) |socket_path| {
-        runtime.api = .init(
-            nix.System,
-            socket_path,
-            state.vcpus,
-            state.vcpu_threads,
-            &runtime.vcpu_barrier,
-            state.vcpu_reg_list,
-            state.vcpu_regs,
-            state.vcpu_mp_states,
-            &runtime.gicv2,
-            state.gicv2_state,
-            state.permanent_memory,
-        );
-        runtime.el.add_event(
-            nix.System,
-            runtime.api.fd,
-            @ptrCast(&Api.handle_default),
-            &runtime.api,
-        );
+    runtime.vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
+    const kvi = runtime.vm.get_preferred_target(nix.System);
+    const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
+    for (state.vcpus, 0..) |*vcpu, i| {
+        vcpu.* = .create(nix.System, runtime.vm, i, runtime.vcpu_exit_event, vcpu_mmap_size);
+        log.debug(@src(), "Thread {d}: created vcpu", .{profiler.thread_id});
     }
 
-    const kvi = runtime.vm.get_preferred_target(nix.System);
-    const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
-    runtime.el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &runtime.el);
-    const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
+    // Parrallel vcpu init
+    for (state.vcpus, 0..) |*vcpu, i| {
+        vcpu.init(nix.System, i, kvi);
+        log.debug(@src(), "Thread {d}: initialized vcpu", .{profiler.thread_id});
+    }
 
-    for (state.vcpus, 0..) |*vcpu, i|
-        vcpu.* = .create(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size);
-    for (state.vcpus, 0..) |*vcpu, i| vcpu.init(nix.System, i, kvi);
-
+    // Single threaded Gicv2 and kernel loading
     runtime.gicv2 = .init(nix.System, runtime.vm);
 
-    if (config.uart.enabled) {
-        runtime.terminal_state = configure_terminal(nix.System);
-        state.uart.init(nix.System, &runtime.vm, nix.STDIN_FILENO, nix.STDOUT_FILENO);
-        runtime.mmio.set_uart(.{
-            .ptr = state.uart,
-            .read_ptr = @ptrCast(&Uart.read),
-            .write_ptr = @ptrCast(&Uart.write_with_system),
-        });
-        runtime.el.add_event(
+    for (state.vcpu_threads) |*t|
+        t.* = try nix.System.spawn_thread(
+            .{},
+            build_from_config_thread,
+            .{ config, &runtime, &state, &barrier },
+        );
+    build_from_config_thread(config, &runtime, &state, &barrier);
+}
+
+fn build_from_config_thread(
+    config: *const config_parser.Config,
+    runtime: *Runtime,
+    state: *State,
+    barrier: *arch.Barrier,
+) void {
+    profiler.thread_take_id();
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+
+    log.debug(@src(), "Thread {d}: starting", .{profiler.thread_id});
+
+    threaded_creation2(config, runtime, state, barrier);
+    log.debug(@src(), "Thread {d}: creation done", .{profiler.thread_id});
+    barrier.wait();
+
+    if (profiler.thread_id == 0) {
+        profiler.print(ALL_MEASUREMENTS);
+        log.debug(@src(), "Thread {d}: resuming vcpus", .{profiler.thread_id});
+        runtime.vcpu_barrier.set();
+        runtime.el.run(nix.System);
+        log.info(@src(), "Shutting down", .{});
+        for (state.vcpus) |vcpu| vcpu.pause(nix.System);
+        if (runtime.terminal_state) |ts| restore_terminal(nix.System, &ts);
+    } else {
+        const vcpu_idx = profiler.thread_id - 1;
+        log.debug(@src(), "Thread {d}: starting vcpu {d}", .{ profiler.thread_id, vcpu_idx });
+        state.vcpus[vcpu_idx].run_threaded(
             nix.System,
-            nix.STDIN,
-            @ptrCast(&Uart.read_input_with_system),
-            state.uart,
+            &runtime.vcpu_barrier,
+            &runtime.mmio,
         );
     }
-    runtime.mmio.set_rtc(.{
-        .ptr = state.rtc,
-        .read_ptr = @ptrCast(&Rtc.read_with_system),
-        .write_ptr = @ptrCast(&Rtc.write_with_system),
-    });
+}
 
-    var load_result = state.memory.load_linux_kernel(nix.System, config.kernel.path);
-    const tmp_alloc = load_result.post_kernel_allocator.allocator();
+fn threaded_creation(
+    config: *const config_parser.Config,
+    runtime: *Runtime,
+    state: *State,
+    barrier: *arch.Barrier,
+) void {
+    const prof_point = MEASUREMENTS.start(@src());
+    defer MEASUREMENTS.end(prof_point);
+    // Single threaded creation of single system objects
+    if (profiler.thread_id == 0) {
+        runtime.kvm = .init(nix.System);
+        runtime.vm = .init(nix.System, runtime.kvm);
+        runtime.vm.set_memory(nix.System, .{
+            .guest_phys_addr = Memory.DRAM_START,
+            .memory_size = state.memory.mem.len,
+            .userspace_addr = @intFromPtr(state.memory.mem.ptr),
+        });
+        runtime.ecam = .init(state.ecam_memory, state.block_pci.len + state.block_pci_io_uring.len);
+        runtime.mmio = .init(runtime.ecam);
+        runtime.el = .init(nix.System);
+        if (state.block_mmio_io_uring.len != 0 or state.block_pci_io_uring.len != 0) {
+            runtime.io_uring = IoUring.init(nix.System, 256);
+            runtime.el.add_event(
+                nix.System,
+                runtime.io_uring.eventfd.fd,
+                @ptrCast(&IoUring.event_process_event),
+                @ptrCast(&runtime.io_uring),
+            );
+        }
+        runtime.vcpu_barrier = .{};
+        if (config.api.socket_path) |socket_path| {
+            runtime.api = .init(
+                nix.System,
+                socket_path,
+                state.vcpus,
+                state.vcpu_threads,
+                &runtime.vcpu_barrier,
+                state.vcpu_reg_list,
+                state.vcpu_regs,
+                state.vcpu_mp_states,
+                &runtime.gicv2,
+                state.gicv2_state,
+                state.permanent_memory,
+            );
+            runtime.el.add_event(
+                nix.System,
+                runtime.api.fd,
+                @ptrCast(&Api.handle_default),
+                &runtime.api,
+            );
+        }
+        runtime.vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
+        runtime.el.add_event(
+            nix.System,
+            runtime.vcpu_exit_event.fd,
+            @ptrCast(&EventLoop.stop),
+            &runtime.el,
+        );
+    }
+    log.debug(@src(), "Thread {d}: waiting after single systems objects", .{profiler.thread_id});
+    barrier.wait();
 
-    var mmio_resources: Mmio.Resources = .{};
-    // preallocate all mmio regions for the devices. This is needed to
-    // pass a single slice of mmio regions to the fdt builder.
+    // Parallel vcpu creation
+    const kvi = runtime.vm.get_preferred_target(nix.System);
+    const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
+    if (profiler.thread_id != 0) {
+        const vcpu_idx = profiler.thread_id - 1;
+        state.vcpus[vcpu_idx] =
+            .create(nix.System, runtime.vm, vcpu_idx, runtime.vcpu_exit_event, vcpu_mmap_size);
+        log.debug(@src(), "Thread {d}: created vcpu", .{profiler.thread_id});
+    }
+    log.debug(@src(), "Thread {d}: waiting after vcpu create", .{profiler.thread_id});
+    barrier.wait();
+
+    // Parrallel vcpu init
+    if (profiler.thread_id != 0) {
+        const vcpu_idx = profiler.thread_id - 1;
+        state.vcpus[vcpu_idx].init(nix.System, vcpu_idx, kvi);
+        log.debug(@src(), "Thread {d}: initialized vcpu", .{profiler.thread_id});
+    }
+    log.debug(@src(), "Thread {d}: waiting after vcpu init", .{profiler.thread_id});
+    barrier.wait();
+
     const block_mmio_info_count = state.block_mmio.len + state.block_mmio_io_uring.len;
     const net_mmio_info_count = state.net_mmio.len + state.net_mmio_vhost.len;
-    const mmio_info_count = block_mmio_info_count + net_mmio_info_count;
-    const mmio_infos = try tmp_alloc.alloc(Mmio.Resources.MmioVirtioInfo, mmio_info_count);
+
+    // Single threaded Gicv2 and kernel loading
+    var load_result = if (profiler.thread_id == 0) blk: {
+        runtime.gicv2 = .init(nix.System, runtime.vm);
+
+        var load_result = state.memory.load_linux_kernel(nix.System, config.kernel.path);
+        const tmp_alloc = load_result.post_kernel_allocator.allocator();
+
+        // preallocate all mmio regions for the devices. This is needed to
+        // pass a single slice of mmio regions to the fdt builder.
+        const mmio_info_count = block_mmio_info_count + net_mmio_info_count;
+        runtime.mmio_infos =
+            tmp_alloc.alloc(Mmio.Resources.MmioVirtioInfo, mmio_info_count) catch unreachable;
+
+        break :blk load_result;
+    } else undefined;
+    log.debug(@src(), "Thread {d}: waiting after Gicv2 and kernel loading", .{profiler.thread_id});
+    barrier.wait();
+
+    // Single threaded misc device configuration
+    if (profiler.thread_id == 0) {
+        if (config.uart.enabled) {
+            runtime.terminal_state = configure_terminal(nix.System);
+            state.uart.init(nix.System, &runtime.vm, nix.STDIN_FILENO, nix.STDOUT_FILENO);
+            runtime.mmio.set_uart(.{
+                .ptr = state.uart,
+                .read_ptr = @ptrCast(&Uart.read),
+                .write_ptr = @ptrCast(&Uart.write_with_system),
+            });
+            runtime.el.add_event(
+                nix.System,
+                nix.STDIN,
+                @ptrCast(&Uart.read_input_with_system),
+                state.uart,
+            );
+        }
+        runtime.mmio.set_rtc(.{
+            .ptr = state.rtc,
+            .read_ptr = @ptrCast(&Rtc.read_with_system),
+            .write_ptr = @ptrCast(&Rtc.write_with_system),
+        });
+    }
+
+    // Parallel device configuration
+    var mmio_resources: Mmio.Resources = .{};
     var mmio_regions = state.mmio_regions;
-    for (mmio_infos) |*info| {
+    for (runtime.mmio_infos) |*info| {
         info.* = mmio_resources.allocate_mmio_virtio();
         info.mem_ptr = mmio_regions.ptr;
         mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
     }
 
-    var mmio_block_infos = mmio_infos[0..block_mmio_info_count];
-    var mmio_net_infos = mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
+    var mmio_block_infos = runtime.mmio_infos[0..block_mmio_info_count];
+    var mmio_net_infos = runtime.mmio_infos[block_mmio_info_count..][0..net_mmio_info_count];
 
-    create_block_mmio(
-        runtime,
-        state,
-        mmio_block_infos[0..state.block_mmio.len],
-        config.block.configs.slice_const(),
-    );
+    var mmio_index: u8 = 0;
+    var pci_index: u8 = 0;
+
+    {
+        var block_index: u8 = 0;
+        const infos = mmio_block_infos[0..state.block_mmio.len];
+        for (config.block.configs.slice_const()) |*c| {
+            if (!c.io_uring and !c.pci) {
+                if (block_index % (config.machine.vcpus + 1) == profiler.thread_id) {
+                    const _point = MEASUREMENTS.start_named("create_block_mmio");
+                    defer MEASUREMENTS.end(_point);
+
+                    const block = &state.block_mmio[block_index];
+                    const info = infos[block_index];
+
+                    block.init(
+                        nix.System,
+                        c.path,
+                        c.read_only,
+                        c.id,
+                        &runtime.vm,
+                        state.memory,
+                        info,
+                    );
+                    runtime.mmio.set_device_virtio(.{
+                        .ptr = block,
+                        .read_ptr = @ptrCast(&BlockMmio.read),
+                        .write_ptr = @ptrCast(&BlockMmio.write_with_system),
+                    }, mmio_index);
+                    runtime.el.add_event(
+                        nix.System,
+                        block.context.queue_events[0].fd,
+                        @ptrCast(&BlockMmio.process_queue_event_with_system),
+                        block,
+                    );
+                }
+
+                block_index += 1;
+                mmio_index += 1;
+            }
+        }
+    }
     mmio_block_infos = mmio_block_infos[state.block_mmio.len..];
-    defer for (state.block_mmio) |*block| block.sync(nix.System);
+    {
+        var block_index: u8 = 0;
+        const infos = mmio_block_infos[0..state.block_mmio_io_uring.len];
+        for (config.block.configs.slice_const()) |*c| {
+            if (c.io_uring and !c.pci) {
+                if (block_index % (config.machine.vcpus + 1) == profiler.thread_id) {
+                    const _point = MEASUREMENTS.start_named("create_block_mmio_io_uring");
+                    defer MEASUREMENTS.end(_point);
 
-    create_block_mmio_io_uring(
-        runtime,
-        state,
-        mmio_block_infos[0..state.block_mmio_io_uring.len],
-        config.block.configs.slice_const(),
-    );
+                    const block = &state.block_mmio_io_uring[block_index];
+                    const info = infos[block_index];
+
+                    block.init(
+                        nix.System,
+                        c.path,
+                        c.read_only,
+                        c.id,
+                        &runtime.vm,
+                        state.memory,
+                        info,
+                    );
+                    block.io_uring_device = runtime.io_uring.add_device(
+                        @ptrCast(&BlockMmioIoUring.process_io_uring_event_with_system),
+                        block,
+                    );
+                    runtime.mmio.set_device_virtio(.{
+                        .ptr = block,
+                        .read_ptr = @ptrCast(&BlockMmioIoUring.read),
+                        .write_ptr = @ptrCast(&BlockMmioIoUring.write_with_system),
+                    }, mmio_index);
+                    runtime.el.add_event(
+                        nix.System,
+                        block.context.queue_events[0].fd,
+                        @ptrCast(&BlockMmioIoUring.process_queue_event_with_system),
+                        block,
+                    );
+                }
+
+                block_index += 1;
+                mmio_index += 1;
+            }
+        }
+    }
     mmio_block_infos = mmio_block_infos[state.block_mmio_io_uring.len..];
-    defer for (state.block_mmio_io_uring) |*block| block.sync(nix.System);
+    {
+        var block_index: u8 = 0;
+        for (config.block.configs.slice_const()) |*c| {
+            if (!c.io_uring and c.pci) {
+                const info = mmio_resources.allocate_pci();
+                if (block_index % (config.machine.vcpus + 1) == profiler.thread_id) {
+                    const _point = MEASUREMENTS.start_named("create_block_pci");
+                    defer MEASUREMENTS.end(_point);
 
-    create_block_pci(runtime, state, &mmio_resources, config.block.configs.slice_const());
-    defer for (state.block_pci) |*block| block.sync(nix.System);
+                    const block = &state.block_pci[block_index];
+                    runtime.ecam.set_header(
+                        block_devices.TYPE_BLOCK,
+                        @intFromEnum(Ecam.PciClass.MassStorage),
+                        @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
+                        info.bar_addr,
+                        pci_index,
+                    );
+                    block.init(
+                        nix.System,
+                        c.path,
+                        c.read_only,
+                        c.id,
+                        &runtime.vm,
+                        state.memory,
+                        info,
+                    );
+                    runtime.mmio.set_device_pci(.{
+                        .ptr = block,
+                        .read_ptr = @ptrCast(&BlockPci.read),
+                        .write_ptr = @ptrCast(&BlockPci.write_with_system),
+                    }, pci_index);
+                    runtime.el.add_event(
+                        nix.System,
+                        block.context.queue_events[0].fd,
+                        @ptrCast(&BlockPci.process_queue_event_with_system),
+                        block,
+                    );
+                }
 
-    create_block_pci_io_uring(runtime, state, &mmio_resources, config.block.configs.slice_const());
-    defer for (state.block_pci_io_uring) |*block| block.sync(nix.System);
-
-    create_net_mmio(
-        runtime,
-        state,
-        mmio_net_infos[0..state.net_mmio.len],
-        config.network.configs.slice_const(),
-    );
-    mmio_net_infos = mmio_net_infos[state.net_mmio.len..];
-
-    create_net_mmio_vhost(
-        runtime,
-        state,
-        mmio_net_infos[0..state.net_mmio_vhost.len],
-        config.network.configs.slice_const(),
-    );
-    mmio_net_infos = mmio_net_infos[state.net_mmio_vhost.len..];
-
-    var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
-    const pmem_infos = try tmp_alloc.alloc(Pmem.Info, config.pmem.configs.slice_const().len);
-    for (config.pmem.configs.slice_const(), pmem_infos) |*pmem_config, *info| {
-        info.start = last_addr;
-        info.len = Pmem.attach(nix.System, &runtime.vm, pmem_config.path, info.start);
-        last_addr += info.len;
-    }
-
-    var cmdline = try CmdLine.init(tmp_alloc, 128);
-    try cmdline.append(config.machine.cmdline);
-    for (config.block.configs.slice_const(), 0..) |*block_config, i| {
-        if (block_config.rootfs) {
-            var name_buff: [32]u8 = undefined;
-            const mod = if (block_config.read_only) "ro" else "rw";
-            var letter: u8 = 'a' + @as(u8, @intCast(i));
-            // pci block will be initialized after mmio ones
-            // There can only be less than 256 blocks
-            if (block_config.pci) letter += @intCast(block_mmio_info_count);
-            const name = try std.fmt.bufPrint(
-                &name_buff,
-                " root=/dev/vd{c} {s}",
-                .{ letter, mod },
-            );
-            log.info(@src(), "Using root cmd line params: {s}", .{name});
-            try cmdline.append(name);
-            break;
-        }
-    } else for (config.pmem.configs.slice_const(), 0..) |*pmem_config, i| {
-        if (pmem_config.rootfs) {
-            var name_buff: [64]u8 = undefined;
-            const name = try std.fmt.bufPrint(
-                &name_buff,
-                " root=/dev/pmem{d} rw rootflags=dax",
-                .{i},
-            );
-            log.info(@src(), "Using root cmd line params: {s}", .{name});
-            try cmdline.append(name);
-            break;
-        }
-    } else {
-        log.err(@src(), "No rootfs device selected", .{});
-        return error.NoRootDevice;
-    }
-    if (config.uart.enabled) try Uart.add_to_cmdline(&cmdline);
-
-    const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
-    for (mpidrs, state.vcpus) |*mpidr, *vcpu| mpidr.* = vcpu.get_reg(nix.System, Vcpu.MPIDR_EL1);
-    const fdt_addr = FDT.create_fdt(
-        nix.System,
-        tmp_alloc,
-        state.memory,
-        mpidrs,
-        try cmdline.sentinel_str(),
-        config.uart.enabled,
-        mmio_infos,
-        pmem_infos,
-    );
-
-    state.vcpus[0].set_reg(nix.System, u64, Vcpu.PC, load_result.start);
-    state.vcpus[0].set_reg(nix.System, u64, Vcpu.REGS0, @as(u64, fdt_addr));
-    for (state.vcpus) |*vcpu|
-        vcpu.set_reg(nix.System, u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
-}
-
-fn create_block_mmio(
-    runtime: *Runtime,
-    state: *State,
-    mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
-    configs: []const config_parser.BlockConfig,
-) void {
-    const prof_point = MEASUREMENTS.start(@src());
-    defer MEASUREMENTS.end(prof_point);
-
-    var index: u8 = 0;
-    for (configs) |*config| {
-        if (!config.io_uring and !config.pci) {
-            const block = &state.block_mmio[index];
-            const info = mmio_infos[index];
-            index += 1;
-
-            block.init(
-                nix.System,
-                config.path,
-                config.read_only,
-                config.id,
-                &runtime.vm,
-                state.memory,
-                info,
-            );
-            runtime.mmio.add_device_virtio(.{
-                .ptr = block,
-                .read_ptr = @ptrCast(&BlockMmio.read),
-                .write_ptr = @ptrCast(&BlockMmio.write_with_system),
-            });
-            runtime.el.add_event(
-                nix.System,
-                block.context.queue_events[0].fd,
-                @ptrCast(&BlockMmio.process_queue_event_with_system),
-                block,
-            );
+                block_index += 1;
+                pci_index += 1;
+            }
         }
     }
-}
-
-fn create_block_mmio_io_uring(
-    runtime: *Runtime,
-    state: *State,
-    mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
-    configs: []const config_parser.BlockConfig,
-) void {
-    const prof_point = MEASUREMENTS.start(@src());
-    defer MEASUREMENTS.end(prof_point);
-
-    var index: u8 = 0;
-    for (configs) |*config| {
-        if (config.io_uring and !config.pci) {
-            const block = &state.block_mmio_io_uring[index];
-            const info = mmio_infos[index];
-            index += 1;
-            block.init(
-                nix.System,
-                config.path,
-                config.read_only,
-                config.id,
-                &runtime.vm,
-                state.memory,
-                info,
-            );
-            block.io_uring_device = runtime.io_uring.add_device(
-                @ptrCast(&BlockMmioIoUring.process_io_uring_event_with_system),
-                block,
-            );
-            runtime.mmio.add_device_virtio(.{
-                .ptr = block,
-                .read_ptr = @ptrCast(&BlockMmioIoUring.read),
-                .write_ptr = @ptrCast(&BlockMmioIoUring.write_with_system),
-            });
-            runtime.el.add_event(
-                nix.System,
-                block.context.queue_events[0].fd,
-                @ptrCast(&BlockMmioIoUring.process_queue_event_with_system),
-                block,
-            );
-        }
-    }
-}
-
-fn create_block_pci(
-    runtime: *Runtime,
-    state: *State,
-    mmio_resources: *Mmio.Resources,
-    configs: []const config_parser.BlockConfig,
-) void {
-    const prof_point = MEASUREMENTS.start(@src());
-    defer MEASUREMENTS.end(prof_point);
-
-    var index: u8 = 0;
-    for (configs) |*config| {
-        if (!config.io_uring and config.pci) {
-            const block = &state.block_pci[index];
-            index += 1;
-
+    {
+        var block_index: u8 = 0;
+        for (config.block.configs.slice_const()) |*c| {
             const info = mmio_resources.allocate_pci();
-            runtime.ecam.add_header(
-                block_devices.TYPE_BLOCK,
-                @intFromEnum(Ecam.PciClass.MassStorage),
-                @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
-                info.bar_addr,
-            );
-            block.init(
-                nix.System,
-                config.path,
-                config.read_only,
-                config.id,
-                &runtime.vm,
-                state.memory,
-                info,
-            );
-            runtime.mmio.add_device_pci(.{
-                .ptr = block,
-                .read_ptr = @ptrCast(&BlockPci.read),
-                .write_ptr = @ptrCast(&BlockPci.write_with_system),
-            });
-            runtime.el.add_event(
-                nix.System,
-                block.context.queue_events[0].fd,
-                @ptrCast(&BlockPci.process_queue_event_with_system),
-                block,
-            );
+            if (c.io_uring and c.pci) {
+                if (block_index % (config.machine.vcpus + 1) == profiler.thread_id) {
+                    const _point = MEASUREMENTS.start_named("create_block_pci_io_uring");
+                    defer MEASUREMENTS.end(_point);
+
+                    const block = &state.block_pci_io_uring[block_index];
+                    runtime.ecam.set_header(
+                        block_devices.TYPE_BLOCK,
+                        @intFromEnum(Ecam.PciClass.MassStorage),
+                        @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
+                        info.bar_addr,
+                        pci_index,
+                    );
+                    block.init(
+                        nix.System,
+                        c.path,
+                        c.read_only,
+                        c.id,
+                        &runtime.vm,
+                        state.memory,
+                        info,
+                    );
+                    block.io_uring_device = runtime.io_uring.add_device(
+                        @ptrCast(&BlockPciIoUring.process_io_uring_event_with_system),
+                        block,
+                    );
+                    runtime.mmio.set_device_pci(.{
+                        .ptr = block,
+                        .read_ptr = @ptrCast(&BlockPciIoUring.read),
+                        .write_ptr = @ptrCast(&BlockPciIoUring.write_with_system),
+                    }, pci_index);
+                    runtime.el.add_event(
+                        nix.System,
+                        block.context.queue_events[0].fd,
+                        @ptrCast(&BlockPciIoUring.process_queue_event_with_system),
+                        block,
+                    );
+                }
+
+                block_index += 1;
+                pci_index += 1;
+            }
         }
     }
-}
-
-fn create_block_pci_io_uring(
-    runtime: *Runtime,
-    state: *State,
-    mmio_resources: *Mmio.Resources,
-    configs: []const config_parser.BlockConfig,
-) void {
-    const prof_point = MEASUREMENTS.start(@src());
-    defer MEASUREMENTS.end(prof_point);
-
-    var index: u8 = 0;
-    for (configs) |*config| {
-        if (config.io_uring and config.pci) {
-            const block = &state.block_pci_io_uring[index];
-            index += 1;
-
-            const info = mmio_resources.allocate_pci();
-            runtime.ecam.add_header(
-                block_devices.TYPE_BLOCK,
-                @intFromEnum(Ecam.PciClass.MassStorage),
-                @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
-                info.bar_addr,
-            );
-            block.init(
-                nix.System,
-                config.path,
-                config.read_only,
-                config.id,
-                &runtime.vm,
-                state.memory,
-                info,
-            );
-            block.io_uring_device = runtime.io_uring.add_device(
-                @ptrCast(&BlockPciIoUring.process_io_uring_event_with_system),
-                block,
-            );
-            runtime.mmio.add_device_pci(.{
-                .ptr = block,
-                .read_ptr = @ptrCast(&BlockPciIoUring.read),
-                .write_ptr = @ptrCast(&BlockPciIoUring.write_with_system),
-            });
-            runtime.el.add_event(
-                nix.System,
-                block.context.queue_events[0].fd,
-                @ptrCast(&BlockPciIoUring.process_queue_event_with_system),
-                block,
-            );
-        }
-    }
-}
-
-fn create_net_mmio(
-    runtime: *Runtime,
-    state: *State,
-    mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
-    configs: []const config_parser.NetConfig,
-) void {
-    const prof_point = MEASUREMENTS.start(@src());
-    defer MEASUREMENTS.end(prof_point);
-
-    var index: u8 = 0;
     var iov_ring = state.net_iov_ring;
-    for (configs) |*config| {
-        if (!config.vhost) {
-            const net = &state.net_mmio[index];
-            const mmio_info = mmio_infos[index];
-            const iov_ring_memory = iov_ring[0..IovRing.BACKING_SIZE];
-            iov_ring = iov_ring[IovRing.BACKING_SIZE..];
-            index += 1;
+    {
+        var net_index: u8 = 0;
+        const infos = mmio_net_infos[0..state.net_mmio.len];
+        for (config.network.configs.slice_const()) |*c| {
+            if (!c.vhost) {
+                if (net_index % (config.machine.vcpus + 1) == profiler.thread_id) {
+                    const _point = MEASUREMENTS.start_named("create_net_mmio");
+                    defer MEASUREMENTS.end(_point);
 
-            net.init(
-                nix.System,
-                &runtime.vm,
-                config.dev_name,
-                config.mac,
-                state.memory,
-                mmio_info,
-                iov_ring_memory,
-            );
-            runtime.mmio.add_device_virtio(.{
-                .ptr = net,
-                .read_ptr = @ptrCast(&NetMmio.read),
-                .write_ptr = @ptrCast(&NetMmio.write_with_system),
-            });
-            runtime.el.add_event(
-                nix.System,
-                net.context.queue_events[0].fd,
-                @ptrCast(&NetMmio.process_rx_event_with_system),
-                net,
-            );
-            runtime.el.add_event(
-                nix.System,
-                net.context.queue_events[1].fd,
-                @ptrCast(&NetMmio.process_tx_event_with_system),
-                net,
-            );
-            runtime.el.add_event(
-                nix.System,
-                net.tun,
-                @ptrCast(&NetMmio.process_tap_event_with_system),
-                net,
-            );
+                    const net = &state.net_mmio[net_index];
+                    const mmio_info = infos[net_index];
+                    const iov_ring_memory = iov_ring[0..IovRing.BACKING_SIZE];
+                    iov_ring = iov_ring[IovRing.BACKING_SIZE..];
+
+                    net.init(
+                        nix.System,
+                        &runtime.vm,
+                        c.dev_name,
+                        c.mac,
+                        state.memory,
+                        mmio_info,
+                        iov_ring_memory,
+                    );
+                    runtime.mmio.set_device_virtio(.{
+                        .ptr = net,
+                        .read_ptr = @ptrCast(&NetMmio.read),
+                        .write_ptr = @ptrCast(&NetMmio.write_with_system),
+                    }, mmio_index);
+                    runtime.el.add_event(
+                        nix.System,
+                        net.context.queue_events[0].fd,
+                        @ptrCast(&NetMmio.process_rx_event_with_system),
+                        net,
+                    );
+                    runtime.el.add_event(
+                        nix.System,
+                        net.context.queue_events[1].fd,
+                        @ptrCast(&NetMmio.process_tx_event_with_system),
+                        net,
+                    );
+                    runtime.el.add_event(
+                        nix.System,
+                        net.tun,
+                        @ptrCast(&NetMmio.process_tap_event_with_system),
+                        net,
+                    );
+                }
+
+                net_index += 1;
+                mmio_index += 1;
+            }
         }
     }
+    mmio_net_infos = mmio_net_infos[state.net_mmio.len..];
+    {
+        var net_index: u8 = 0;
+        const infos = mmio_net_infos[0..state.net_mmio_vhost.len];
+        for (config.network.configs.slice_const()) |*c| {
+            if (c.vhost) {
+                if (net_index % (config.machine.vcpus + 1) == profiler.thread_id) {
+                    const _point = MEASUREMENTS.start_named("create_net_mmio_vhost");
+                    defer MEASUREMENTS.end(_point);
+
+                    const net = &state.net_mmio_vhost[net_index];
+                    const mmio_info = infos[net_index];
+
+                    net.init(
+                        nix.System,
+                        &runtime.vm,
+                        c.dev_name,
+                        c.mac,
+                        state.memory,
+                        mmio_info,
+                    );
+                    runtime.mmio.set_device_virtio(.{
+                        .ptr = net,
+                        .read_ptr = @ptrCast(&NetMmioVhost.read),
+                        .write_ptr = @ptrCast(&NetMmioVhost.write_with_system),
+                    }, mmio_index);
+                }
+                net_index += 1;
+                mmio_index += 1;
+            }
+        }
+    }
+    // Single threaded VM setup finish
+    if (profiler.thread_id == 0) {
+        const tmp_alloc = load_result.post_kernel_allocator.allocator();
+
+        // Pmem creation depends on sizes of backing files, so cannot be done
+        // in parallel.
+        var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
+        runtime.pmem_infos =
+            tmp_alloc.alloc(Pmem.Info, config.pmem.configs.slice_const().len) catch unreachable;
+        for (config.pmem.configs.slice_const(), runtime.pmem_infos) |*pmem_config, *info| {
+            info.start = last_addr;
+            info.len = Pmem.attach(nix.System, &runtime.vm, pmem_config.path, info.start);
+            last_addr += info.len;
+        }
+
+        var cmdline = CmdLine.init(tmp_alloc, 128) catch unreachable;
+        cmdline.append(config.machine.cmdline) catch unreachable;
+        for (config.block.configs.slice_const(), 0..) |*block_config, i| {
+            if (block_config.rootfs) {
+                var name_buff: [32]u8 = undefined;
+                const mod = if (block_config.read_only) "ro" else "rw";
+                var letter: u8 = 'a' + @as(u8, @intCast(i));
+                // pci block will be initialized after mmio ones
+                // There can only be less than 256 blocks
+                if (block_config.pci) letter += @intCast(block_mmio_info_count);
+                const name = std.fmt.bufPrint(
+                    &name_buff,
+                    " root=/dev/vd{c} {s}",
+                    .{ letter, mod },
+                ) catch unreachable;
+                log.info(@src(), "Using root cmd line params: {s}", .{name});
+                cmdline.append(name) catch unreachable;
+                break;
+            }
+        } else for (config.pmem.configs.slice_const(), 0..) |*pmem_config, i| {
+            if (pmem_config.rootfs) {
+                var name_buff: [64]u8 = undefined;
+                const name = std.fmt.bufPrint(
+                    &name_buff,
+                    " root=/dev/pmem{d} rw rootflags=dax",
+                    .{i},
+                ) catch unreachable;
+                log.info(@src(), "Using root cmd line params: {s}", .{name});
+                cmdline.append(name) catch unreachable;
+                break;
+            }
+        } else {
+            log.panic(@src(), "No rootfs device selected", .{});
+        }
+        if (config.uart.enabled) Uart.add_to_cmdline(&cmdline) catch unreachable;
+
+        const mpidrs = tmp_alloc.alloc(u64, config.machine.vcpus) catch unreachable;
+        for (mpidrs, state.vcpus) |*mpidr, *vcpu| mpidr.* = vcpu.get_reg(nix.System, Vcpu.MPIDR_EL1);
+        const fdt_addr = FDT.create_fdt(
+            nix.System,
+            tmp_alloc,
+            state.memory,
+            mpidrs,
+            cmdline.sentinel_str() catch unreachable,
+            config.uart.enabled,
+            runtime.mmio_infos,
+            runtime.pmem_infos,
+        );
+
+        state.vcpus[0].set_reg(nix.System, u64, Vcpu.PC, load_result.start);
+        state.vcpus[0].set_reg(nix.System, u64, Vcpu.REGS0, @as(u64, fdt_addr));
+    }
+    // Parallel final vcpu setup
+    if (profiler.thread_id != 0) {
+        const vcpu_idx = profiler.thread_id - 1;
+        state.vcpus[vcpu_idx].set_reg(nix.System, u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
+    }
+    log.debug(@src(), "Thread {d}: end of threaded_creation", .{profiler.thread_id});
+    barrier.wait();
 }
 
-fn create_net_mmio_vhost(
+fn threaded_creation2(
+    config: *const config_parser.Config,
     runtime: *Runtime,
     state: *State,
-    mmio_infos: []const Mmio.Resources.MmioVirtioInfo,
-    configs: []const config_parser.NetConfig,
+    barrier: *arch.Barrier,
 ) void {
+    _ = barrier;
     const prof_point = MEASUREMENTS.start(@src());
     defer MEASUREMENTS.end(prof_point);
 
-    var index: u8 = 0;
-    for (configs) |*config| {
-        if (config.vhost) {
-            const net = &state.net_mmio_vhost[index];
-            const mmio_info = mmio_infos[index];
-            index += 1;
-
-            net.init(
+    if (profiler.thread_id == 0) {
+        runtime.vm.set_memory(nix.System, .{
+            .guest_phys_addr = Memory.DRAM_START,
+            .memory_size = state.memory.mem.len,
+            .userspace_addr = @intFromPtr(state.memory.mem.ptr),
+        });
+        if (config.api.socket_path) |socket_path| {
+            runtime.api = .init(
                 nix.System,
-                &runtime.vm,
-                config.dev_name,
-                config.mac,
-                state.memory,
-                mmio_info,
+                socket_path,
+                state.vcpus,
+                state.vcpu_threads,
+                &runtime.vcpu_barrier,
+                state.vcpu_reg_list,
+                state.vcpu_regs,
+                state.vcpu_mp_states,
+                &runtime.gicv2,
+                state.gicv2_state,
+                state.permanent_memory,
             );
-            runtime.mmio.add_device_virtio(.{
-                .ptr = net,
-                .read_ptr = @ptrCast(&NetMmioVhost.read),
-                .write_ptr = @ptrCast(&NetMmioVhost.write_with_system),
+            runtime.el.add_event(
+                nix.System,
+                runtime.api.fd,
+                @ptrCast(&Api.handle_default),
+                &runtime.api,
+            );
+        }
+        runtime.el.add_event(
+            nix.System,
+            runtime.vcpu_exit_event.fd,
+            @ptrCast(&EventLoop.stop),
+            &runtime.el,
+        );
+
+        var load_result = state.memory.load_linux_kernel(nix.System, config.kernel.path);
+        const tmp_alloc = load_result.post_kernel_allocator.allocator();
+
+        const block_mmio_info_count = state.block_mmio.len + state.block_mmio_io_uring.len;
+        const net_mmio_info_count = state.net_mmio.len + state.net_mmio_vhost.len;
+        // preallocate all mmio regions for the devices. This is needed to
+        // pass a single slice of mmio regions to the fdt builder.
+        const mmio_info_count = block_mmio_info_count + net_mmio_info_count;
+        const mmio_infos =
+            tmp_alloc.alloc(Mmio.Resources.MmioVirtioInfo, mmio_info_count) catch unreachable;
+
+        var mmio_resources: Mmio.Resources = .{};
+        var mmio_regions = state.mmio_regions;
+        for (mmio_infos) |*info| {
+            info.* = mmio_resources.allocate_mmio_virtio();
+            info.mem_ptr = mmio_regions.ptr;
+            mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+        }
+
+        if (config.uart.enabled) {
+            runtime.terminal_state = configure_terminal(nix.System);
+            state.uart.init(nix.System, &runtime.vm, nix.STDIN_FILENO, nix.STDOUT_FILENO);
+            runtime.mmio.set_uart(.{
+                .ptr = state.uart,
+                .read_ptr = @ptrCast(&Uart.read),
+                .write_ptr = @ptrCast(&Uart.write_with_system),
             });
+            runtime.el.add_event(
+                nix.System,
+                nix.STDIN,
+                @ptrCast(&Uart.read_input_with_system),
+                state.uart,
+            );
+        }
+        runtime.mmio.set_rtc(.{
+            .ptr = state.rtc,
+            .read_ptr = @ptrCast(&Rtc.read_with_system),
+            .write_ptr = @ptrCast(&Rtc.write_with_system),
+        });
+
+        // Pmem creation depends on sizes of backing files, so cannot be done
+        // in parallel.
+        var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
+        const pmem_infos =
+            tmp_alloc.alloc(Pmem.Info, config.pmem.configs.slice_const().len) catch unreachable;
+        for (config.pmem.configs.slice_const(), pmem_infos) |*pmem_config, *info| {
+            info.start = last_addr;
+            info.len = Pmem.attach(nix.System, &runtime.vm, pmem_config.path, info.start);
+            last_addr += info.len;
+        }
+
+        var cmdline = CmdLine.init(tmp_alloc, 128) catch unreachable;
+        cmdline.append(config.machine.cmdline) catch unreachable;
+        for (config.block.configs.slice_const(), 0..) |*block_config, i| {
+            if (block_config.rootfs) {
+                var name_buff: [32]u8 = undefined;
+                const mod = if (block_config.read_only) "ro" else "rw";
+                var letter: u8 = 'a' + @as(u8, @intCast(i));
+                // pci block will be initialized after mmio ones
+                // There can only be less than 256 blocks
+                if (block_config.pci) letter += @intCast(block_mmio_info_count);
+                const name = std.fmt.bufPrint(
+                    &name_buff,
+                    " root=/dev/vd{c} {s}",
+                    .{ letter, mod },
+                ) catch unreachable;
+                log.info(@src(), "Using root cmd line params: {s}", .{name});
+                cmdline.append(name) catch unreachable;
+                break;
+            }
+        } else for (config.pmem.configs.slice_const(), 0..) |*pmem_config, i| {
+            if (pmem_config.rootfs) {
+                var name_buff: [64]u8 = undefined;
+                const name = std.fmt.bufPrint(
+                    &name_buff,
+                    " root=/dev/pmem{d} rw rootflags=dax",
+                    .{i},
+                ) catch unreachable;
+                log.info(@src(), "Using root cmd line params: {s}", .{name});
+                cmdline.append(name) catch unreachable;
+                break;
+            }
+        } else {
+            log.panic(@src(), "No rootfs device selected", .{});
+        }
+        if (config.uart.enabled) Uart.add_to_cmdline(&cmdline) catch unreachable;
+
+        const mpidrs = tmp_alloc.alloc(u64, config.machine.vcpus) catch unreachable;
+        for (mpidrs, state.vcpus) |*mpidr, *vcpu|
+            mpidr.* = vcpu.get_reg(nix.System, Vcpu.MPIDR_EL1);
+        const fdt_addr = FDT.create_fdt(
+            nix.System,
+            tmp_alloc,
+            state.memory,
+            mpidrs,
+            cmdline.sentinel_str() catch unreachable,
+            config.uart.enabled,
+            mmio_infos,
+            pmem_infos,
+        );
+
+        state.vcpus[0].set_reg(nix.System, u64, Vcpu.PC, load_result.start);
+        state.vcpus[0].set_reg(nix.System, u64, Vcpu.REGS0, @as(u64, fdt_addr));
+        for (state.vcpus) |*vcpu|
+            vcpu.set_reg(nix.System, u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
+    } else {
+        // Parallel device configuration
+        var mmio_resources: Mmio.Resources = .{};
+        var mmio_regions = state.mmio_regions;
+        var mmio_index: u8 = 0;
+        var pci_index: u8 = 0;
+
+        const thread_id = profiler.thread_id - 1;
+
+        {
+            var block_index: u8 = 0;
+            for (config.block.configs.slice_const()) |*c| {
+                if (!c.io_uring and !c.pci) {
+                    var info = mmio_resources.allocate_mmio_virtio();
+                    info.mem_ptr = mmio_regions.ptr;
+                    mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+                    if (block_index % config.machine.vcpus == thread_id) {
+                        const _point = MEASUREMENTS.start_named("create_block_mmio");
+                        defer MEASUREMENTS.end(_point);
+
+                        const block = &state.block_mmio[block_index];
+
+                        block.init(
+                            nix.System,
+                            c.path,
+                            c.read_only,
+                            c.id,
+                            &runtime.vm,
+                            state.memory,
+                            info,
+                        );
+                        runtime.mmio.set_device_virtio(.{
+                            .ptr = block,
+                            .read_ptr = @ptrCast(&BlockMmio.read),
+                            .write_ptr = @ptrCast(&BlockMmio.write_with_system),
+                        }, mmio_index);
+                        runtime.el.add_event(
+                            nix.System,
+                            block.context.queue_events[0].fd,
+                            @ptrCast(&BlockMmio.process_queue_event_with_system),
+                            block,
+                        );
+                    }
+
+                    block_index += 1;
+                    mmio_index += 1;
+                }
+            }
+        }
+        {
+            var block_index: u8 = 0;
+            for (config.block.configs.slice_const()) |*c| {
+                if (c.io_uring and !c.pci) {
+                    var info = mmio_resources.allocate_mmio_virtio();
+                    info.mem_ptr = mmio_regions.ptr;
+                    mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+                    if (block_index % config.machine.vcpus == thread_id) {
+                        const _point = MEASUREMENTS.start_named("create_block_mmio_io_uring");
+                        defer MEASUREMENTS.end(_point);
+
+                        const block = &state.block_mmio_io_uring[block_index];
+
+                        block.init(
+                            nix.System,
+                            c.path,
+                            c.read_only,
+                            c.id,
+                            &runtime.vm,
+                            state.memory,
+                            info,
+                        );
+                        block.io_uring_device = runtime.io_uring.add_device(
+                            @ptrCast(&BlockMmioIoUring.process_io_uring_event_with_system),
+                            block,
+                        );
+                        runtime.mmio.set_device_virtio(.{
+                            .ptr = block,
+                            .read_ptr = @ptrCast(&BlockMmioIoUring.read),
+                            .write_ptr = @ptrCast(&BlockMmioIoUring.write_with_system),
+                        }, mmio_index);
+                        runtime.el.add_event(
+                            nix.System,
+                            block.context.queue_events[0].fd,
+                            @ptrCast(&BlockMmioIoUring.process_queue_event_with_system),
+                            block,
+                        );
+                    }
+
+                    block_index += 1;
+                    mmio_index += 1;
+                }
+            }
+        }
+        {
+            var block_index: u8 = 0;
+            for (config.block.configs.slice_const()) |*c| {
+                if (!c.io_uring and c.pci) {
+                    const info = mmio_resources.allocate_pci();
+                    if (block_index % config.machine.vcpus == thread_id) {
+                        const _point = MEASUREMENTS.start_named("create_block_pci");
+                        defer MEASUREMENTS.end(_point);
+
+                        const block = &state.block_pci[block_index];
+                        runtime.ecam.set_header(
+                            block_devices.TYPE_BLOCK,
+                            @intFromEnum(Ecam.PciClass.MassStorage),
+                            @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
+                            info.bar_addr,
+                            pci_index,
+                        );
+                        block.init(
+                            nix.System,
+                            c.path,
+                            c.read_only,
+                            c.id,
+                            &runtime.vm,
+                            state.memory,
+                            info,
+                        );
+                        runtime.mmio.set_device_pci(.{
+                            .ptr = block,
+                            .read_ptr = @ptrCast(&BlockPci.read),
+                            .write_ptr = @ptrCast(&BlockPci.write_with_system),
+                        }, pci_index);
+                        runtime.el.add_event(
+                            nix.System,
+                            block.context.queue_events[0].fd,
+                            @ptrCast(&BlockPci.process_queue_event_with_system),
+                            block,
+                        );
+                    }
+
+                    block_index += 1;
+                    pci_index += 1;
+                }
+            }
+        }
+        {
+            var block_index: u8 = 0;
+            for (config.block.configs.slice_const()) |*c| {
+                if (c.io_uring and c.pci) {
+                    const info = mmio_resources.allocate_pci();
+                    if (block_index % config.machine.vcpus == thread_id) {
+                        const _point = MEASUREMENTS.start_named("create_block_pci_io_uring");
+                        defer MEASUREMENTS.end(_point);
+
+                        const block = &state.block_pci_io_uring[block_index];
+                        runtime.ecam.set_header(
+                            block_devices.TYPE_BLOCK,
+                            @intFromEnum(Ecam.PciClass.MassStorage),
+                            @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
+                            info.bar_addr,
+                            pci_index,
+                        );
+                        block.init(
+                            nix.System,
+                            c.path,
+                            c.read_only,
+                            c.id,
+                            &runtime.vm,
+                            state.memory,
+                            info,
+                        );
+                        block.io_uring_device = runtime.io_uring.add_device(
+                            @ptrCast(&BlockPciIoUring.process_io_uring_event_with_system),
+                            block,
+                        );
+                        runtime.mmio.set_device_pci(.{
+                            .ptr = block,
+                            .read_ptr = @ptrCast(&BlockPciIoUring.read),
+                            .write_ptr = @ptrCast(&BlockPciIoUring.write_with_system),
+                        }, pci_index);
+                        runtime.el.add_event(
+                            nix.System,
+                            block.context.queue_events[0].fd,
+                            @ptrCast(&BlockPciIoUring.process_queue_event_with_system),
+                            block,
+                        );
+                    }
+
+                    block_index += 1;
+                    pci_index += 1;
+                }
+            }
+        }
+        var iov_ring = state.net_iov_ring;
+        {
+            var net_index: u8 = 0;
+            for (config.network.configs.slice_const()) |*c| {
+                if (!c.vhost) {
+                    var info = mmio_resources.allocate_mmio_virtio();
+                    info.mem_ptr = mmio_regions.ptr;
+                    mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+                    if (net_index % config.machine.vcpus == thread_id) {
+                        const _point = MEASUREMENTS.start_named("create_net_mmio");
+                        defer MEASUREMENTS.end(_point);
+
+                        const net = &state.net_mmio[net_index];
+                        const iov_ring_memory = iov_ring[0..IovRing.BACKING_SIZE];
+                        iov_ring = iov_ring[IovRing.BACKING_SIZE..];
+
+                        net.init(
+                            nix.System,
+                            &runtime.vm,
+                            c.dev_name,
+                            c.mac,
+                            state.memory,
+                            info,
+                            iov_ring_memory,
+                        );
+                        runtime.mmio.set_device_virtio(.{
+                            .ptr = net,
+                            .read_ptr = @ptrCast(&NetMmio.read),
+                            .write_ptr = @ptrCast(&NetMmio.write_with_system),
+                        }, mmio_index);
+                        runtime.el.add_event(
+                            nix.System,
+                            net.context.queue_events[0].fd,
+                            @ptrCast(&NetMmio.process_rx_event_with_system),
+                            net,
+                        );
+                        runtime.el.add_event(
+                            nix.System,
+                            net.context.queue_events[1].fd,
+                            @ptrCast(&NetMmio.process_tx_event_with_system),
+                            net,
+                        );
+                        runtime.el.add_event(
+                            nix.System,
+                            net.tun,
+                            @ptrCast(&NetMmio.process_tap_event_with_system),
+                            net,
+                        );
+                    }
+
+                    net_index += 1;
+                    mmio_index += 1;
+                }
+            }
+        }
+        {
+            var net_index: u8 = 0;
+            for (config.network.configs.slice_const()) |*c| {
+                if (c.vhost) {
+                    var info = mmio_resources.allocate_mmio_virtio();
+                    info.mem_ptr = mmio_regions.ptr;
+                    mmio_regions = mmio_regions[Mmio.MMIO_DEVICE_ALLOCATED_REGION_SIZE..];
+                    if (net_index % config.machine.vcpus == thread_id) {
+                        const _point = MEASUREMENTS.start_named("create_net_mmio_vhost");
+                        defer MEASUREMENTS.end(_point);
+
+                        const net = &state.net_mmio_vhost[net_index];
+
+                        net.init(
+                            nix.System,
+                            &runtime.vm,
+                            c.dev_name,
+                            c.mac,
+                            state.memory,
+                            info,
+                        );
+                        runtime.mmio.set_device_virtio(.{
+                            .ptr = net,
+                            .read_ptr = @ptrCast(&NetMmioVhost.read),
+                            .write_ptr = @ptrCast(&NetMmioVhost.write_with_system),
+                        }, mmio_index);
+                    }
+                    net_index += 1;
+                    mmio_index += 1;
+                }
+            }
         }
     }
+    log.debug(@src(), "Thread {d}: end of threaded_creation", .{profiler.thread_id});
 }
 
-fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !void {
+fn build_from_snapshot(snapshot_path: []const u8) !void {
     const prof_point = MEASUREMENTS.start(@src());
     defer MEASUREMENTS.end(prof_point);
 
-    state.* = .from_snapshot(nix.System, snapshot_path);
+    var runtime: Runtime = undefined;
+    var state: State = .from_snapshot(nix.System, snapshot_path);
 
     runtime.kvm = .init(nix.System);
     runtime.vm = .init(nix.System, runtime.kvm);
@@ -732,6 +1207,9 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
     var mmio_resources: Mmio.Resources = .{};
     var mmio_regions = state.mmio_regions;
 
+    var mmio_index: u8 = 0;
+    var pci_index: u8 = 0;
+
     var config_device_state_bytes = state.config_devices_state;
     for (0..state.config_state.block_mmio_count) |i| {
         const read_only = config_device_state_bytes[0] == 1;
@@ -745,17 +1223,18 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
 
         const block = &state.block_mmio[i];
         block.restore(nix.System, &runtime.vm, read_only, path, info);
-        runtime.mmio.add_device_virtio(.{
+        runtime.mmio.set_device_virtio(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockMmio.read),
             .write_ptr = @ptrCast(&BlockMmio.write_with_system),
-        });
+        }, mmio_index);
         runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
             @ptrCast(&BlockMmio.process_queue_event_with_system),
             block,
         );
+        mmio_index += 1;
     }
     for (0..state.config_state.block_pci_count) |i| {
         const read_only = config_device_state_bytes[0] == 1;
@@ -767,17 +1246,18 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
 
         const block = &state.block_pci[i];
         block.restore(nix.System, &runtime.vm, read_only, path, info);
-        runtime.mmio.add_device_pci(.{
+        runtime.mmio.set_device_pci(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockPci.read),
             .write_ptr = @ptrCast(&BlockPci.write_with_system),
-        });
+        }, pci_index);
         runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
             @ptrCast(&BlockPci.process_queue_event_with_system),
             block,
         );
+        pci_index += 1;
     }
     for (0..state.config_state.block_mmio_io_uring_count) |i| {
         const read_only = config_device_state_bytes[0] == 1;
@@ -795,17 +1275,18 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
             @ptrCast(&BlockMmioIoUring.process_io_uring_event_with_system),
             block,
         );
-        runtime.mmio.add_device_virtio(.{
+        runtime.mmio.set_device_virtio(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockMmioIoUring.read),
             .write_ptr = @ptrCast(&BlockMmioIoUring.write_with_system),
-        });
+        }, mmio_index);
         runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
             @ptrCast(&BlockMmioIoUring.process_queue_event_with_system),
             block,
         );
+        mmio_index += 1;
     }
     for (0..state.config_state.block_pci_io_uring_count) |i| {
         const read_only = config_device_state_bytes[0] == 1;
@@ -821,17 +1302,18 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
             @ptrCast(&BlockPciIoUring.process_io_uring_event_with_system),
             block,
         );
-        runtime.mmio.add_device_pci(.{
+        runtime.mmio.set_device_pci(.{
             .ptr = block,
             .read_ptr = @ptrCast(&BlockPciIoUring.read),
             .write_ptr = @ptrCast(&BlockPciIoUring.write_with_system),
-        });
+        }, pci_index);
         runtime.el.add_event(
             nix.System,
             block.context.queue_events[0].fd,
             @ptrCast(&BlockPciIoUring.process_queue_event_with_system),
             block,
         );
+        pci_index += 1;
     }
     var net_iov_ring = state.net_iov_ring;
     for (0..state.config_state.net_mmio_count) |i| {
@@ -848,11 +1330,11 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
 
         const net = &state.net_mmio[i];
         net.restore(nix.System, &runtime.vm, path, info, iov_ring_bytes);
-        runtime.mmio.add_device_virtio(.{
+        runtime.mmio.set_device_virtio(.{
             .ptr = net,
             .read_ptr = @ptrCast(&NetMmio.read),
             .write_ptr = @ptrCast(&NetMmio.write_with_system),
-        });
+        }, mmio_index);
         runtime.el.add_event(
             nix.System,
             net.context.queue_events[0].fd,
@@ -871,6 +1353,7 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
             @ptrCast(&NetMmio.process_tap_event_with_system),
             net,
         );
+        mmio_index += 1;
     }
     for (0..state.config_state.net_vhost_mmio_count) |i| {
         const path_len = config_device_state_bytes[0];
@@ -883,11 +1366,12 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
 
         const net = &state.net_mmio_vhost[i];
         net.restore(nix.System, &runtime.vm, path, info);
-        runtime.mmio.add_device_virtio(.{
+        runtime.mmio.set_device_virtio(.{
             .ptr = net,
             .read_ptr = @ptrCast(&NetMmioVhost.read),
             .write_ptr = @ptrCast(&NetMmioVhost.write_with_system),
-        });
+        }, mmio_index);
+        mmio_index += 1;
     }
     var last_addr = Memory.align_addr(state.memory.last_addr(), Pmem.ALIGNMENT);
     for (0..state.config_state.pmem_count) |_| {
@@ -896,6 +1380,21 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
         config_device_state_bytes = config_device_state_bytes[1 + path_len ..];
         last_addr += Pmem.attach(nix.System, &runtime.vm, path, last_addr);
     }
+
+    for (state.vcpu_threads, state.vcpus) |*t, *vcpu|
+        t.* = try nix.System.spawn_thread(
+            .{},
+            Vcpu.run_threaded,
+            .{ vcpu, nix.System, &runtime.vcpu_barrier, &runtime.mmio },
+        );
+
+    profiler.print(ALL_MEASUREMENTS);
+
+    runtime.vcpu_barrier.set();
+    runtime.el.run(nix.System);
+
+    log.info(@src(), "Shutting down", .{});
+    if (runtime.terminal_state) |ts| restore_terminal(nix.System, &ts);
 }
 
 fn configure_terminal(comptime System: type) nix.termios {
@@ -932,6 +1431,10 @@ pub const Runtime = struct {
     vcpu_barrier: std.Thread.ResetEvent,
     api: Api,
     terminal_state: ?nix.termios,
+
+    vcpu_exit_event: EventFd,
+    mmio_infos: []Mmio.Resources.MmioVirtioInfo,
+    pmem_infos: []Pmem.Info,
 };
 
 pub const State = struct {
