@@ -102,40 +102,38 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
                 return longest + FILE.len;
             }
 
-            pub fn print(comptime NAME_ALIGN: u64) void {
+            pub fn print(comptime NAME_ALIGN: u64, thread_number: u64) void {
                 const freq: f64 = @floatFromInt(global_freq);
                 const global_end = arch.get_perf_counter();
                 const global_elapsed: f64 = @floatFromInt(global_end - global_start);
-                for (0..options.num_threads) |ti| {
-                    inline for (NAMES, measurements[ti]) |name, m| {
-                        if (m.hit_count != 0) {
-                            const without_children_ms: f64 =
-                                @as(f64, @floatFromInt(m.without_children)) / freq * 1000.0;
-                            const without_children: f64 =
-                                @as(f64, @floatFromInt(m.without_children)) / global_elapsed * 100.0;
-                            const with_children_ms: f64 =
-                                @as(f64, @floatFromInt(m.with_children)) / freq * 1000.0;
-                            const with_children: f64 =
-                                @as(f64, @floatFromInt(m.with_children)) / global_elapsed * 100.0;
-                            const full_name = std.fmt.comptimePrint("{s}:{s}", .{ FILE, name });
-                            log.info(
-                                @src(),
-                                "t: {d} | {s:<" ++
-                                    std.fmt.comptimePrint("{d}", .{NAME_ALIGN + 1}) ++
-                                    "} | hit: {d:>9} | exclusive: {d:>9} cycles {d:>9.6} ms {d:>9.6}% | inclusive: {d:>9} cycles {d:>9.6} ms {d:>9.6}%",
-                                .{
-                                    ti,
-                                    full_name,
-                                    m.hit_count,
-                                    m.without_children,
-                                    without_children_ms,
-                                    without_children,
-                                    m.with_children,
-                                    with_children_ms,
-                                    with_children,
-                                },
-                            );
-                        }
+                inline for (NAMES, measurements[thread_number]) |name, m| {
+                    if (m.hit_count != 0) {
+                        const without_children_ms: f64 =
+                            @as(f64, @floatFromInt(m.without_children)) / freq * 1000.0;
+                        const without_children: f64 =
+                            @as(f64, @floatFromInt(m.without_children)) / global_elapsed * 100.0;
+                        const with_children_ms: f64 =
+                            @as(f64, @floatFromInt(m.with_children)) / freq * 1000.0;
+                        const with_children: f64 =
+                            @as(f64, @floatFromInt(m.with_children)) / global_elapsed * 100.0;
+                        const full_name = std.fmt.comptimePrint("{s}:{s}", .{ FILE, name });
+                        log.info(
+                            @src(),
+                            "t: {d} | {s:<" ++
+                                std.fmt.comptimePrint("{d}", .{NAME_ALIGN + 1}) ++
+                                "} | hit: {d:>9} | exclusive: {d:>9} cycles {d:>9.6} ms {d:>9.6}% | inclusive: {d:>9} cycles {d:>9.6} ms {d:>9.6}%",
+                            .{
+                                thread_number,
+                                full_name,
+                                m.hit_count,
+                                m.without_children,
+                                without_children_ms,
+                                without_children,
+                                m.with_children,
+                                with_children_ms,
+                                with_children,
+                            },
+                        );
                     }
                 }
             }
@@ -152,7 +150,9 @@ pub fn print(comptime types: []const type) void {
             for (types) |t| longest = @max(longest, t.max_name_aligment());
             break :blk longest;
         };
-        inline for (types) |t| t.print(longest_name_aligment);
+        for (0..options.num_threads) |thread_number| {
+            inline for (types) |t| t.print(longest_name_aligment, thread_number);
+        }
     }
 
     const freq: f64 = @floatFromInt(global_freq);
