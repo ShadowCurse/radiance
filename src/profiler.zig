@@ -24,6 +24,9 @@ pub const Measurement = struct {
     without_children: u64 = 0,
     with_children: u64 = 0,
     hit_count: u64 = 0,
+    // align size to 32 bytes so the cache line is divided into
+    // whole number of Measurements
+    _: u64 = 0,
 };
 
 pub fn start() void {
@@ -37,6 +40,11 @@ pub fn thread_take_id() void {
 }
 
 pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u8) type {
+    const thread_measurements_size = NAMES.len * @sizeOf(Measurement);
+    const aligned_thread_measurements_size = std.mem.alignForward(u64, thread_measurements_size, 64);
+    const num_of_measurements = aligned_thread_measurements_size / @sizeOf(Measurement);
+    log.comptime_assert(@src(), num_of_measurements % 2 == 0, "", .{});
+
     return if (!options.enabled)
         struct {
             pub fn start(comptime _: std.builtin.SourceLocation) void {}
@@ -46,9 +54,8 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
         }
     else
         struct {
-            // pub var measurements: [NAMES.len]Measurement = .{Measurement{}} ** NAMES.len;
-            pub var measurements: [options.num_threads][NAMES.len]Measurement =
-                .{.{Measurement{}} ** NAMES.len} ** options.num_threads;
+            pub var measurements: [options.num_threads][num_of_measurements]Measurement =
+                .{.{Measurement{}} ** num_of_measurements} ** options.num_threads;
 
             pub const Point = struct {
                 start_time: u64,
@@ -106,7 +113,7 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
                 const freq: f64 = @floatFromInt(global_freq);
                 const global_end = arch.get_perf_counter();
                 const global_elapsed: f64 = @floatFromInt(global_end - global_start);
-                inline for (NAMES, measurements[thread_number]) |name, m| {
+                inline for (NAMES, measurements[thread_number][0..NAMES.len]) |name, m| {
                     if (m.hit_count != 0) {
                         const without_children_ms: f64 =
                             @as(f64, @floatFromInt(m.without_children)) / freq * 1000.0;
