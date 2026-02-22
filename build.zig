@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
     const host_page_size =
         b.option(usize, "host_page_size", "Page size on the host system") orelse
         std.heap.pageSize();
+    const use_llvm = b.option(bool, "use_llvm", "Use LLVM backend") != null;
 
     const options = b.addOptions();
     options.addOption(usize, "host_page_size", host_page_size);
@@ -19,6 +20,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "radiance",
         .root_module = exe_mod,
+        .use_llvm = use_llvm,
     });
     exe.root_module.addOptions("build_options", options);
     b.installArtifact(exe);
