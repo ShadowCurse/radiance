@@ -18,3 +18,13 @@ pub fn vcpu_mmap_size(self: *const Self, comptime System: type) u32 {
     });
     return @intCast(size);
 }
+
+pub fn supported_cpuid(self: *const Self) nix.kvm_cpuid2.with_entries(nix.KVM_MAX_CPUID_ENTRIES) {
+    var result: nix.kvm_cpuid2.with_entries(nix.KVM_MAX_CPUID_ENTRIES) = .{};
+    _ = nix.assert(@src(), nix.System, "ioctl", .{
+        self.fd,
+        nix.KVM_GET_SUPPORTED_CPUID,
+        @intFromPtr(&result),
+    });
+    return result;
+}

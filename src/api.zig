@@ -1,4 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const root = @import("root");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const Vcpu = @import("vcpu.zig");
@@ -12,11 +14,8 @@ fd: nix.fd_t,
 vcpus: []Vcpu,
 vcpu_threads: []std.Thread,
 vcpus_barrier: *std.Thread.ResetEvent,
-vcpu_reg_list: *Vcpu.RegList,
-vcpu_regs: []u8,
-vcpu_mpstates: []nix.kvm_mp_state,
-gicv2: *const Gicv2,
-gicv2_state: []u32,
+runtime_arch: *root.RuntimeArch,
+state_arch: *root.StateArch,
 permanent_memory: Memory.Permanent,
 
 const Self = @This();
@@ -27,11 +26,8 @@ pub fn init(
     vcpus: []Vcpu,
     vcpu_threads: []std.Thread,
     vcpus_barrier: *std.Thread.ResetEvent,
-    vcpu_reg_list: *Vcpu.RegList,
-    vcpu_regs: []u8,
-    vcpu_mpstates: []nix.kvm_mp_state,
-    gicv2: *const Gicv2,
-    gicv2_state: []u32,
+    runtime_arch: *root.RuntimeArch,
+    state_arch: *root.StateArch,
     permanent_memory: Memory.Permanent,
 ) Self {
     const address = std.net.Address.initUnix(socket_path) catch |err| {
@@ -51,11 +47,8 @@ pub fn init(
         .vcpus = vcpus,
         .vcpu_threads = vcpu_threads,
         .vcpus_barrier = vcpus_barrier,
-        .vcpu_reg_list = vcpu_reg_list,
-        .vcpu_regs = vcpu_regs,
-        .vcpu_mpstates = vcpu_mpstates,
-        .gicv2 = gicv2,
-        .gicv2_state = gicv2_state,
+        .runtime_arch = runtime_arch,
+        .state_arch = state_arch,
         .permanent_memory = permanent_memory,
     };
 }
@@ -109,15 +102,27 @@ pub fn handle(self: *Self, comptime System: type) void {
 
             _ = std.os.linux.ftruncate(snapshot_fd, @intCast(self.permanent_memory.mem.len));
 
-            self.gicv2.save_state(nix.System, self.gicv2_state, @intCast(self.vcpus.len));
-            // No reason to query list more than 1 time
-            if (self.vcpu_reg_list[0] == 0) {
-                self.vcpus[0].get_reg_list(nix.System, self.vcpu_reg_list);
-            }
-            var regs_bytes = self.vcpu_regs;
-            for (self.vcpus, self.vcpu_mpstates) |*vcpu, *mpstate| {
-                const used = vcpu.save_regs(nix.System, self.vcpu_reg_list, regs_bytes, mpstate);
-                regs_bytes = regs_bytes[used..];
+            if (builtin.cpu.arch == .aarch64) {
+                self.runtime_arch.gicv2.save_state(
+                    nix.System,
+                    self.state_arch.gicv2_state,
+                    @intCast(self.vcpus.len),
+                );
+                // No reason to query list more than 1 time
+                if (self.state_arch.vcpu_reg_list[0] == 0) {
+                    Vcpu.aarch64.get_reg_list(&self.vcpus[0], nix.System, self.state_arch.vcpu_reg_list);
+                }
+                var regs_bytes = self.state_arch.vcpu_regs;
+                for (self.vcpus, self.state_arch.vcpu_mp_states) |*vcpu, *mpstate| {
+                    const used = Vcpu.aarch64.save_regs(
+                        vcpu,
+                        nix.System,
+                        self.state_arch.vcpu_reg_list,
+                        regs_bytes,
+                        mpstate,
+                    );
+                    regs_bytes = regs_bytes[used..];
+                }
             }
 
             _ = nix.assert(

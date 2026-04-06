@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const log = @import("log.zig");
 const memory = @import("memory.zig");
 const profiler = @import("profiler.zig");
@@ -299,16 +300,47 @@ pub const KVM_CREATE_VCPU = _IO(KVMIO, 0x41);
 pub const KVM_GET_VCPU_MMAP_SIZE = _IO(KVMIO, 0x04);
 pub const KVM_CREATE_DEVICE = _IOWR(KVMIO, 0xe0, kvm_create_device);
 pub const KVM_IRQFD = _IOW(KVMIO, 0x76, kvm_irqfd);
+pub const KVM_SET_GSI_ROUTING = _IOW(KVMIO, @as(c_int, 0x6a), kvm_irq_routing);
 pub const KVM_IOEVENTFD = _IOW(KVMIO, 0x79, kvm_ioeventfd);
 pub const KVM_RUN = _IO(KVMIO, 0x80);
+
+// x64
+pub const KVM_MAX_CPUID_ENTRIES = 256;
+pub const KVM_SET_TSS_ADDR = _IO(KVMIO, @as(c_int, 0x47));
+pub const KVM_GET_SUPPORTED_CPUID = _IOWR(KVMIO, @as(c_int, 0x05), kvm_cpuid2);
+pub const KVM_GET_REGS = _IOR(KVMIO, @as(c_int, 0x81), kvm_regs);
+pub const KVM_SET_REGS = _IOW(KVMIO, @as(c_int, 0x82), kvm_regs);
+pub const KVM_GET_SREGS = _IOR(KVMIO, @as(c_int, 0x83), kvm_sregs);
+pub const KVM_SET_SREGS = _IOW(KVMIO, @as(c_int, 0x84), kvm_sregs);
+pub const KVM_GET_MSRS = _IOWR(KVMIO, @as(c_int, 0x88), kvm_msrs);
+pub const KVM_SET_MSRS = _IOW(KVMIO, @as(c_int, 0x89), kvm_msrs);
+// pub const KVM_SET_CPUID = _IOW(KVMIO, @as(c_int, 0x8a), struct_kvm_cpuid);
+pub const KVM_GET_FPU = _IOR(KVMIO, @as(c_int, 0x8c), kvm_fpu);
+pub const KVM_SET_FPU = _IOW(KVMIO, @as(c_int, 0x8d), kvm_fpu);
+pub const KVM_GET_LAPIC = _IOR(KVMIO, @as(c_int, 0x8e), kvm_lapic_state);
+pub const KVM_SET_LAPIC = _IOW(KVMIO, @as(c_int, 0x8f), kvm_lapic_state);
+pub const KVM_SET_CPUID2 = _IOW(KVMIO, @as(c_int, 0x90), kvm_cpuid2);
+pub const KVM_GET_CPUID2 = _IOWR(KVMIO, @as(c_int, 0x91), kvm_cpuid2);
+pub const KVM_CREATE_IRQCHIP = _IO(KVMIO, @as(c_int, 0x60));
+pub const KVM_CREATE_PIT2 = _IOW(KVMIO, @as(c_int, 0x77), kvm_pit_config);
+
+// aarch64
 pub const KVM_GET_ONE_REG = _IOW(KVMIO, 0xab, kvm_one_reg);
 pub const KVM_SET_ONE_REG = _IOW(KVMIO, 0xac, kvm_one_reg);
 pub const KVM_GET_REG_LIST = _IOWR(KVMIO, @as(c_int, 0xb0), kvm_reg_list);
 pub const KVM_GET_MP_STATE = _IOR(KVMIO, @as(c_int, 0x98), kvm_mp_state);
 pub const KVM_SET_MP_STATE = _IOW(KVMIO, @as(c_int, 0x99), kvm_mp_state);
-
 pub const KVM_SET_DEVICE_ATTR = _IOW(KVMIO, 0xe1, kvm_device_attr);
 pub const KVM_GET_DEVICE_ATTR = _IOW(KVMIO, 0xe2, kvm_device_attr);
+
+// x64
+pub const KVM_PIT_SPEAKER_DUMMY = @as(c_int, 1);
+pub const KVM_IRQCHIP_PIC_MASTER: u32 = 0;
+pub const KVM_IRQCHIP_PIC_SLAVE: u32 = 1;
+pub const KVM_IRQCHIP_IOAPIC: u32 = 2;
+pub const KVM_IRQ_ROUTING_IRQCHIP: u32 = 1;
+
+// aarch64
 pub const KVM_VGIC_V2_DIST_SIZE = 0x1000;
 pub const KVM_VGIC_V2_CPU_SIZE = 0x2000;
 pub const KVM_VGIC_V2_ADDR_TYPE_DIST = 0;
@@ -376,6 +408,7 @@ pub const KVM_EXIT_UNKNOWNW = 0;
 pub const KVM_EXIT_IO = 2;
 pub const KVM_EXIT_HLT = 5;
 pub const KVM_EXIT_MMIO = 6;
+pub const KVM_EXIT_SHUTDOWN = 8;
 pub const KVM_EXIT_SYSTEM_EVENT = 24;
 pub const KVM_SYSTEM_EVENT_SHUTDOWN = 1;
 pub const KVM_SYSTEM_EVENT_RESET = 2;
@@ -412,6 +445,164 @@ pub const kvm_irqfd = extern struct {
     pad: [16]u8 = .{0} ** 16,
 };
 
+pub const kvm_irq_routing_irqchip = extern struct {
+    irqchip: u32 = 0,
+    pin: u32 = 0,
+};
+pub const kvm_irq_routing_msi = extern struct {
+    address_lo: u32 = 0,
+    address_hi: u32 = 0,
+    data: u32 = 0,
+    _union: extern union {
+        pad: u32,
+        devid: u32,
+    },
+};
+pub const kvm_irq_routing_entry = extern struct {
+    gsi: u32 = 0,
+    type: u32 = 0,
+    flags: u32 = 0,
+    pad: u32 = 0,
+    data: extern union {
+        irqchip: kvm_irq_routing_irqchip,
+        msi: kvm_irq_routing_msi,
+        pad: [8]u32,
+    },
+};
+pub const kvm_irq_routing = extern struct {
+    nr: u32 align(8) = 0,
+    flags: u32 = 0,
+    pub fn entries(self: *kvm_irq_routing) [*]kvm_irq_routing_entry {
+        return @as([*]kvm_irq_routing_entry, @ptrFromInt(@intFromPtr(self) + 8));
+    }
+    pub fn with_entries(comptime N: u32) type {
+        return extern struct {
+            nr: u32 align(8) = N,
+            flags: u32 = 0,
+            entries: [N]kvm_irq_routing_entry = undefined,
+            const Self = @This();
+            pub fn as(self: *Self) *kvm_irq_routing {
+                return @ptrCast(self);
+            }
+        };
+    }
+};
+
+// x64
+pub const kvm_pit_config = extern struct {
+    flags: u32 = 0,
+    pad: [15]u32 = .{0} ** 15,
+};
+pub const kvm_fpu = extern struct {
+    fpr: [8][16]u8 = .{.{0} ** 16} ** 8,
+    fcw: u16 = 0,
+    fsw: u16 = 0,
+    ftwx: u8 = 0,
+    pad1: u8 = 0,
+    last_opcode: u16 = 0,
+    last_ip: u64 = 0,
+    last_dp: u64 = 0,
+    xmm: [16][16]u8 = .{.{0} ** 16} ** 16,
+    mxcsr: u32 = 0,
+    pad2: u32 = 0,
+};
+pub const kvm_segment = extern struct {
+    base: u64 = 0,
+    limit: u32 = 0,
+    selector: u16 = 0,
+    type: u8 = 0,
+    present: u8 = 0,
+    dpl: u8 = 0,
+    db: u8 = 0,
+    s: u8 = 0,
+    l: u8 = 0,
+    g: u8 = 0,
+    avl: u8 = 0,
+    unusable: u8 = 0,
+    padding: u8 = 0,
+};
+pub const kvm_dtable = extern struct {
+    base: u64 = 0,
+    limit: u16 = 0,
+    padding: [3]u16 = .{0} ** 3,
+};
+pub const kvm_sregs = extern struct {
+    cs: kvm_segment = .{},
+    ds: kvm_segment = .{},
+    es: kvm_segment = .{},
+    fs: kvm_segment = .{},
+    gs: kvm_segment = .{},
+    ss: kvm_segment = .{},
+    tr: kvm_segment = .{},
+    ldt: kvm_segment = .{},
+    gdt: kvm_dtable = .{},
+    idt: kvm_dtable = .{},
+    cr0: u64 = 0,
+    cr2: u64 = 0,
+    cr3: u64 = 0,
+    cr4: u64 = 0,
+    cr8: u64 = 0,
+    efer: u64 = 0,
+    apic_base: u64 = 0,
+    interrupt_bitmap: [4]u64 = .{0} ** 4,
+};
+pub const kvm_lapic_state = extern struct {
+    regs: [1024]u8 = .{0} ** 1024,
+};
+pub const kvm_msr_entry = extern struct {
+    index: u32 = 0,
+    reserved: u32 = 0,
+    data: u64 = 0,
+};
+pub const kvm_msrs = extern struct {
+    nmsrs: u32 align(8) = 0,
+    pad: u32 = 0,
+    pub fn entries(self: *kvm_msrs) [*]kvm_msr_entry {
+        return @as([*]kvm_msr_entry, @ptrFromInt(@intFromPtr(self) + 8));
+    }
+    pub fn with_entries(comptime N: u32) type {
+        return extern struct {
+            nmsrs: u32 align(8) = N,
+            padding: u32 = 0,
+            entries: [N]kvm_msr_entry = undefined,
+            const Self = @This();
+            pub fn as(self: *Self) *kvm_msrs {
+                return @ptrCast(self);
+            }
+        };
+    }
+};
+pub const kvm_cpuid_entry2 = extern struct {
+    // leaf
+    function: u32 = 0,
+    // subleaf
+    index: u32 = 0,
+    flags: u32 = 0,
+    eax: u32 = 0,
+    ebx: u32 = 0,
+    ecx: u32 = 0,
+    edx: u32 = 0,
+    padding: [3]u32 = .{0} ** 3,
+};
+pub const kvm_cpuid2 = extern struct {
+    nent: u32 = 0,
+    padding: u32 = 0,
+    pub fn entries(self: *kvm_cpuid2) [*]kvm_cpuid_entry2 {
+        return @as([*]kvm_cpuid_entry2, @ptrFromInt(@intFromPtr(self) + 8));
+    }
+    pub fn with_entries(comptime N: u32) type {
+        return extern struct {
+            nent: u32 = N,
+            padding: u32 = 0,
+            entries: [N]kvm_cpuid_entry2 = undefined,
+            const Self = @This();
+            pub fn as(self: *Self) *kvm_cpuid2 {
+                return @ptrCast(self);
+            }
+        };
+    }
+};
+
 pub const kvm_ioeventfd = extern struct {
     datamatch: u64 = 0,
     addr: u64 = 0,
@@ -442,6 +633,17 @@ pub const kvm_run = extern struct {
         hw: extern struct {
             hardware_exit_reason: u64 = 0,
         },
+        // x64
+        io: extern struct {
+            direction: enum(u8) {
+                in = 0,
+                out = 1,
+            },
+            size: u8 = 0,
+            port: u16 = 0,
+            count: u32 = 0,
+            data_offset: u64 = 0,
+        },
         mmio: extern struct {
             phys_addr: u64 = 0,
             data: [8]u8 = .{0} ** 8,
@@ -463,6 +665,7 @@ pub const kvm_run = extern struct {
     padding: [2048]u8 = .{0} ** 2048,
 };
 
+// aarch64
 pub const kvm_one_reg = extern struct {
     id: u64 = 0,
     addr: u64 = 0,
@@ -487,13 +690,33 @@ pub const user_fpsimd_state = extern struct {
     fpcr: u32 = 0,
     reserved: [2]u32 = .{0} ** 2,
 };
-pub const kvm_regs = extern struct {
+
+pub const kvm_regs = if (builtin.cpu.arch == .x86_64) extern struct {
+    rax: u64 = 0,
+    rbx: u64 = 0,
+    rcx: u64 = 0,
+    rdx: u64 = 0,
+    rsi: u64 = 0,
+    rdi: u64 = 0,
+    rsp: u64 = 0,
+    rbp: u64 = 0,
+    r8: u64 = 0,
+    r9: u64 = 0,
+    r10: u64 = 0,
+    r11: u64 = 0,
+    r12: u64 = 0,
+    r13: u64 = 0,
+    r14: u64 = 0,
+    r15: u64 = 0,
+    rip: u64 = 0,
+    rflags: u64 = 0,
+} else if (builtin.cpu.arch == .aarch64) extern struct {
     regs: user_pt_regs = .{},
     sp_el1: u64 = 0,
     elr_el1: u64 = 0,
     spsr: [5]u64 = .{0} ** 5,
     fp_regs: user_fpsimd_state = .{},
-};
+} else @compileError("Only aarch64 and x64 are supported");
 
 pub const VIRTIO_MMIO_INT_VRING = 1;
 pub const VIRTIO_F_VERSION_1 = 32;
@@ -515,6 +738,13 @@ pub const virtio_blk_outhdr = extern struct {
     ioprio: u32 = 0,
     sector: u64 = 0,
 };
+
+pub const Elf64_Magic = std.elf.MAGIC;
+pub const Elf64_Ehdr = std.elf.Elf64_Ehdr;
+pub const Elf64_Phdr = std.elf.Elf64_Phdr;
+pub const ELFDATA2LSB = std.elf.ELFDATA2LSB;
+pub const EI_DATA = std.elf.EI_DATA;
+pub const PT_LOAD = std.elf.PT_LOAD;
 
 pub const IFF = packed struct(u16) {
     _0: u1 = 0,
@@ -645,6 +875,154 @@ pub const vhost_vring_addr = extern struct {
     used_user_addr: u64 = 0,
     avail_user_addr: u64 = 0,
     log_guest_addr: u64 = 0,
+};
+
+pub const SMP_MAGIC_IDENT = "_MP_";
+pub const MP_PROCESSOR = @as(c_int, 0);
+pub const CPU_ENABLED = @as(c_int, 1);
+pub const CPU_BOOTPROCESSOR = @as(c_int, 2);
+pub const MP_BUS = @as(c_int, 1);
+pub const MP_IOAPIC = @as(c_int, 2);
+pub const MPC_APIC_USABLE = @as(c_int, 0x01);
+pub const MP_INTSRC = @as(c_int, 3);
+pub const MP_IRQPOL_DEFAULT = @as(c_int, 0x0);
+pub const MP_LINTSRC = @as(c_int, 4);
+pub const MPC_SIGNATURE = "PCMP";
+pub const BUSTYPE_ISA = "ISA   ";
+pub const SETUP_DTB = @as(c_int, 2);
+pub const E820_RAM = @as(c_int, 1);
+pub const E820_RESERVED = @as(c_int, 2);
+
+// x64
+pub const mpf_intel = extern struct {
+    signature: [4]u8 = .{0} ** 4,
+    physptr: u32 = 0,
+    length: u8 = 0,
+    specification: u8 = 0,
+    checksum: u8 = 0,
+    feature1: u8 = 0,
+    feature2: u8 = 0,
+    feature3: u8 = 0,
+    feature4: u8 = 0,
+    feature5: u8 = 0,
+};
+pub const mpc_cpu = extern struct {
+    type: u8 = 0,
+    apicid: u8 = 0,
+    apicver: u8 = 0,
+    cpuflag: u8 = 0,
+    cpufeature: u32 = 0,
+    featureflag: u32 = 0,
+    reserved: [2]u32 = .{0} ** 2,
+};
+pub const mpc_bus = extern struct {
+    type: u8 = 0,
+    busid: u8 = 0,
+    bustype: [6]u8 = .{0} ** 6,
+};
+pub const mpc_ioapic = extern struct {
+    type: u8 = 0,
+    apicid: u8 = 0,
+    apicver: u8 = 0,
+    flags: u8 = 0,
+    apicaddr: u32 = 0,
+};
+pub const mpc_intsrc = extern struct {
+    type: u8 = 0,
+    irqtype: enum(u8) { mp_INT = 0, mp_NMI = 1, mp_SMI = 2, mp_ExtINT = 3 },
+    irqflag: u16 = 0,
+    srcbus: u8 = 0,
+    srcbusirq: u8 = 0,
+    dstapic: u8 = 0,
+    dstirq: u8 = 0,
+};
+pub const mpc_lintsrc = extern struct {
+    type: u8 = 0,
+    irqtype: enum(u8) { mp_INT = 0, mp_NMI = 1, mp_SMI = 2, mp_ExtINT = 3 },
+    irqflag: u16 = 0,
+    srcbusid: u8 = 0,
+    srcbusirq: u8 = 0,
+    destapic: u8 = 0,
+    destapiclint: u8 = 0,
+};
+pub const mpc_table = extern struct {
+    signature: [4]u8 = .{0} ** 4,
+    length: u16 = 0,
+    spec: u8 = 0,
+    checksum: u8 = 0,
+    oem: [8]u8 = .{0} ** 8,
+    productid: [12]u8 = .{0} ** 12,
+    oemptr: u32 = 0,
+    oemsize: u16 = 0,
+    oemcount: u16 = 0,
+    lapic: u32 = 0,
+    reserved: u32 = 0,
+};
+pub const boot_params = extern struct {
+    _0: [0x1e8]u8 = .{0} ** 0x1e8,
+    // 0x1e8
+    e820_entries: u8 align(1) = 0,
+    _1: [0x1f1 - 0x1e8 - @sizeOf(u8)]u8 = .{0} ** (0x1f1 - 0x1e8 - @sizeOf(u8)),
+    // 0x1f1
+    hdr: setup_header align(1) = .{},
+    _2: [0x2d0 - 0x1f1 - @sizeOf(setup_header)]u8 = .{0} ** (0x2d0 - 0x1f1 - @sizeOf(setup_header)),
+    // 0x2d0
+    e820_table: [128]boot_e820_entry align(1) = .{boot_e820_entry{}} ** 128,
+    // other fields follow
+    _3: [816]u8 = .{0} ** 816,
+};
+// Can this be used for pmem?
+// pub const E820_PMEM = @as(c_int, 7);
+pub const boot_e820_entry = extern struct {
+    addr: u64 align(1) = 0,
+    size: u64 align(1) = 0,
+    type: u32 align(1) = 0,
+};
+pub const setup_header = extern struct {
+    setup_sects: u8 align(1) = 0,
+    root_flags: u16 align(1) = 0,
+    syssize: u32 align(1) = 0,
+    ram_size: u16 align(1) = 0,
+    vid_mode: u16 align(1) = 0,
+    root_dev: u16 align(1) = 0,
+    boot_flag: u16 align(1) = 0,
+    jump: u16 align(1) = 0,
+    header: u32 align(1) = 0,
+    version: u16 align(1) = 0,
+    realmode_swtch: u32 align(1) = 0,
+    start_sys_seg: u16 align(1) = 0,
+    kernel_version: u16 align(1) = 0,
+    type_of_loader: u8 align(1) = 0,
+    loadflags: u8 align(1) = 0,
+    setup_move_size: u16 align(1) = 0,
+    code32_start: u32 align(1) = 0,
+    ramdisk_image: u32 align(1) = 0,
+    ramdisk_size: u32 align(1) = 0,
+    bootsect_kludge: u32 align(1) = 0,
+    heap_end_ptr: u16 align(1) = 0,
+    ext_loader_ver: u8 align(1) = 0,
+    ext_loader_type: u8 align(1) = 0,
+    cmd_line_ptr: u32 align(1) = 0,
+    initrd_addr_max: u32 align(1) = 0,
+    kernel_alignment: u32 align(1) = 0,
+    relocatable_kernel: u8 align(1) = 0,
+    min_alignment: u8 align(1) = 0,
+    xloadflags: u16 align(1) = 0,
+    cmdline_size: u32 align(1) = 0,
+    hardware_subarch: u32 align(1) = 0,
+    hardware_subarch_data: u64 align(1) = 0,
+    payload_offset: u32 align(1) = 0,
+    payload_length: u32 align(1) = 0,
+    setup_data: u64 align(1) = 0,
+    pref_address: u64 align(1) = 0,
+    init_size: u32 align(1) = 0,
+    handover_offset: u32 align(1) = 0,
+    kernel_info_offset: u32 align(1) = 0,
+};
+pub const setup_data = extern struct {
+    next: u64 align(8) = 0,
+    type: u32 = 0,
+    len: u32 = 0,
 };
 
 pub const EFD_NONBLOCK = 0o4000;
@@ -856,6 +1234,17 @@ test "test_bindings" {
         @cInclude("linux/virtio_blk.h");
         @cInclude("linux/virtio_net.h");
         @cInclude("linux/virtio_mmio.h");
+
+        // x64
+        if (builtin.cpu.arch == .x86_64) {
+            @cInclude("linux/elf.h");
+            @cInclude("asm/bootparam.h");
+            @cInclude("asm/setup_data.h");
+            @cInclude("asm/e820.h");
+            // @cInclude("mpspec_def.h");
+            // @cInclude("asm/apicdef.h");
+        }
+
         @cInclude("sys/epoll.h");
         @cInclude("sys/eventfd.h");
         @cInclude("fcntl.h");
@@ -896,37 +1285,40 @@ test "test_bindings" {
 
     try std.testing.expectEqual(KVM_SET_DEVICE_ATTR, C.KVM_SET_DEVICE_ATTR);
     try std.testing.expectEqual(KVM_GET_DEVICE_ATTR, C.KVM_GET_DEVICE_ATTR);
-    try std.testing.expectEqual(KVM_VGIC_V2_DIST_SIZE, C.KVM_VGIC_V2_DIST_SIZE);
-    try std.testing.expectEqual(KVM_VGIC_V2_CPU_SIZE, C.KVM_VGIC_V2_CPU_SIZE);
-    try std.testing.expectEqual(KVM_VGIC_V2_ADDR_TYPE_DIST, C.KVM_VGIC_V2_ADDR_TYPE_DIST);
-    try std.testing.expectEqual(KVM_VGIC_V2_ADDR_TYPE_CPU, C.KVM_VGIC_V2_ADDR_TYPE_CPU);
-    try std.testing.expectEqual(KVM_DEV_TYPE_ARM_VGIC_V2, C.KVM_DEV_TYPE_ARM_VGIC_V2);
-    try std.testing.expectEqual(KVM_DEV_ARM_VGIC_GRP_ADDR, C.KVM_DEV_ARM_VGIC_GRP_ADDR);
-    try std.testing.expectEqual(KVM_DEV_ARM_VGIC_GRP_NR_IRQS, C.KVM_DEV_ARM_VGIC_GRP_NR_IRQS);
-    try std.testing.expectEqual(KVM_DEV_ARM_VGIC_GRP_CTRL, C.KVM_DEV_ARM_VGIC_GRP_CTRL);
-    try std.testing.expectEqual(KVM_DEV_ARM_VGIC_CTRL_INIT, C.KVM_DEV_ARM_VGIC_CTRL_INIT);
 
-    // try std.testing.expectEqual(struct_user_pt_regs, C.struct_user_pt_regs);
-    try std.testing.expectEqual(KVM_ARM_VCPU_INIT, C.KVM_ARM_VCPU_INIT);
-    try std.testing.expectEqual(KVM_ARM_PREFERRED_TARGET, C.KVM_ARM_PREFERRED_TARGET);
-    try std.testing.expectEqual(KVM_ARM_VCPU_PSCI_0_2, C.KVM_ARM_VCPU_PSCI_0_2);
-    try std.testing.expectEqual(KVM_ARM_VCPU_POWER_OFF, C.KVM_ARM_VCPU_POWER_OFF);
+    if (builtin.cpu.arch == .aarch64) {
+        try std.testing.expectEqual(KVM_VGIC_V2_DIST_SIZE, C.KVM_VGIC_V2_DIST_SIZE);
+        try std.testing.expectEqual(KVM_VGIC_V2_CPU_SIZE, C.KVM_VGIC_V2_CPU_SIZE);
+        try std.testing.expectEqual(KVM_VGIC_V2_ADDR_TYPE_DIST, C.KVM_VGIC_V2_ADDR_TYPE_DIST);
+        try std.testing.expectEqual(KVM_VGIC_V2_ADDR_TYPE_CPU, C.KVM_VGIC_V2_ADDR_TYPE_CPU);
+        try std.testing.expectEqual(KVM_DEV_TYPE_ARM_VGIC_V2, C.KVM_DEV_TYPE_ARM_VGIC_V2);
+        try std.testing.expectEqual(KVM_DEV_ARM_VGIC_GRP_ADDR, C.KVM_DEV_ARM_VGIC_GRP_ADDR);
+        try std.testing.expectEqual(KVM_DEV_ARM_VGIC_GRP_NR_IRQS, C.KVM_DEV_ARM_VGIC_GRP_NR_IRQS);
+        try std.testing.expectEqual(KVM_DEV_ARM_VGIC_GRP_CTRL, C.KVM_DEV_ARM_VGIC_GRP_CTRL);
+        try std.testing.expectEqual(KVM_DEV_ARM_VGIC_CTRL_INIT, C.KVM_DEV_ARM_VGIC_CTRL_INIT);
 
-    try std.testing.expectEqual(KVM_REG_ARM_COPROC_SHIFT, C.KVM_REG_ARM_COPROC_SHIFT);
-    try std.testing.expectEqual(KVM_REG_SIZE_U64, C.KVM_REG_SIZE_U64);
-    try std.testing.expectEqual(KVM_REG_ARM_CORE, C.KVM_REG_ARM_CORE);
-    try std.testing.expectEqual(KVM_REG_ARM64, C.KVM_REG_ARM64);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG, C.KVM_REG_ARM64_SYSREG);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP0_MASK, C.KVM_REG_ARM64_SYSREG_OP0_MASK);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP0_SHIFT, C.KVM_REG_ARM64_SYSREG_OP0_SHIFT);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP1_MASK, C.KVM_REG_ARM64_SYSREG_OP1_MASK);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP1_SHIFT, C.KVM_REG_ARM64_SYSREG_OP1_SHIFT);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_CRN_MASK, C.KVM_REG_ARM64_SYSREG_CRN_MASK);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_CRN_SHIFT, C.KVM_REG_ARM64_SYSREG_CRN_SHIFT);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_CRM_MASK, C.KVM_REG_ARM64_SYSREG_CRM_MASK);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_CRM_SHIFT, C.KVM_REG_ARM64_SYSREG_CRM_SHIFT);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP2_MASK, C.KVM_REG_ARM64_SYSREG_OP2_MASK);
-    try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP2_SHIFT, C.KVM_REG_ARM64_SYSREG_OP2_SHIFT);
+        // try std.testing.expectEqual(struct_user_pt_regs, C.struct_user_pt_regs);
+        try std.testing.expectEqual(KVM_ARM_VCPU_INIT, C.KVM_ARM_VCPU_INIT);
+        try std.testing.expectEqual(KVM_ARM_PREFERRED_TARGET, C.KVM_ARM_PREFERRED_TARGET);
+        try std.testing.expectEqual(KVM_ARM_VCPU_PSCI_0_2, C.KVM_ARM_VCPU_PSCI_0_2);
+        try std.testing.expectEqual(KVM_ARM_VCPU_POWER_OFF, C.KVM_ARM_VCPU_POWER_OFF);
+
+        try std.testing.expectEqual(KVM_REG_ARM_COPROC_SHIFT, C.KVM_REG_ARM_COPROC_SHIFT);
+        try std.testing.expectEqual(KVM_REG_SIZE_U64, C.KVM_REG_SIZE_U64);
+        try std.testing.expectEqual(KVM_REG_ARM_CORE, C.KVM_REG_ARM_CORE);
+        try std.testing.expectEqual(KVM_REG_ARM64, C.KVM_REG_ARM64);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG, C.KVM_REG_ARM64_SYSREG);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP0_MASK, C.KVM_REG_ARM64_SYSREG_OP0_MASK);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP0_SHIFT, C.KVM_REG_ARM64_SYSREG_OP0_SHIFT);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP1_MASK, C.KVM_REG_ARM64_SYSREG_OP1_MASK);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP1_SHIFT, C.KVM_REG_ARM64_SYSREG_OP1_SHIFT);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_CRN_MASK, C.KVM_REG_ARM64_SYSREG_CRN_MASK);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_CRN_SHIFT, C.KVM_REG_ARM64_SYSREG_CRN_SHIFT);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_CRM_MASK, C.KVM_REG_ARM64_SYSREG_CRM_MASK);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_CRM_SHIFT, C.KVM_REG_ARM64_SYSREG_CRM_SHIFT);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP2_MASK, C.KVM_REG_ARM64_SYSREG_OP2_MASK);
+        try std.testing.expectEqual(KVM_REG_ARM64_SYSREG_OP2_SHIFT, C.KVM_REG_ARM64_SYSREG_OP2_SHIFT);
+    }
 
     try std.testing.expectEqual(KVM_EXIT_IO, C.KVM_EXIT_IO);
     try std.testing.expectEqual(KVM_EXIT_HLT, C.KVM_EXIT_HLT);
@@ -943,10 +1335,12 @@ test "test_bindings" {
         1 << C.kvm_ioeventfd_flag_nr_datamatch,
     );
 
-    try std.testing.expectEqual(
-        TypeCheck.init(kvm_vcpu_init),
-        TypeCheck.init(C.struct_kvm_vcpu_init),
-    );
+    if (builtin.cpu.arch == .aarch64) {
+        try std.testing.expectEqual(
+            TypeCheck.init(kvm_vcpu_init),
+            TypeCheck.init(C.struct_kvm_vcpu_init),
+        );
+    }
     try std.testing.expectEqual(
         TypeCheck.init(kvm_userspace_memory_region),
         TypeCheck.init(C.struct_kvm_userspace_memory_region),
@@ -966,14 +1360,16 @@ test "test_bindings" {
     );
     try std.testing.expectEqual(TypeCheck.init(kvm_run), TypeCheck.init(C.struct_kvm_run));
     try std.testing.expectEqual(TypeCheck.init(kvm_one_reg), TypeCheck.init(C.struct_kvm_one_reg));
-    try std.testing.expectEqual(
-        TypeCheck.init(user_pt_regs),
-        TypeCheck.init(C.struct_user_pt_regs),
-    );
-    try std.testing.expectEqual(
-        TypeCheck.init(user_fpsimd_state),
-        TypeCheck.init(C.struct_user_fpsimd_state),
-    );
+    if (builtin.cpu.arch == .aarch64) {
+        try std.testing.expectEqual(
+            TypeCheck.init(user_pt_regs),
+            TypeCheck.init(C.struct_user_pt_regs),
+        );
+        try std.testing.expectEqual(
+            TypeCheck.init(user_fpsimd_state),
+            TypeCheck.init(C.struct_user_fpsimd_state),
+        );
+    }
     try std.testing.expectEqual(TypeCheck.init(kvm_regs), TypeCheck.init(C.struct_kvm_regs));
 
     try std.testing.expectEqual(VIRTIO_MMIO_INT_VRING, C.VIRTIO_MMIO_INT_VRING);

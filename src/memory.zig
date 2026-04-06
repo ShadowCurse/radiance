@@ -1,6 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
+const profiler = @import("profiler.zig");
+
+pub const MEASUREMENTS = profiler.Measurements("args_parser", &.{
+    "load_linux_kernel",
+});
 
 pub const HOST_PAGE_SIZE = std.heap.page_size_min;
 
@@ -18,7 +24,13 @@ pub const GICV2_DISTRIBUTOR_ADDRESS: u64 = MMIO_START - nix.KVM_VGIC_V2_DIST_SIZ
 /// GIC is bellow, MMIO devices are here.
 pub const MMIO_START: u64 = 0x4000_0000; // 1 GB
 /// Start of RAM on 64 bit ARM.
-pub const DRAM_START: u64 = 0x8000_0000; // 2 GB.
+pub const DRAM_START: u64 = if (builtin.cpu.arch == .aarch64)
+    // 2 GB
+    0x8000_0000
+else if (builtin.cpu.arch == .x86_64)
+    0
+else
+    @compileError("Only aarch64 and x64 are supported");
 
 // The 1TB version seems to be so far, it crashes the kernel.
 // The PCI will be mapped there
@@ -73,9 +85,20 @@ pub const Guest = struct {
     /// https://github.com/torvalds/linux/blob/master/Documentation/arch/arm64/booting.rst
     pub const LoadResult = struct {
         start: u64,
+        end: u64,
         post_kernel_allocator: std.heap.FixedBufferAllocator,
     };
-    pub fn load_linux_kernel(self: *Self, comptime System: type, path: []const u8) LoadResult {
+    pub const load_linux_kernel = if (builtin.cpu.arch == .aarch64)
+        load_linux_kernel_aarch64
+    else if (builtin.cpu.arch == .x86_64)
+        load_linux_kernel_x64
+    else
+        @compileError("Only aarch64 and x64 are supported");
+
+    pub fn load_linux_kernel_aarch64(self: *Self, comptime System: type, path: []const u8) LoadResult {
+        const prof_point = MEASUREMENTS.start_named("load_linux_kernel");
+        defer MEASUREMENTS.end(prof_point);
+
         const fd = nix.assert(@src(), System, "open", .{
             path,
             .{
@@ -128,7 +151,82 @@ pub const Guest = struct {
         const post_kernel_allocator_start = ((meta.size / HOST_PAGE_SIZE) + 1) * HOST_PAGE_SIZE;
         return .{
             .start = DRAM_START + text_offset,
+            .end = 0,
             .post_kernel_allocator = .init(self.mem[post_kernel_allocator_start..]),
+        };
+    }
+
+    fn load_linux_kernel_x64(self: *Self, comptime System: type, path: []const u8) LoadResult {
+        const prof_point = MEASUREMENTS.start_named("load_linux_kernel");
+        defer MEASUREMENTS.end(prof_point);
+
+        const fd = nix.assert(@src(), System, "open", .{
+            path,
+            .{ .CLOEXEC = true, .ACCMODE = .RDONLY },
+            0,
+        });
+        defer System.close(fd);
+        const meta = nix.assert(@src(), System, "statx", .{fd});
+
+        const prot = nix.PROT.READ;
+        const flags = nix.MAP{ .TYPE = .SHARED };
+        const file_mem = nix.assert(@src(), System, "mmap", .{ null, meta.size, prot, flags, fd, 0 });
+
+        const ehdr: *const nix.Elf64_Ehdr = @ptrCast(@alignCast(file_mem.ptr));
+        log.assert(
+            @src(),
+            std.mem.eql(u8, ehdr.e_ident[0..nix.Elf64_Magic.len], nix.Elf64_Magic),
+            "Invalid ELF header magic: {x} expected: {x}",
+            .{ ehdr.e_ident[0..nix.Elf64_Magic.len], nix.Elf64_Magic },
+        );
+        log.assert(
+            @src(),
+            ehdr.e_ident[nix.EI_DATA] == nix.ELFDATA2LSB,
+            "Unexpected endiannes. Found 0x{x} expected 0x{x}(little)",
+            .{ ehdr.e_ident[nix.EI_DATA], @as(u8, nix.ELFDATA2LSB) },
+        );
+        const kernel_start = ehdr.e_entry;
+
+        var phdrs: []nix.Elf64_Phdr = undefined;
+        phdrs.ptr = @ptrCast(@alignCast(file_mem.ptr + ehdr.e_phoff));
+        phdrs.len = ehdr.e_phnum;
+
+        var kernel_end: u64 = 0;
+        for (phdrs) |phdr| {
+            if (phdr.p_type == nix.PT_LOAD and phdr.p_filesz != 0) {
+                log.debug(@src(), "kernel phdr: paddr: 0x{x} file offset: 0x{x}, file_size: 0x{x}", .{
+                    phdr.p_paddr,
+                    phdr.p_offset,
+                    phdr.p_filesz,
+                });
+                const section_start = phdr.p_paddr;
+                const section_end = phdr.p_paddr + phdr.p_memsz;
+                if (self.mem.len < section_end) {
+                    log.assert(@src(), false, "phdr region [0x{x}..0x{x}], but memory is [0x{x}..0x{x}]", .{
+                        section_start,
+                        section_end,
+                        @as(u32, 0),
+                        self.mem.len,
+                    });
+                }
+                @memcpy(
+                    self.mem[section_start..][0..phdr.p_filesz],
+                    file_mem[phdr.p_offset..][0..phdr.p_filesz],
+                );
+
+                kernel_end = @max(kernel_end, section_end);
+            } else {
+                log.debug(
+                    @src(),
+                    "Skipping ELF phdr with type: 0x{x} filesz: 0x{x}",
+                    .{ phdr.p_type, phdr.p_filesz },
+                );
+            }
+        }
+        return .{
+            .start = kernel_start,
+            .end = kernel_end,
+            .post_kernel_allocator = .init(self.mem[kernel_end..]),
         };
     }
 };

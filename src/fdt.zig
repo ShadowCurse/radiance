@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const log = @import("log.zig");
@@ -9,6 +10,8 @@ const Gicv2 = @import("gicv2.zig");
 const Mmio = @import("mmio.zig");
 const Memory = @import("memory.zig");
 const Pmem = @import("devices/pmem.zig");
+
+const x64_boot = @import("x64_boot.zig");
 
 const FdtData = struct {
     mem: []u8,
@@ -219,15 +222,14 @@ pub const FdtBuilder = struct {
         }
     }
 
-    pub fn finish(self: *Self) void {
+    pub fn finish(self: *Self) u32 {
         self.data.append(u32, FDT_END);
 
+        const total_size: u32 = @intCast(self.data.len + self.stored_strings.items.len);
         const header_ptr: *FdtHeader = @ptrCast(@alignCast(self.data.mem.ptr));
         // All values in the FDT should be in big endian format.
         header_ptr.magic = @byteSwap(FDT_MAGIC);
-        header_ptr.totalsize = @byteSwap(
-            @as(u32, @intCast(self.data.len + self.stored_strings.items.len)),
-        );
+        header_ptr.totalsize = @byteSwap(total_size);
         // Already set.
         // header_ptr.off_dt_struct: u32,
         header_ptr.off_dt_strings = @byteSwap(@as(u32, @intCast(self.data.len)));
@@ -242,10 +244,19 @@ pub const FdtBuilder = struct {
         );
 
         self.data.append([]const u8, self.stored_strings.items);
+
+        return total_size;
     }
 };
 
-pub fn create_fdt(
+pub const create_fdt = if (builtin.cpu.arch == .x86_64)
+    create_fdt_x64
+else if (builtin.cpu.arch == .aarch64)
+    create_fdt_aarch64
+else
+    @compileError("Only aarch64 and x64 are supported");
+
+pub fn create_fdt_aarch64(
     comptime System: type,
     allocator: Allocator,
     memory: Memory.Guest,
@@ -272,7 +283,8 @@ pub fn create_fdt(
     create_cpu_fdt(System, &fdt_builder, mpidrs);
     create_memory_fdt(&fdt_builder, memory);
     create_cmdline_fdt(&fdt_builder, cmdline);
-    create_gic_fdt(&fdt_builder);
+
+    create_gicv2_node(&fdt_builder);
     create_timer_node(&fdt_builder);
     create_clock_node(&fdt_builder);
     create_psci_node(&fdt_builder);
@@ -284,15 +296,52 @@ pub fn create_fdt(
     for (virtio_devices_info) |*info| {
         create_virtio_node(&fdt_builder, info);
     }
-
     for (pmem_info) |info| {
         create_pmem_node(&fdt_builder, info);
     }
 
     fdt_builder.end_node();
-    fdt_builder.finish();
+    _ = fdt_builder.finish();
 
     return FdtBuilder.fdt_addr(memory.last_addr());
+}
+
+// https://elixir.bootlin.com/linux/v6.19.11/source/Documentation/arch/x86/booting-dt.rst
+// "This device-tree is used as an extension to the "boot page". As such it
+// does not parse / consider data which is already covered by the boot page.
+// This includes memory size, reserved ranges, command line arguments or initrd
+// address."
+pub fn create_fdt_x64(
+    comptime System: type,
+    allocator: Allocator,
+    memory: Memory.Guest,
+    n_cpus: u32,
+) struct { u64, u32 } {
+    // https://mjmwired.net/kernel/Documentation/devicetree/booting-without-of.txt
+    const ADDRESS_CELLS: u32 = 0x2;
+    const SIZE_CELLS: u32 = 0x2;
+
+    var fdt_builder = FdtBuilder.init(allocator, memory);
+
+    // use &.{0} to make an empty string with 0 at the end
+    fdt_builder.begin_node(&.{0});
+
+    fdt_builder.add_property([:0]const u8, "compatible", "linux,dummy-virt");
+    fdt_builder.add_property(u32, "#address-cells", ADDRESS_CELLS);
+    fdt_builder.add_property(u32, "#size-cells", SIZE_CELLS);
+
+    var all_cpu_ids: [x64_boot.MAX_SUPPORTED_CPUS]u64 = undefined;
+    const cpu_ids = all_cpu_ids[0..n_cpus];
+    for (cpu_ids, 0..) |*id, i| id.* = i;
+    create_cpu_fdt(System, &fdt_builder, cpu_ids);
+
+    // VirtIO devices are discovered via kernel cmdline (virtio_mmio.device=)
+    // rather than FDT on x64, to avoid IRQ domain remapping issues with IOAPIC
+
+    fdt_builder.end_node();
+    const total_size = fdt_builder.finish();
+
+    return .{ FdtBuilder.fdt_addr(memory.last_addr()), total_size };
 }
 
 fn create_ecam_node(builder: *FdtBuilder) void {
@@ -338,7 +387,7 @@ fn create_ecam_node(builder: *FdtBuilder) void {
     builder.add_property(void, "interrupt-map-mask", {});
 }
 
-fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, mpidrs: []const u64) void {
+fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, cpu_ids: []const u64) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/arm/cpus.yaml
     // In order to not overlap with other phandles start from a big offset.
     const LAST_CACHE_PHANDLE: u32 = 4000;
@@ -352,15 +401,20 @@ fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, mpidrs: []const u
     builder.add_property(u32, "#size-cells", 0x0);
 
     var print_buff: [20]u8 = undefined;
-    for (mpidrs, 0..) |mpidr, i| {
+    for (cpu_ids, 0..) |id, i| {
         const cpu_name = std.fmt.bufPrintZ(&print_buff, "cpu@{x}", .{i}) catch unreachable;
         builder.begin_node(cpu_name);
         defer builder.end_node();
 
         builder.add_property([:0]const u8, "device_type", "cpu");
-        builder.add_property([:0]const u8, "compatible", "arm,arm-v8");
-        builder.add_property([:0]const u8, "enable-method", "psci");
-        builder.add_property(u64, "reg", mpidr & 0x7FFFFF);
+        if (builtin.cpu.arch == .x86_64) {
+            builder.add_property([:0]const u8, "compatible", "cpu,x64");
+            builder.add_property(u64, "reg", id);
+        } else if (builtin.cpu.arch == .aarch64) {
+            builder.add_property([:0]const u8, "compatible", "arm,arm-v8");
+            builder.add_property([:0]const u8, "enable-method", "psci");
+            builder.add_property(u64, "reg", id & 0x7FFFFF);
+        } else @compileError("Only aarch64 and x64 are supported");
 
         if (caches.l1d_cache) |l1d| {
             const cache_size: u32 = @intCast(l1d.size);
@@ -390,7 +444,7 @@ fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, mpidrs: []const u
     }
 
     if (caches.l2_cache) |l2| {
-        for (0..mpidrs.len) |i| {
+        for (0..cpu_ids.len) |i| {
             const l2_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(i));
 
             const node_name = std.fmt.bufPrintZ(&print_buff, "l2-cache-{}", .{i}) catch unreachable;
@@ -410,13 +464,13 @@ fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, mpidrs: []const u
                 builder.add_property(void, s, {});
             }
             if (caches.l3_cache) |_| {
-                const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(mpidrs.len));
+                const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(cpu_ids.len));
                 builder.add_property(u32, "next-level-cache", l3_cache_phandle);
             }
         }
 
         if (caches.l3_cache) |l3| {
-            const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(mpidrs.len));
+            const l3_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(cpu_ids.len));
 
             builder.begin_node("l3-cache");
             defer builder.end_node();
@@ -454,7 +508,41 @@ fn create_cmdline_fdt(builder: *FdtBuilder, cmdline: [:0]const u8) void {
     builder.end_node();
 }
 
-fn create_gic_fdt(builder: *FdtBuilder) void {
+fn create_ioapic_node(builder: *FdtBuilder) void {
+    // Documentation/devicetree/bindings/interrupt-controller/intel,ce4100-ioapic.yaml
+    //
+    // ioapic1: interrupt-controller@fec00000 {
+    //     compatible = "intel,ce4100-ioapic";
+    //     reg = <0xfec00000 0x1000>;
+    //     interrupt-controller;
+    //     #interrupt-cells = <2>;
+    // };
+
+    {
+        builder.begin_node("interrupt-controller");
+        defer builder.end_node();
+
+        builder.add_property([:0]const u8, "compatible", "intel,ce4100-lapic");
+        builder.add_property(void, "interrupt-controller", {});
+        builder.add_property(u32, "#interrupt-cells", 2);
+        builder.add_property([]const u64, "reg", &.{ 0xfee00000, 0x1000 });
+        builder.add_property(void, "intel,virtual-wire-mode", {});
+    }
+
+    {
+        builder.begin_node("interrupt-controller");
+        defer builder.end_node();
+
+        builder.add_property([:0]const u8, "compatible", "intel,ce4100-ioapic");
+        builder.add_property(void, "interrupt-controller", {});
+        builder.add_property(u32, "#interrupt-cells", 2);
+        builder.add_property([]const u64, "reg", &.{ 0xfec00000, 0x1000 });
+        builder.add_property(u32, "phandle", FdtBuilder.GIC_PHANDLE);
+        builder.add_property(u32, "#address-cells", 0);
+    }
+}
+
+fn create_gicv2_node(builder: *FdtBuilder) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/interrupt-controller/arm%2Cgic.yaml
     builder.begin_node("intc");
     defer builder.end_node();
@@ -553,6 +641,7 @@ fn create_uart_node(builder: *FdtBuilder) void {
     defer builder.end_node();
 
     builder.add_property([:0]const u8, "compatible", "ns16550a");
+    // on x64 this may need to be an IO port address, not MMIO.
     builder.add_property(
         []const u64,
         "reg",

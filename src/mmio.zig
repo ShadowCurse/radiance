@@ -1,9 +1,12 @@
+const builtin = @import("builtin");
 const log = @import("log.zig");
 const Memory = @import("memory.zig");
-const Gicv2 = @import("gicv2.zig");
-
 const Ecam = @import("virtio/ecam.zig");
+
+const Gicv2 = @import("gicv2.zig");
 const Gicv2Mmio = @import("gicv2.zig").Gicv2Mmio;
+
+const apic = @import("apic.zig");
 
 const VIRTIO_INTERRUPT_STATUS_OFFSET = @import("virtio/context.zig").INTERRUPT_STATUS_OFFSET;
 
@@ -16,11 +19,31 @@ pub const MMIO_DEVICE_REGION_SIZE: u64 = 0x1000;
 pub const MMIO_DEVICE_ALLOCATED_REGION_SIZE: u64 = Memory.HOST_PAGE_SIZE;
 
 pub const UART_INDEX = 0;
-pub const UART_ADDR = MMIO_MEM_START;
-pub const UART_IRQ = Gicv2.IRQ_BASE;
+// For aarch64 UART is an MMIO device, but for x64, it is an IO device
+pub const UART_ADDR = if (builtin.cpu.arch == .aarch64)
+    MMIO_MEM_START
+else if (builtin.cpu.arch == .x86_64)
+    apic.UART_IO_PORT
+else
+    @compileError("Only aarch64 and x64 are supported");
+
+pub const UART_IRQ = if (builtin.cpu.arch == .aarch64)
+    Gicv2.IRQ_BASE
+else if (builtin.cpu.arch == .x86_64)
+    apic.UART_IRQ
+else
+    @compileError("Only aarch64 and x64 are supported");
+
 pub const RTC_INDEX = 1;
-pub const RTC_ADDR = UART_ADDR + MMIO_DEVICE_ALLOCATED_REGION_SIZE;
-pub const VIRTIO_IRQ_START = UART_IRQ + 1;
+pub const RTC_ADDR = MMIO_MEM_START + MMIO_DEVICE_ALLOCATED_REGION_SIZE;
+
+pub const VIRTIO_IRQ_START = if (builtin.cpu.arch == .aarch64)
+    Gicv2.IRQ_BASE
+else if (builtin.cpu.arch == .x86_64)
+    apic.IRQ_BASE
+else
+    @compileError("Only aarch64 and x64 are supported");
+
 pub const VIRTIO_ADDRESS_START = RTC_ADDR + MMIO_DEVICE_ALLOCATED_REGION_SIZE;
 
 pub const Resources = struct {
@@ -79,7 +102,12 @@ pci_num_devices: u8,
 pci_devices: [MAX_VIRTIO_DEVICES]MmioDevice,
 ecam: *Ecam,
 
-const MAX_MMIO_DEVICES = 2;
+const MAX_MMIO_DEVICES = if (builtin.cpu.arch == .aarch64)
+    // UART, RTC
+    2
+else if (builtin.cpu.arch == .x86_64)
+    // UART
+    1;
 const MAX_VIRTIO_DEVICES = 8;
 
 pub const MmioDevice = struct {
@@ -112,7 +140,12 @@ pub fn set_uart(self: *Self, device: MmioDevice) void {
     self.mmio_devices[UART_INDEX] = device;
 }
 
-pub fn set_rtc(self: *Self, device: MmioDevice) void {
+pub const set_rtc = if (builtin.cpu.arch == .aarch64)
+    set_rtc_aarch64
+else
+    @compileError("Only aarch64 uses rtc mmio device");
+
+fn set_rtc_aarch64(self: *Self, device: MmioDevice) void {
     self.mmio_devices[RTC_INDEX] = device;
 }
 
@@ -150,19 +183,23 @@ pub fn write(self: *Self, addr: u64, data: []u8) void {
     } else if (Memory.PCI_CONFIG_START <= addr) {
         const offset = addr - Memory.PCI_CONFIG_START;
         self.ecam.write(offset, data);
-    } else if (addr < VIRTIO_ADDRESS_START) {
+    } else if (addr >= MMIO_MEM_START and addr < VIRTIO_ADDRESS_START) {
         const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE;
         const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_ALLOCATED_REGION_SIZE * index;
         const device = self.mmio_devices[index];
         device.write(offset, data);
-    } else {
+    } else if (addr >= VIRTIO_ADDRESS_START) {
         const index = (addr - VIRTIO_ADDRESS_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE / 2;
-        const offset = (addr - VIRTIO_ADDRESS_START) -
-            (MMIO_DEVICE_ALLOCATED_REGION_SIZE * index * 2) -
-            (MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
-        const device = self.virtio_devices[index];
-        device.write(offset, data);
+        if (index < MAX_VIRTIO_DEVICES) {
+            const offset = (addr - VIRTIO_ADDRESS_START) -
+                (MMIO_DEVICE_ALLOCATED_REGION_SIZE * index * 2) -
+                (MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
+            const device = self.virtio_devices[index];
+            device.write(offset, data);
+        }
+        // Ignore writes to unknown VirtIO addresses
     }
+    // Ignore writes to other unknown addresses (e.g., HPET at 0xfedXXXXX)
 }
 
 pub fn read(self: *Self, addr: u64, data: []u8) void {
@@ -177,17 +214,25 @@ pub fn read(self: *Self, addr: u64, data: []u8) void {
     } else if (Memory.PCI_CONFIG_START <= addr) {
         const offset = addr - Memory.PCI_CONFIG_START;
         self.ecam.read(offset, data);
-    } else if (addr < VIRTIO_ADDRESS_START) {
+    } else if (addr >= MMIO_MEM_START and addr < VIRTIO_ADDRESS_START) {
         const index = (addr - MMIO_MEM_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE;
         const offset = (addr - MMIO_MEM_START) - MMIO_DEVICE_ALLOCATED_REGION_SIZE * index;
         const device = self.mmio_devices[index];
         device.read(offset, data);
-    } else {
+    } else if (addr >= VIRTIO_ADDRESS_START) {
         const index = (addr - VIRTIO_ADDRESS_START) / MMIO_DEVICE_ALLOCATED_REGION_SIZE / 2;
-        const offset = (addr - VIRTIO_ADDRESS_START) -
-            (MMIO_DEVICE_ALLOCATED_REGION_SIZE * index * 2) -
-            (MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
-        const device = self.virtio_devices[index];
-        device.read(offset, data);
+        if (index < MAX_VIRTIO_DEVICES) {
+            const offset = (addr - VIRTIO_ADDRESS_START) -
+                (MMIO_DEVICE_ALLOCATED_REGION_SIZE * index * 2) -
+                (MMIO_DEVICE_ALLOCATED_REGION_SIZE - VIRTIO_INTERRUPT_STATUS_OFFSET);
+            const device = self.virtio_devices[index];
+            device.read(offset, data);
+        } else {
+            // Return 0xff for unknown VirtIO addresses
+            @memset(data, 0xff);
+        }
+    } else {
+        // Return 0xff for unknown addresses (e.g., HPET at 0xfedXXXXX)
+        @memset(data, 0xff);
     }
 }

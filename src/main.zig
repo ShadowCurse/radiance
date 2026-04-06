@@ -1,8 +1,10 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const build_options = @import("build_options");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
 const gdb = @import("gdb.zig");
+const arch = @import("arch.zig");
 const args_parser = @import("args_parser.zig");
 const config_parser = @import("config_parser.zig");
 const profiler = @import("profiler.zig");
@@ -11,7 +13,6 @@ const Allocator = std.mem.Allocator;
 
 const Pmem = @import("devices/pmem.zig");
 const Uart = @import("devices/uart.zig");
-const Rtc = @import("devices/rtc.zig");
 const block_devices = @import("devices/block.zig");
 const BlockPci = block_devices.BlockPci;
 const BlockMmio = block_devices.BlockMmio;
@@ -27,7 +28,6 @@ const EventLoop = @import("event_loop.zig");
 const EventFd = @import("eventfd.zig");
 const CmdLine = @import("cmdline.zig");
 const FDT = @import("fdt.zig");
-const Gicv2 = @import("gicv2.zig");
 const Kvm = @import("kvm.zig");
 const Memory = @import("memory.zig");
 const Mmio = @import("mmio.zig");
@@ -35,6 +35,14 @@ const Api = @import("api.zig");
 const Vcpu = @import("vcpu.zig");
 const Vm = @import("vm.zig");
 const IoUring = @import("io_uring.zig");
+
+// x64
+const apic = @import("apic.zig");
+const x64_boot = @import("x64_boot.zig");
+
+// aarch64
+const Gicv2 = @import("gicv2.zig");
+const Rtc = @import("devices/rtc.zig");
 
 pub const std_options = std.Options{
     .page_size_min = build_options.host_page_size,
@@ -64,6 +72,7 @@ pub const MEASUREMENTS = profiler.Measurements("main", &.{
 
 const ALL_MEASUREMENTS = &.{
     MEASUREMENTS,
+    Memory.MEASUREMENTS,
     args_parser.MEASUREMENTS,
     config_parser.MEASUREMENTS,
     block_devices.MEASUREMENTS,
@@ -135,6 +144,7 @@ pub fn main() !void {
     if (args.config_path) |config_path| {
         try build_from_config(config_path, &runtime, &state);
     } else if (args.snapshot_path) |snapshot_path| {
+        // _ = snapshot_path;
         try build_from_snapshot(snapshot_path, &runtime, &state);
     } else {
         try args_parser.print_help(Args);
@@ -226,11 +236,8 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
             state.vcpus,
             state.vcpu_threads,
             &runtime.vcpu_barrier,
-            state.vcpu_reg_list,
-            state.vcpu_regs,
-            state.vcpu_mp_states,
-            &runtime.gicv2,
-            state.gicv2_state,
+            &runtime.arch,
+            &state.arch,
             state.permanent_memory,
         );
         runtime.el.add_event(
@@ -241,16 +248,21 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
         );
     }
 
-    const kvi = runtime.vm.get_preferred_target(nix.System);
     const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
     runtime.el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &runtime.el);
     const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
 
+    if (builtin.cpu.arch == .x86_64)
+        apic.init(nix.System, runtime.vm);
+
     for (state.vcpus, 0..) |*vcpu, i|
         vcpu.* = .create(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size);
-    for (state.vcpus, 0..) |*vcpu, i| vcpu.init(nix.System, i, kvi);
 
-    runtime.gicv2 = .init(nix.System, runtime.vm);
+    if (builtin.cpu.arch == .aarch64) {
+        const kvi = runtime.vm.get_preferred_target(nix.System);
+        for (state.vcpus, 0..) |*vcpu, i| vcpu.init(nix.System, i, kvi);
+        runtime.arch.gicv2 = .init(nix.System, runtime.vm);
+    }
 
     if (config.uart.enabled) {
         runtime.terminal_state = configure_terminal(nix.System);
@@ -267,11 +279,13 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
             state.uart,
         );
     }
-    runtime.mmio.set_rtc(.{
-        .ptr = state.rtc,
-        .read_ptr = @ptrCast(&Rtc.read_with_system),
-        .write_ptr = @ptrCast(&Rtc.write_with_system),
-    });
+    if (builtin.cpu.arch == .aarch64) {
+        runtime.mmio.set_rtc(.{
+            .ptr = state.arch.rtc,
+            .read_ptr = @ptrCast(&Rtc.read_with_system),
+            .write_ptr = @ptrCast(&Rtc.write_with_system),
+        });
+    }
 
     var load_result = state.memory.load_linux_kernel(nix.System, config.kernel.path);
     const tmp_alloc = load_result.post_kernel_allocator.allocator();
@@ -378,23 +392,71 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
     }
     if (config.uart.enabled) try Uart.add_to_cmdline(&cmdline);
 
-    const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
-    for (mpidrs, state.vcpus) |*mpidr, *vcpu| mpidr.* = vcpu.get_reg(nix.System, Vcpu.MPIDR_EL1);
-    const fdt_addr = FDT.create_fdt(
-        nix.System,
-        tmp_alloc,
-        state.memory,
-        mpidrs,
-        try cmdline.sentinel_str(),
-        config.uart.enabled,
-        mmio_infos,
-        pmem_infos,
-    );
+    if (builtin.cpu.arch == .aarch64) {
+        const mpidrs = try tmp_alloc.alloc(u64, config.machine.vcpus);
+        for (mpidrs, state.vcpus) |*mpidr, *vcpu|
+            mpidr.* = Vcpu.aarch64.get_reg(vcpu, nix.System, Vcpu.aarch64.MPIDR_EL1);
+        const fdt_addr = FDT.create_fdt(
+            nix.System,
+            tmp_alloc,
+            state.memory,
+            mpidrs,
+            try cmdline.sentinel_str(),
+            config.uart.enabled,
+            mmio_infos,
+            pmem_infos,
+        );
 
-    state.vcpus[0].set_reg(nix.System, u64, Vcpu.PC, load_result.start);
-    state.vcpus[0].set_reg(nix.System, u64, Vcpu.REGS0, @as(u64, fdt_addr));
-    for (state.vcpus) |*vcpu|
-        vcpu.set_reg(nix.System, u64, Vcpu.PSTATE, Vcpu.PSTATE_FAULT_BITS_64);
+        Vcpu.aarch64.set_reg(&state.vcpus[0], nix.System, u64, Vcpu.aarch64.PC, load_result.start);
+        Vcpu.aarch64.set_reg(&state.vcpus[0], nix.System, u64, Vcpu.aarch64.REGS0, @as(u64, fdt_addr));
+        for (state.vcpus) |*vcpu|
+            Vcpu.aarch64.set_reg(
+                vcpu,
+                nix.System,
+                u64,
+                Vcpu.aarch64.PSTATE,
+                Vcpu.aarch64.PSTATE_FAULT_BITS_64,
+            );
+    } else if (builtin.cpu.arch == .x86_64) {
+        // Add virtio_mmio.device parameters for x86_64
+        // Format: virtio_mmio.device=<size>@<address>:<irq>
+        // This bypasses FDT-based IRQ domain mapping which remaps IRQs
+        for (mmio_infos) |info| {
+            var buf: [64]u8 = undefined;
+            const param = std.fmt.bufPrint(&buf, " virtio_mmio.device=0x{x}@0x{x}:{d}", .{
+                info.len,
+                info.addr,
+                info.irq,
+            }) catch unreachable;
+            try cmdline.append(param);
+        }
+
+        const fdt_addr, const fdt_size = FDT.create_fdt(
+            nix.System,
+            tmp_alloc,
+            state.memory,
+            config.machine.vcpus,
+        );
+
+        x64_boot.configure_gdt(&state.memory);
+        x64_boot.configure_page_tables(&state.memory);
+        const cmdline_str = try cmdline.sentinel_str();
+        x64_boot.configure_e820(&state.memory, cmdline_str, fdt_addr, fdt_size);
+        x64_boot.configure_mptable(&state.memory, @truncate(config.machine.vcpus));
+
+        if (arch.x64.is_intel()) {
+            const KVM_TSS_ADDRESS: u64 = 0xfffb_d000;
+            _ = nix.assert(@src(), nix.System, "ioctl", .{
+                runtime.vm.fd,
+                nix.KVM_SET_TSS_ADDR,
+                KVM_TSS_ADDRESS,
+            });
+        }
+
+        const supported_cpuid = runtime.kvm.supported_cpuid();
+        for (state.vcpus, 0..) |*vcpu, i|
+            Vcpu.x64.configure(vcpu, nix.System, @truncate(i), load_result.start, supported_cpuid);
+    }
 }
 
 fn create_block_mmio(
@@ -691,22 +753,34 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
     }
     runtime.vcpu_barrier = .{};
 
-    const kvi = runtime.vm.get_preferred_target(nix.System);
     const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
     runtime.el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &runtime.el);
     const vcpu_mmap_size = runtime.kvm.vcpu_mmap_size(nix.System);
 
+    if (builtin.cpu.arch == .x86_64)
+        apic.init(nix.System, runtime.vm);
+
     for (state.vcpus, 0..) |*vcpu, i|
         vcpu.* = .create(nix.System, runtime.vm, i, vcpu_exit_event, vcpu_mmap_size);
-    for (state.vcpus, 0..) |*vcpu, i| vcpu.init(nix.System, i, kvi);
-    runtime.gicv2 = .init(nix.System, runtime.vm);
 
-    var regs_bytes = state.vcpu_regs;
-    for (state.vcpus, state.vcpu_mp_states) |*vcpu, *mp_state| {
-        const used = vcpu.restore_regs(nix.System, state.vcpu_reg_list, regs_bytes, mp_state);
-        regs_bytes = regs_bytes[used..];
+    if (builtin.cpu.arch == .aarch64) {
+        const kvi = runtime.vm.get_preferred_target(nix.System);
+        for (state.vcpus, 0..) |*vcpu, i| vcpu.init(nix.System, i, kvi);
+        runtime.arch.gicv2 = .init(nix.System, runtime.vm);
+
+        var regs_bytes = state.arch.vcpu_regs;
+        for (state.vcpus, state.arch.vcpu_mp_states) |*vcpu, *mp_state| {
+            const used = Vcpu.aarch64.restore_regs(
+                vcpu,
+                nix.System,
+                state.arch.vcpu_reg_list,
+                regs_bytes,
+                mp_state,
+            );
+            regs_bytes = regs_bytes[used..];
+        }
+        runtime.arch.gicv2.restore_state(nix.System, state.arch.gicv2_state, @intCast(state.vcpus.len));
     }
-    runtime.gicv2.restore_state(nix.System, state.gicv2_state, @intCast(state.vcpus.len));
 
     if (state.config_state.uart_enabled) {
         runtime.terminal_state = configure_terminal(nix.System);
@@ -723,11 +797,14 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
             state.uart,
         );
     }
-    runtime.mmio.set_rtc(.{
-        .ptr = state.rtc,
-        .read_ptr = @ptrCast(&Rtc.read_with_system),
-        .write_ptr = @ptrCast(&Rtc.write_with_system),
-    });
+
+    if (builtin.cpu.arch == .aarch64) {
+        runtime.mmio.set_rtc(.{
+            .ptr = state.arch.rtc,
+            .read_ptr = @ptrCast(&Rtc.read_with_system),
+            .write_ptr = @ptrCast(&Rtc.write_with_system),
+        });
+    }
 
     var mmio_resources: Mmio.Resources = .{};
     var mmio_regions = state.mmio_regions;
@@ -921,10 +998,16 @@ fn restore_terminal(comptime System: type, state: *const nix.termios) void {
     _ = System.tcsetattr(nix.STDIN, nix.TCSA.NOW, state);
 }
 
+pub const RuntimeArch = if (builtin.cpu.arch == .aarch64) struct {
+    gicv2: Gicv2,
+} else if (builtin.cpu.arch == .x86_64)
+    struct {}
+else
+    @compileError("Only aarch64 and x64 are supported");
 pub const Runtime = struct {
     kvm: Kvm,
     vm: Vm,
-    gicv2: Gicv2,
+    arch: RuntimeArch,
     ecam: *Ecam,
     mmio: Mmio,
     el: EventLoop,
@@ -934,6 +1017,16 @@ pub const Runtime = struct {
     terminal_state: ?nix.termios,
 };
 
+pub const StateArch = if (builtin.cpu.arch == .aarch64) struct {
+    rtc: *Rtc,
+    vcpu_reg_list: *Vcpu.aarch64.RegList,
+    vcpu_regs: []u8,
+    vcpu_mp_states: []nix.kvm_mp_state,
+    gicv2_state: []u32,
+} else if (builtin.cpu.arch == .x86_64)
+    struct {}
+else
+    @compileError("Only aarch64 and x64 are supported");
 pub const State = struct {
     permanent_memory: Memory.Permanent,
     memory: Memory.Guest,
@@ -949,11 +1042,7 @@ pub const State = struct {
     net_mmio_vhost: []NetMmioVhost,
     ecam_memory: []align(8) u8,
     uart: *Uart,
-    rtc: *Rtc,
-    vcpu_reg_list: *Vcpu.RegList,
-    vcpu_regs: []u8,
-    vcpu_mp_states: []nix.kvm_mp_state,
-    gicv2_state: []u32,
+    arch: StateArch,
     config_devices_state: []u8,
     config_state: *ConfigState,
 
@@ -1013,16 +1102,31 @@ pub const State = struct {
         var uart_bytes: usize = 0;
         if (config.uart.enabled)
             uart_bytes = @sizeOf(Uart);
-        const rtc_bytes: usize = @sizeOf(Rtc);
+
+        // Rtc only exist on aarch64
+        const rtc_bytes: usize = if (builtin.cpu.arch == .aarch64) @sizeOf(Rtc) else 0;
 
         // Additional bytes needed to store VM state
-        // 8 byte aligned
-        const vcpu_reg_list_bytes = @sizeOf(Vcpu.RegList);
-        const vcpu_regs_bytes = config.machine.vcpus * Vcpu.PER_VCPU_REGS_BYTES;
-        // 4 byte aligned
-        const vcpu_mpstates_bytes = config.machine.vcpus * @sizeOf(nix.kvm_mp_state);
-        const gicv2_state_bytes =
-            config.machine.vcpus * Gicv2.VGIC_CPU_REGS_BYTES + Gicv2.VGIC_DIST_REGS_BYTES;
+        var arch_state_bytes: usize = 0;
+        const arch_state_parts = if (builtin.cpu.arch == .aarch64) blk: {
+            const parts = .{
+                // 8 byte aligned
+                .vcpu_reg_list_bytes = @sizeOf(Vcpu.aarch64.RegList),
+                .vcpu_regs_bytes = config.machine.vcpus * Vcpu.aarch64.PER_VCPU_REGS_BYTES,
+                // 4 byte aligned
+                .vcpu_mpstates_bytes = config.machine.vcpus * @sizeOf(nix.kvm_mp_state),
+                .gicv2_state_bytes = config.machine.vcpus * Gicv2.VGIC_CPU_REGS_BYTES +
+                    Gicv2.VGIC_DIST_REGS_BYTES,
+            };
+            arch_state_bytes += parts.vcpu_reg_list_bytes +
+                parts.vcpu_regs_bytes +
+                parts.vcpu_mpstates_bytes +
+                parts.gicv2_state_bytes;
+            break :blk parts;
+        } else if (builtin.cpu.arch == .x86_64) blk: {
+            break :blk .{};
+        };
+
         // 1 byte aligned
         var config_devices_bytes: usize = 0;
         // The only thing needed saving for devices are paths and read_only flags
@@ -1050,12 +1154,7 @@ pub const State = struct {
             rtc_bytes;
 
         if (config.api.socket_path != null) {
-            permanent_memory_size +=
-                vcpu_reg_list_bytes +
-                vcpu_regs_bytes +
-                vcpu_mpstates_bytes +
-                gicv2_state_bytes +
-                config_devices_bytes;
+            permanent_memory_size += arch_state_bytes + config_devices_bytes;
 
             // Need to store ConfigState last and it needs aligment update;
             permanent_memory_size = Memory.align_addr(permanent_memory_size, @alignOf(ConfigState));
@@ -1124,30 +1223,37 @@ pub const State = struct {
             result.uart = @ptrCast(@alignCast(pm[0..uart_bytes]));
             pm = pm[uart_bytes..];
         }
-        log.debug(@src(), "rtc_bytes: {d}", .{rtc_bytes});
-        result.rtc = @ptrCast(@alignCast(pm[0..rtc_bytes]));
-        result.rtc.* = .{};
-        pm = pm[rtc_bytes..];
+
+        if (builtin.cpu.arch == .aarch64) {
+            log.debug(@src(), "rtc_bytes: {d}", .{rtc_bytes});
+            result.arch.rtc = @ptrCast(@alignCast(pm[0..rtc_bytes]));
+            result.arch.rtc.* = .{};
+            pm = pm[rtc_bytes..];
+        }
 
         if (config.api.socket_path != null) {
-            result.vcpu_reg_list = @ptrCast(@alignCast(pm[0..vcpu_reg_list_bytes]));
-            // First value is the number of ids in the list. Set to 0 to
-            // be able to detect when list needs to be queried.
-            log.debug(@src(), "vcpu_reg_list_bytes: {d}", .{vcpu_reg_list_bytes});
-            result.vcpu_reg_list[0] = 0;
-            pm = pm[vcpu_reg_list_bytes..];
+            if (builtin.cpu.arch == .aarch64) {
+                result.arch.vcpu_reg_list =
+                    @ptrCast(@alignCast(pm[0..arch_state_parts.vcpu_reg_list_bytes]));
+                // First value is the number of ids in the list. Set to 0 to
+                // be able to detect when list needs to be queried.
+                log.debug(@src(), "vcpu_reg_list_bytes: {d}", .{arch_state_parts.vcpu_reg_list_bytes});
+                result.arch.vcpu_reg_list[0] = 0;
+                pm = pm[arch_state_parts.vcpu_reg_list_bytes..];
 
-            log.debug(@src(), "vcpu_regs_bytes: {d}", .{vcpu_regs_bytes});
-            result.vcpu_regs = @ptrCast(@alignCast(pm[0..vcpu_regs_bytes]));
-            pm = pm[vcpu_regs_bytes..];
+                log.debug(@src(), "vcpu_regs_bytes: {d}", .{arch_state_parts.vcpu_regs_bytes});
+                result.arch.vcpu_regs = @ptrCast(@alignCast(pm[0..arch_state_parts.vcpu_regs_bytes]));
+                pm = pm[arch_state_parts.vcpu_regs_bytes..];
 
-            log.debug(@src(), "vcpu_mpstates_bytes: {d}", .{vcpu_mpstates_bytes});
-            result.vcpu_mp_states = @ptrCast(@alignCast(pm[0..vcpu_mpstates_bytes]));
-            pm = pm[vcpu_mpstates_bytes..];
+                log.debug(@src(), "vcpu_mpstates_bytes: {d}", .{arch_state_parts.vcpu_mpstates_bytes});
+                result.arch.vcpu_mp_states =
+                    @ptrCast(@alignCast(pm[0..arch_state_parts.vcpu_mpstates_bytes]));
+                pm = pm[arch_state_parts.vcpu_mpstates_bytes..];
 
-            log.debug(@src(), "gicv2_state_bytes: {d}", .{gicv2_state_bytes});
-            result.gicv2_state = @ptrCast(@alignCast(pm[0..gicv2_state_bytes]));
-            pm = pm[gicv2_state_bytes..];
+                log.debug(@src(), "gicv2_state_bytes: {d}", .{arch_state_parts.gicv2_state_bytes});
+                result.arch.gicv2_state = @ptrCast(@alignCast(pm[0..arch_state_parts.gicv2_state_bytes]));
+                pm = pm[arch_state_parts.gicv2_state_bytes..];
+            }
 
             log.debug(@src(), "config_devices_bytes: {d}", .{config_devices_bytes});
             result.config_devices_state = @ptrCast(pm[0..config_devices_bytes]);
@@ -1309,13 +1415,25 @@ pub const State = struct {
         var uart_bytes: usize = 0;
         if (result.config_state.uart_enabled)
             uart_bytes = @sizeOf(Uart);
-        const rtc_bytes: usize = @sizeOf(Rtc);
 
-        const vcpu_reg_list_bytes = @sizeOf(Vcpu.RegList);
-        const vcpu_regs_bytes = result.config_state.vcpus * Vcpu.PER_VCPU_REGS_BYTES;
-        const vcpu_mpstates_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_mp_state);
-        const gicv2_state_bytes =
-            result.config_state.vcpus * Gicv2.VGIC_CPU_REGS_BYTES + Gicv2.VGIC_DIST_REGS_BYTES;
+        // Rtc only exist on aarch64
+        const rtc_bytes: usize = if (builtin.cpu.arch == .aarch64) @sizeOf(Rtc) else 0;
+
+        // Additional bytes needed to store VM state
+        const arch_state_parts = if (builtin.cpu.arch == .aarch64) blk: {
+            const parts = .{
+                // 8 byte aligned
+                .vcpu_reg_list_bytes = @sizeOf(Vcpu.aarch64.RegList),
+                .vcpu_regs_bytes = result.config_state.vcpus * Vcpu.aarch64.PER_VCPU_REGS_BYTES,
+                // 4 byte aligned
+                .vcpu_mpstates_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_mp_state),
+                .gicv2_state_bytes = result.config_state.vcpus * Gicv2.VGIC_CPU_REGS_BYTES +
+                    Gicv2.VGIC_DIST_REGS_BYTES,
+            };
+            break :blk parts;
+        } else if (builtin.cpu.arch == .x86_64) blk: {
+            break :blk .{};
+        };
 
         log.debug(@src(), "memory_bytes: {d}", .{memory_bytes});
         result.memory = .{ .mem = @alignCast(pm[0..memory_bytes]) };
@@ -1372,25 +1490,28 @@ pub const State = struct {
             result.uart = @ptrCast(@alignCast(pm[0..uart_bytes]));
             pm = pm[uart_bytes..];
         }
-        log.debug(@src(), "rtc_bytes: {d}", .{rtc_bytes});
-        result.rtc = @ptrCast(@alignCast(pm[0..rtc_bytes]));
-        pm = pm[rtc_bytes..];
 
-        log.debug(@src(), "vcpu_reg_list_bytes: {d}", .{vcpu_reg_list_bytes});
-        result.vcpu_reg_list = @ptrCast(@alignCast(pm[0..vcpu_reg_list_bytes]));
-        pm = pm[vcpu_reg_list_bytes..];
+        if (builtin.cpu.arch == .aarch64) {
+            log.debug(@src(), "rtc_bytes: {d}", .{rtc_bytes});
+            result.arch.rtc = @ptrCast(@alignCast(pm[0..rtc_bytes]));
+            pm = pm[rtc_bytes..];
 
-        log.debug(@src(), "vcpu_regs_bytes: {d}", .{vcpu_regs_bytes});
-        result.vcpu_regs = @ptrCast(@alignCast(pm[0..vcpu_regs_bytes]));
-        pm = pm[vcpu_regs_bytes..];
+            log.debug(@src(), "vcpu_reg_list_bytes: {d}", .{arch_state_parts.vcpu_reg_list_bytes});
+            result.arch.vcpu_reg_list = @ptrCast(@alignCast(pm[0..arch_state_parts.vcpu_reg_list_bytes]));
+            pm = pm[arch_state_parts.vcpu_reg_list_bytes..];
 
-        log.debug(@src(), "vcpu_mpstates_bytes: {d}", .{vcpu_mpstates_bytes});
-        result.vcpu_mp_states = @ptrCast(@alignCast(pm[0..vcpu_mpstates_bytes]));
-        pm = pm[vcpu_mpstates_bytes..];
+            log.debug(@src(), "vcpu_regs_bytes: {d}", .{arch_state_parts.vcpu_regs_bytes});
+            result.arch.vcpu_regs = @ptrCast(@alignCast(pm[0..arch_state_parts.vcpu_regs_bytes]));
+            pm = pm[arch_state_parts.vcpu_regs_bytes..];
 
-        log.debug(@src(), "gicv2_state_bytes: {d}", .{gicv2_state_bytes});
-        result.gicv2_state = @ptrCast(@alignCast(pm[0..gicv2_state_bytes]));
-        pm = pm[gicv2_state_bytes..];
+            log.debug(@src(), "vcpu_mpstates_bytes: {d}", .{arch_state_parts.vcpu_mpstates_bytes});
+            result.arch.vcpu_mp_states = @ptrCast(@alignCast(pm[0..arch_state_parts.vcpu_mpstates_bytes]));
+            pm = pm[arch_state_parts.vcpu_mpstates_bytes..];
+
+            log.debug(@src(), "gicv2_state_bytes: {d}", .{arch_state_parts.gicv2_state_bytes});
+            result.arch.gicv2_state = @ptrCast(@alignCast(pm[0..arch_state_parts.gicv2_state_bytes]));
+            pm = pm[arch_state_parts.gicv2_state_bytes..];
+        }
 
         log.debug(@src(), "config_devices_bytes: {d}", .{pm.len - @sizeOf(ConfigState)});
         result.config_devices_state = @ptrCast(pm[0 .. pm.len - @sizeOf(ConfigState)]);

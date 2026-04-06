@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const log = @import("../log.zig");
 const nix = @import("../nix.zig");
 
@@ -165,11 +166,17 @@ pub fn restore(self: *Self, comptime System: type, vm: *const Vm) void {
 }
 
 pub fn add_to_cmdline(cmdline: *CmdLine) !void {
-    const cmd = std.fmt.comptimePrint(
-        " console=ttyS0 earlycon=uart,mmio,0x{x:.8}",
-        .{Mmio.UART_ADDR},
-    );
-    try cmdline.append(cmd);
+    if (builtin.cpu.arch == .x86_64) {
+        // x86_64: Use I/O port-based UART at COM1 (0x3f8)
+        try cmdline.append(" console=ttyS0 earlycon=uart8250,io,0x3f8,115200n8");
+    } else {
+        // aarch64: Use MMIO-based UART
+        const cmd = std.fmt.comptimePrint(
+            " console=ttyS0 earlycon=uart,mmio,0x{x:.8}",
+            .{Mmio.UART_ADDR},
+        );
+        try cmdline.append(cmd);
+    }
 }
 
 pub fn read_input_with_system(self: *Self) void {
