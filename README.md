@@ -1,13 +1,8 @@
 # Radiance
 
-Experimental KVM based VMM for `aarch64` platform.
+Experimental KVM based VMM platform.
 
-> [!NOTE]
->
-> Currently only systems with `GICv2`/`m` like Raspberry Pi 4/5 are supported since this
-> is the only `aarch64` hardware I have for development.
-
-Defining characteristics:
+### Defining characteristics:
 - no external dependencies
 - statically compiled (no libc or musl)
 - no memory allocations after the VM start
@@ -16,6 +11,29 @@ Defining characteristics:
 - support for PCI (currently only for Block)
 - optimized MMIO device path which makes MMIO devices as fast as PCI ones
 - snapshot creation/restoration
+
+### Architecture Support
+
+| Feature | aarch64 | x86_64 |
+|---------|---------|--------|
+| **Devices** | | |
+| Block (VirtIO) | Yes | Yes |
+| Network (VirtIO) | Yes | Yes |
+| PMEM | Yes | No |
+| UART | Yes | Yes |
+| RTC | Yes | No |
+| **Transports** | | |
+| VirtIO-MMIO | Yes | Yes |
+| VirtIO-PCI | Yes | No |
+| **Backends** | | |
+| io_uring (Block) | Yes | Yes |
+| vhost-net (Network) | Yes | Yes |
+| **Features** | | |
+| Snapshot/Restore | Yes | No |
+| API (pause/resume) | Yes | Yes |
+
+> [!NOTE]
+> aarch64: Only systems with `GICv2`/`m` like Raspberry Pi 4/5 are supported.
 
 ### Build:
 ```bash
@@ -100,11 +118,20 @@ This will produce `alpine.ext4` rootfs file and
 ssh keys `alpine.id_rsa` and `alpine.id_rsa.pub`.
 
 ### Linux kernel:
-To compile small kernel for VM use `resources/kernel_config`.
+
+#### aarch64:
+To compile small kernel for VM use `resources/kernel_config_aarch64`.
 ```bash
-make -Image -j
+make Image -j
 ```
 The resulting kernel image will be at `arch/arm64/boot/Image`.
+
+#### x86_64:
+To compile small kernel for VM use `resources/kernel_config_x64`.
+```bash
+make vmlinux -j
+```
+The resulting kernel image will be at `vmlinux` (uncompressed kernel).
 
 Kcov:
 ```bash
