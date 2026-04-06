@@ -350,7 +350,7 @@ pub fn run_threaded(
     barrier: *std.Thread.ResetEvent,
     mmio: *Mmio,
 ) void {
-    profiler.thread_take_id();
+    profiler.take_thread_id();
     Self.set_thread_handler(System);
     self.tid = std.Thread.getCurrentId();
     barrier.wait();

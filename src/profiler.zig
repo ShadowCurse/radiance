@@ -7,7 +7,7 @@ pub var global_start: u64 = 0;
 pub var global_freq: u64 = 0;
 pub var global_last_thread_id: std.atomic.Value(u32) = .init(0);
 pub threadlocal var current: ?*Measurement = null;
-pub threadlocal var thread_id: u32 = 0;
+pub threadlocal var thread_id: ?u32 = null;
 
 pub const Options = struct {
     enabled: bool = false,
@@ -32,10 +32,16 @@ pub const Measurement = struct {
 pub fn start() void {
     global_freq = arch.get_perf_counter_frequency();
     global_start = arch.get_perf_counter();
-    thread_take_id();
+    take_thread_id();
 }
 
-pub fn thread_take_id() void {
+pub fn take_thread_id() void {
+    log.assert(
+        @src(),
+        thread_id == null,
+        "{d} attempted taking multiple thread ids",
+        .{std.Thread.getCurrentId()},
+    );
     thread_id = global_last_thread_id.fetchAdd(1, .seq_cst);
 }
 
@@ -84,7 +90,7 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
                     );
                 };
                 const parent = current;
-                current = &measurements[thread_id][index];
+                current = &measurements[thread_id.?][index];
                 return .{
                     .start_time = arch.get_perf_counter(),
                     .parent = parent,
