@@ -57,7 +57,6 @@ pub const CacheEntry = struct {
     level: u8,
     cache_type: CacheType,
     size: u32,
-    cpus_per_unit: u16,
     line_size: u16,
     number_of_sets: u16,
 
@@ -74,14 +73,6 @@ pub const CacheEntry = struct {
         const cache_type_bytes = try Self.read_info(System, index, "type", &read_buff) - 1;
         const cache_type = CacheType.from_str(read_buff[0..cache_type_bytes]);
 
-        const scm_bytes = try Self.read_info(System, index, "shared_cpu_map", &read_buff) - 1;
-        var scm: u16 = 0;
-        var scm_iter = std.mem.splitScalar(u8, read_buff[0..scm_bytes], ',');
-        while (scm_iter.next()) |slice| {
-            const v = try std.fmt.parseInt(u8, slice, 16);
-            scm += @popCount(v);
-        }
-
         const cls_bytes = try Self.read_info(System, index, "coherency_line_size", &read_buff) - 1;
         const cls = try std.fmt.parseInt(u16, read_buff[0..cls_bytes], 10);
 
@@ -95,7 +86,6 @@ pub const CacheEntry = struct {
             .level = level,
             .cache_type = cache_type,
             .size = size,
-            .cpus_per_unit = scm,
             .line_size = cls,
             .number_of_sets = nos,
         };
