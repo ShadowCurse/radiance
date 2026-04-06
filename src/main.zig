@@ -41,7 +41,7 @@ pub const std_options = std.Options{
 };
 
 pub const log_options = log.Options{
-    .level = .Info,
+    .level = .info,
     .colors = true,
 };
 

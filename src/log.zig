@@ -8,14 +8,14 @@ const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
 
 pub const LogLevel = enum {
-    Err,
-    Warn,
-    Info,
-    Debug,
+    err,
+    warn,
+    info,
+    debug,
 };
 pub const Options = struct {
     colors: bool = true,
-    level: LogLevel = .Info,
+    level: LogLevel = .info,
     asserts: bool = true,
     buffer_size: u32 = 256,
 
@@ -42,13 +42,15 @@ pub fn comptime_err(
     comptime format: []const u8,
     comptime args: anytype,
 ) noreturn {
-    const header = std.fmt.comptimePrint("[{s}:{}:COMPILE]", .{ src.file, src.line });
-    const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, header, args);
+    const T = make_struct_comptime(src, @TypeOf(args));
+    const t = fill_struct_comptime(T, args);
     if (comptime options.colors)
-        @compileError(std.fmt.comptimePrint(RED ++ "{s}[{d}] " ++ format ++ DEFAULT_COLOR, t))
+        @compileError(std.fmt.comptimePrint(
+            RED ++ "[{s}:{}:COMPILE][{d}] " ++ format ++ DEFAULT_COLOR,
+            t,
+        ))
     else
-        @compileError(std.fmt.comptimePrint("{s}[{d}] " ++ format, t));
+        @compileError(std.fmt.comptimePrint("[{s}:{}:COMPILE][{d}] " ++ format, t));
 }
 
 pub fn comptime_assert(
@@ -62,21 +64,20 @@ pub fn comptime_assert(
 }
 
 pub fn panic(
-    comptime src: std.builtin.SourceLocation,
+    src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) noreturn {
-    const header = std.fmt.comptimePrint("[{s}:{}:PANIC]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, header, args);
+    const t = fill_struct(T, src.file, src.line, args);
     if (comptime options.colors)
-        std.debug.panic(RED ++ "{s}[{d}] " ++ format ++ DEFAULT_COLOR, t)
+        std.debug.panic(RED ++ "[{s}:{}:PANIC][{d}] " ++ format ++ DEFAULT_COLOR, t)
     else
-        std.debug.panic("{s}[{d}] " ++ format, t);
+        std.debug.panic("[{s}:{}:PANIC][{d}] " ++ format, t);
 }
 
 pub fn assert(
-    comptime src: std.builtin.SourceLocation,
+    src: std.builtin.SourceLocation,
     ok: bool,
     comptime format: []const u8,
     args: anytype,
@@ -85,78 +86,73 @@ pub fn assert(
 
     if (!ok) {
         @branchHint(.cold);
-        const header = std.fmt.comptimePrint("[{s}:{}:ASSERT]", .{ src.file, src.line });
         const T = make_struct(@TypeOf(args));
-        const t = fill_struct(T, header, args);
+        const t = fill_struct(T, src.file, src.line, args);
         if (comptime options.colors)
-            std.debug.panic(RED ++ "{s}[{d}] " ++ format ++ DEFAULT_COLOR, t)
+            std.debug.panic(RED ++ "[{s}:{}:ASSERT][{d}] " ++ format ++ DEFAULT_COLOR, t)
         else
-            std.debug.panic("{s}[{d}] " ++ format, t);
+            std.debug.panic("[{s}:{}:ASSERT][{d}] " ++ format, t);
     }
 }
 
 pub fn info(
-    comptime src: std.builtin.SourceLocation,
+    src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (comptime !options.log_enabled(.Info)) return;
+    if (comptime !options.log_enabled(.info)) return;
 
-    const header = std.fmt.comptimePrint("[{s}:{}:INFO]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, header, args);
+    const t = fill_struct(T, src.file, src.line, args);
     if (comptime options.colors)
-        output(WHITE ++ "{s}[{d}] " ++ format ++ DEFAULT_COLOR ++ "\n", t)
+        output(WHITE ++ "[{s}:{}:INFO][{d}] " ++ format ++ DEFAULT_COLOR ++ "\n", t)
     else
-        output("{s}[{d}] " ++ format ++ "\n", t);
+        output("[{s}:{}:INFO][{d}] " ++ format ++ "\n", t);
 }
 
 pub fn debug(
-    comptime src: std.builtin.SourceLocation,
+    src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (comptime !options.log_enabled(.Debug)) return;
+    if (comptime !options.log_enabled(.debug)) return;
 
-    const header = std.fmt.comptimePrint("[{s}:{d}:DEBUG]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, header, args);
+    const t = fill_struct(T, src.file, src.line, args);
     if (comptime options.colors)
-        output(HIGH_WHITE ++ "{s}[{d}] " ++ format ++ DEFAULT_COLOR ++ "\n", t)
+        output(HIGH_WHITE ++ "[{s}:{}:DEBUG][{d}] " ++ format ++ DEFAULT_COLOR ++ "\n", t)
     else
-        output("{s}[{d}] " ++ format ++ "\n", t);
+        output("[{s}:{}:DEBUG][{d}] " ++ format ++ "\n", t);
 }
 
 pub fn warn(
-    comptime src: std.builtin.SourceLocation,
+    src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (comptime !options.log_enabled(.Warn)) return;
+    if (comptime !options.log_enabled(.warn)) return;
 
-    const header = std.fmt.comptimePrint("[{s}:{}:WARN]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, header, args);
+    const t = fill_struct(T, src.file, src.line, args);
     if (comptime options.colors)
-        output(YELLOW ++ "{s}[{d}] " ++ format ++ DEFAULT_COLOR ++ "\n", t)
+        output(YELLOW ++ "[{s}:{}:WARN][{d}] " ++ format ++ DEFAULT_COLOR ++ "\n", t)
     else
-        output("{s}[{d}] " ++ format ++ "\n", t);
+        output("[{s}:{}:WARN][{d}] " ++ format ++ "\n", t);
 }
 
 pub fn err(
-    comptime src: std.builtin.SourceLocation,
+    src: std.builtin.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (comptime !options.log_enabled(.Err)) return;
+    if (comptime !options.log_enabled(.err)) return;
 
-    const header = std.fmt.comptimePrint("[{s}:{d}:ERROR]", .{ src.file, src.line });
     const T = make_struct(@TypeOf(args));
-    const t = fill_struct(T, header, args);
+    const t = fill_struct(T, src.file, src.line, args);
     if (comptime options.colors)
-        output(RED ++ "{s}[{d}] " ++ format ++ DEFAULT_COLOR ++ "\n", t)
+        output(RED ++ "[{s}:{}:ERROR][{d}] " ++ format ++ DEFAULT_COLOR ++ "\n", t)
     else
-        output("{s}[{d}] " ++ format ++ "\n", t);
+        output("[{s}:{}:ERROR][{d}] " ++ format ++ "\n", t);
 }
 
 pub fn output(comptime format: []const u8, args: anytype) void {
@@ -178,43 +174,46 @@ pub fn output(comptime format: []const u8, args: anytype) void {
     }
 }
 
-fn fill_struct(comptime T: type, comptime header: [:0]const u8, args: anytype) T {
+fn fill_struct_comptime(comptime T: type, args: anytype) T {
     const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
     var t: T = undefined;
 
-    @field(t, "0") = header;
-    @field(t, "1") = if (@inComptime()) 9999 else profiler.thread_id;
-
-    // need to inline so the loop would be unrolled
-    // because these fields are assigned at runtime
-    // but we need to generate indexes at comptime
+    @field(t, "2") = 0;//profiler.thread_id orelse 0;
     inline for (args_fields, 0..) |_, i| {
-        const t_index = std.fmt.comptimePrint("{}", .{2 + i});
+        const t_index = std.fmt.comptimePrint("{}", .{3 + i});
         const args_index = std.fmt.comptimePrint("{}", .{i});
         @field(t, t_index) = @field(args, args_index);
     }
     return t;
 }
 
-fn make_struct(comptime T: type) type {
+fn make_struct_comptime(comptime src: std.builtin.SourceLocation, comptime T: type) type {
     const type_fields = comptime @typeInfo(T).@"struct".fields;
-    var fields: [type_fields.len + 2]std.builtin.Type.StructField = undefined;
-    // header
+    var fields: [type_fields.len + 3]std.builtin.Type.StructField = undefined;
+    // file
     fields[0] = .{
         .name = "0",
-        .type = [:0]const u8,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = @alignOf([:0]const u8),
+        .type = @TypeOf(src.file),
+        .default_value_ptr = @ptrCast(&src.file),
+        .is_comptime = true,
+        .alignment = @alignOf(@TypeOf(src.file)),
     };
+    // line
     fields[1] = .{
         .name = "1",
+        .type = @TypeOf(src.line),
+        .default_value_ptr = @ptrCast(&src.line),
+        .is_comptime = true,
+        .alignment = @alignOf(@TypeOf(src.line)),
+    };
+    fields[2] = .{
+        .name = "2",
         .type = u32,
         .default_value_ptr = null,
         .is_comptime = false,
         .alignment = @alignOf(u32),
     };
-    for (type_fields, 2..) |f, i| {
+    for (type_fields, 3..) |f, i| {
         var ff = f;
         ff.name = std.fmt.comptimePrint("{}", .{i});
         ff.is_comptime = false;
@@ -225,8 +224,70 @@ fn make_struct(comptime T: type) type {
     return @Type(.{
         .@"struct" = .{
             .layout = .auto,
-            .fields = fields[0..],
-            .decls = &[_]std.builtin.Type.Declaration{},
+            .fields = &fields,
+            .decls = &.{},
+            .is_tuple = true,
+        },
+    });
+}
+
+fn fill_struct(comptime T: type, file: [:0]const u8, line: u32, args: anytype) T {
+    @setEvalBranchQuota(5000);
+
+    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
+    var t: T = undefined;
+
+    @field(t, "0") = file;
+    @field(t, "1") = line;
+    @field(t, "2") = profiler.thread_id orelse 0;
+
+    inline for (args_fields, 0..) |_, i| {
+        const t_index = std.fmt.comptimePrint("{}", .{3 + i});
+        const args_index = std.fmt.comptimePrint("{}", .{i});
+        @field(t, t_index) = @field(args, args_index);
+    }
+    return t;
+}
+
+fn make_struct(comptime T: type) type {
+    const type_fields = comptime @typeInfo(T).@"struct".fields;
+    var fields: [type_fields.len + 3]std.builtin.Type.StructField = undefined;
+    // file
+    fields[0] = .{
+        .name = "0",
+        .type = [:0]const u8,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = @alignOf([:0]const u8),
+    };
+    // line
+    fields[1] = .{
+        .name = "1",
+        .type = u32,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = @alignOf(u32),
+    };
+    fields[2] = .{
+        .name = "2",
+        .type = u32,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = @alignOf(u32),
+    };
+    for (type_fields, 3..) |f, i| {
+        var ff = f;
+        ff.name = std.fmt.comptimePrint("{}", .{i});
+        ff.is_comptime = false;
+        ff.default_value_ptr = null;
+        fields[i] = ff;
+    }
+
+    return @Type(.{
+        .@"struct" = .{
+            .layout = .auto,
+            .fields = &fields,
+            .decls = &.{},
             .is_tuple = true,
         },
     });
