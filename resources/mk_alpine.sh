@@ -40,8 +40,8 @@ then
   rc-update add sysfs boot
 
   echo "[CONTAINER] copying newly configured system to the rootfs image"
-  for d in bin etc lib root sbin usr; do tar c "/$d" | tar x -C /$CONTAINER_TMP_DIR; done
-  for dir in dev proc run sys var; do mkdir /$CONTAINER_TMP_DIR/${dir}; done
+  for d in bin etc home lib lib64 root sbin usr; do tar c "/$d" | tar x -C /$CONTAINER_TMP_DIR; done
+  mkdir -pv /$CONTAINER_TMP_DIR/{dev,proc,sys,run,tmp,var/lib/systemd}
 
   echo "[CONTAINER] enabling sshd"
   mkdir /$CONTAINER_TMP_DIR/run/openrc
