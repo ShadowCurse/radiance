@@ -209,10 +209,18 @@ pub const Guest = struct {
                         self.mem.len,
                     });
                 }
-                @memcpy(
-                    self.mem[section_start..][0..phdr.p_filesz],
-                    file_mem[phdr.p_offset..][0..phdr.p_filesz],
-                );
+                _ = nix.assert(@src(), System, "mmap", .{
+                    @ptrCast(@alignCast(self.mem.ptr + section_start)),
+                    phdr.p_filesz,
+                    nix.PROT.READ | nix.PROT.WRITE,
+                    nix.MAP{
+                        .TYPE = .PRIVATE,
+                        .FIXED = true,
+                        .NORESERVE = true,
+                    },
+                    fd,
+                    phdr.p_offset,
+                });
 
                 kernel_end = @max(kernel_end, section_end);
             } else {
