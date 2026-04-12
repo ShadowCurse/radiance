@@ -49,6 +49,7 @@ pub const Guest = struct {
     const Self = @This();
 
     pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
+        log.assert(@src(), DRAM_START <= addr, "Acessing guest memory bellow DRAM_START: 0x{x}", .{addr});
         const offset = addr - DRAM_START;
         const end_of_type = offset + @sizeOf(T);
         log.assert(
@@ -61,6 +62,7 @@ pub const Guest = struct {
     }
 
     pub fn get_slice(self: *const Self, comptime T: type, len: u64, addr: u64) []volatile T {
+        log.assert(@src(), DRAM_START <= addr, "Acessing guest memory bellow DRAM_START: 0x{x}", .{addr});
         const offset = addr - DRAM_START;
         const end_of_slice = offset + @sizeOf(T) * len;
         log.assert(
@@ -289,7 +291,7 @@ pub const Permanent = struct {
 };
 
 pub fn align_addr(addr: u64, align_to: u64) u64 {
-    return (addr + align_to) & ~(align_to - 1);
+    return (addr + align_to - 1) & ~(align_to - 1);
 }
 
 pub fn is_aligned(addr: u64, align_to: u64) bool {

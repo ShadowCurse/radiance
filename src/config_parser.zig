@@ -260,10 +260,10 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
                         const val_array = std.mem.trim(u8, field_value, "[]");
                         var val_iter = std.mem.splitScalar(u8, val_array, ',');
                         while (val_iter.next()) |value| : (i += 1) {
+                            if (i == array.len) return error.BlockIdOverflow;
                             const v = std.mem.trim(u8, value, " ");
                             const n = try std.fmt.parseInt(u8, v, 16);
                             array[i] = n;
-                            if (i == array.len) return error.BlockIdOverflow;
                         }
                         @field(t, field.name) = array;
                     },

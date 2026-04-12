@@ -207,7 +207,7 @@ pub fn Block(comptime Context: type) type {
                 while ((data_desc.flags & nix.VRING_DESC_F_NEXT) != 0) {
                     log.assert(
                         @src(),
-                        segments_n <= MAX_SEGMENTS,
+                        segments_n < MAX_SEGMENTS,
                         "Got descriptor chain with more data segments than MAX_SEGMENTS({d})",
                         .{@as(u32, MAX_SEGMENTS)},
                     );
