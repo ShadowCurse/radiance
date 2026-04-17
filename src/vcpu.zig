@@ -19,6 +19,18 @@ pub const aarch64 = struct {
             (offset / @sizeOf(u32));
     }
 
+    fn core_regs_ids() [31]u64 {
+        log.comptime_assert(
+            @src(),
+            @typeInfo(@typeInfo(nix.user_pt_regs).@"struct".fields[0].type).array.len == 31,
+            "",
+            .{},
+        );
+        var ids: [31]u64 = undefined;
+        for (0..31) |i| ids[i] = core_reg_id("regs") + i * 2;
+        return ids;
+    }
+
     fn sys_reg_id(op0: u64, op1: u64, crn: u64, crm: u64, op2: u64) u64 {
         return nix.KVM_REG_ARM64 |
             nix.KVM_REG_SIZE_U64 |
@@ -30,10 +42,37 @@ pub const aarch64 = struct {
             ((op2 << nix.KVM_REG_ARM64_SYSREG_OP2_SHIFT) & nix.KVM_REG_ARM64_SYSREG_OP2_MASK);
     }
 
+    fn fp_reg_id(comptime name: []const u8) u64 {
+        const offset = @offsetOf(nix.kvm_regs, "fp_regs") + @offsetOf(nix.user_fpsimd_state, name);
+        return nix.KVM_REG_ARM64 |
+            nix.KVM_REG_SIZE_U128 |
+            nix.KVM_REG_ARM_CORE |
+            (offset / @sizeOf(u32));
+    }
+
+    fn fp_vreg_ids() [32]u64 {
+        log.comptime_assert(
+            @src(),
+            @typeInfo(@typeInfo(nix.user_fpsimd_state).@"struct".fields[0].type).array.len == 32,
+            "",
+            .{},
+        );
+        var ids: [32]u64 = undefined;
+        for (0..32) |i| ids[i] = fp_reg_id("vregs") + i * 4;
+        return ids;
+    }
+
+    pub const REGS = core_regs_ids();
+    pub const VREGS = fp_vreg_ids();
+    pub const SP = core_reg_id("sp");
     pub const PC = core_reg_id("pc");
-    pub const REGS0 = core_reg_id("regs");
     pub const PSTATE = core_reg_id("pstate");
+    pub const FPSR = sys_reg_id(3, 3, 4, 4, 1);
+    pub const FPCR = sys_reg_id(3, 3, 4, 4, 0);
     pub const MPIDR_EL1 = sys_reg_id(3, 0, 0, 0, 5);
+    pub const TTBR0_EL1 = sys_reg_id(3, 0, 2, 0, 0);
+    pub const TTBR1_EL1 = sys_reg_id(3, 0, 2, 0, 1);
+    pub const PTE_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
 
     /// PSR (Processor State Register) bits.
     /// arch/arm64/include/uapi/asm/ptrace.h.
@@ -84,6 +123,14 @@ pub const aarch64 = struct {
         });
         log.debug(@src(), "vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
         return value;
+    }
+
+    pub fn try_get_reg(self: *const Self, comptime T: type, comptime System: type, reg_id: u64) ?T {
+        var value: T = undefined;
+        const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
+        const r = System.ioctl(self.fd, nix.KVM_GET_ONE_REG, @intFromPtr(&kor));
+        log.debug(@src(), "vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
+        if (r == 0) return value else return null;
     }
 
     pub fn get_reg_list(self: *const Self, comptime System: type, reg_list: *RegList) void {
@@ -445,6 +492,10 @@ pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
                     },
                 }
             }
+        },
+        nix.KVM_EXIT_DEBUG => {
+            log.debug(@src(), "[VCPU: {d}] Got KVM_EXIT_DEBUG", .{self.tid});
+            return false;
         },
         nix.KVM_EXIT_HLT => {
             log.info(@src(), "[VCPU: {d}] Got KVM_EXIT_HLT", .{self.tid});

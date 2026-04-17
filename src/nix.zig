@@ -333,6 +333,11 @@ pub const KVM_SET_MP_STATE = _IOW(KVMIO, @as(c_int, 0x99), kvm_mp_state);
 pub const KVM_SET_DEVICE_ATTR = _IOW(KVMIO, 0xe1, kvm_device_attr);
 pub const KVM_GET_DEVICE_ATTR = _IOW(KVMIO, 0xe2, kvm_device_attr);
 
+// GDB
+pub const KVM_SET_GUEST_DEBUG = _IOW(KVMIO, 0x9b, kvm_guest_debug);
+// GDB x64
+pub const KVM_TRANSLATE = _IOWR(KVMIO, 0x85, kvm_translation);
+
 // x64
 pub const KVM_PIT_SPEAKER_DUMMY = @as(c_int, 1);
 pub const KVM_IRQCHIP_PIC_MASTER: u32 = 0;
@@ -387,7 +392,9 @@ pub const KVM_ARM_VCPU_PSCI_0_2 = 2;
 pub const KVM_ARM_VCPU_POWER_OFF = 0;
 
 pub const KVM_REG_ARM_COPROC_SHIFT = 16;
+pub const KVM_REG_SIZE_U32 = 0x0020000000000000;
 pub const KVM_REG_SIZE_U64 = 0x0030000000000000;
+pub const KVM_REG_SIZE_U128 = 0x0040000000000000;
 pub const KVM_REG_ARM_CORE = 0x0010 << KVM_REG_ARM_COPROC_SHIFT;
 pub const KVM_REG_ARM64 = 0x6000000000000000;
 pub const KVM_REG_ARM64_SYSREG = 0x0013 << KVM_REG_ARM_COPROC_SHIFT;
@@ -406,10 +413,18 @@ pub const KVM_REG_SIZE_MASK = 0xf0000000000000;
 
 pub const KVM_EXIT_UNKNOWNW = 0;
 pub const KVM_EXIT_IO = 2;
+pub const KVM_EXIT_DEBUG = 4;
 pub const KVM_EXIT_HLT = 5;
 pub const KVM_EXIT_MMIO = 6;
 pub const KVM_EXIT_SHUTDOWN = 8;
 pub const KVM_EXIT_SYSTEM_EVENT = 24;
+
+// GDB
+pub const KVM_GUESTDBG_ENABLE = 0x00000001;
+pub const KVM_GUESTDBG_SINGLESTEP = 0x00000002;
+pub const KVM_GUESTDBG_USE_SW_BP = 0x00010000;
+pub const KVM_GUESTDBG_USE_HW_BP = 0x00020000;
+
 pub const KVM_SYSTEM_EVENT_SHUTDOWN = 1;
 pub const KVM_SYSTEM_EVENT_RESET = 2;
 pub const KVM_SYSTEM_EVENT_CRASH = 3;
@@ -617,6 +632,31 @@ pub const kvm_device_attr = extern struct {
     group: u32 = 0,
     attr: u64 = 0,
     addr: u64 = 0,
+};
+
+// GDB
+pub const KVM_ARM_MAX_DBG_REGS = 16;
+pub const kvm_guest_debug_arch = if (builtin.cpu.arch == .aarch64) extern struct {
+    dbg_bcr: [KVM_ARM_MAX_DBG_REGS]u64 = .{0} ** KVM_ARM_MAX_DBG_REGS,
+    dbg_bvr: [KVM_ARM_MAX_DBG_REGS]u64 = .{0} ** KVM_ARM_MAX_DBG_REGS,
+    dbg_wcr: [KVM_ARM_MAX_DBG_REGS]u64 = .{0} ** KVM_ARM_MAX_DBG_REGS,
+    dbg_wvr: [KVM_ARM_MAX_DBG_REGS]u64 = .{0} ** KVM_ARM_MAX_DBG_REGS,
+} else if (builtin.cpu.arch == .x86_64) extern struct {
+    debugreg: [8]u64 = .{0} ** 8,
+} else @compileError("Only aarch64 and x64 are supported");
+pub const kvm_guest_debug = extern struct {
+    control: u32 = 0,
+    pad: u32 = 0,
+    arch: kvm_guest_debug_arch = .{},
+};
+// GDB x64
+pub const kvm_translation = extern struct {
+    linear_address: u64 = 0,
+    physical_address: u64 = 0,
+    valid: u8 = 0,
+    writeable: u8 = 0,
+    usermode: u8 = 0,
+    pad: [5]u8 = .{0} ** 5,
 };
 
 pub const kvm_run = extern struct {

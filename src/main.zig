@@ -85,6 +85,7 @@ const ALL_MEASUREMENTS = &.{
 const Args = struct {
     config_path: ?[]const u8 = null,
     snapshot_path: ?[]const u8 = null,
+    gdb_socket_path: ?[]const u8 = null,
 };
 
 pub const ConfigState = extern struct {
@@ -144,14 +145,12 @@ pub fn main() !void {
     if (args.config_path) |config_path| {
         try build_from_config(config_path, &runtime, &state);
     } else if (args.snapshot_path) |snapshot_path| {
-        // _ = snapshot_path;
         try build_from_snapshot(snapshot_path, &runtime, &state);
     } else {
         try args_parser.print_help(Args);
         return;
     }
 
-    // start vcpu threads
     log.debug(@src(), "starting vcpu threads", .{});
     for (state.vcpu_threads, state.vcpus) |*t, *vcpu|
         t.* = try nix.System.spawn_thread(
@@ -160,38 +159,30 @@ pub fn main() !void {
             .{ vcpu, nix.System, &runtime.vcpu_barrier, &runtime.mmio },
         );
 
-    // Disable gdb for now as it is not operational anyway
-    // if (config.gdb) |gdb_config| {
-    //     // start gdb server
-    //     var gdb_server = try gdb.GdbServer.init(
-    //         nix.System,
-    //         gdb_config.socket_path,
-    //         state.vcpus,
-    //         state.vcpu_threads,
-    //         &vcpu_barrier,
-    //         state.memory,
-    //         &mmio,
-    //         &el,
-    //     );
-    //     el.add_event(
-    //         nix.System,
-    //         gdb_server.connection.stream.handle,
-    //         @ptrCast(&gdb.GdbServer.process_request),
-    //         &gdb_server,
-    //     );
-    //
-    //     // start event loop
-    //     el.run(nix.System);
-    // } else {
-
     profiler.print(ALL_MEASUREMENTS);
 
-    // start vcpus
-    runtime.vcpu_barrier.set();
+    if (args.gdb_socket_path) |socket_path| {
+        runtime.gdb_server = try gdb.GdbServer.init(
+            nix.System,
+            socket_path,
+            state.vcpus,
+            state.vcpu_threads,
+            &runtime.vcpu_barrier,
+            state.memory,
+            &runtime.mmio,
+            &runtime.el,
+        );
+        runtime.el.add_event(
+            nix.System,
+            runtime.gdb_server.?.connection.stream.handle,
+            @ptrCast(&gdb.GdbServer.process_request),
+            &runtime.gdb_server.?,
+        );
+    } else {
+        runtime.vcpu_barrier.set();
+    }
 
-    // start event loop
     runtime.el.run(nix.System);
-    // }
 
     log.info(@src(), "Shutting down", .{});
     if (runtime.terminal_state) |ts| restore_terminal(nix.System, &ts);
@@ -408,7 +399,7 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
         );
 
         Vcpu.aarch64.set_reg(&state.vcpus[0], nix.System, u64, Vcpu.aarch64.PC, load_result.start);
-        Vcpu.aarch64.set_reg(&state.vcpus[0], nix.System, u64, Vcpu.aarch64.REGS0, @as(u64, fdt_addr));
+        Vcpu.aarch64.set_reg(&state.vcpus[0], nix.System, u64, Vcpu.aarch64.REGS[0], @as(u64, fdt_addr));
         for (state.vcpus) |*vcpu|
             Vcpu.aarch64.set_reg(
                 vcpu,
@@ -1014,6 +1005,9 @@ pub const Runtime = struct {
     io_uring: IoUring,
     vcpu_barrier: std.Thread.ResetEvent,
     api: Api,
+    // TOOD: GdbServer is big so maybe it should not be in the `Runtime`,
+    // but in a separate allocation
+    gdb_server: ?gdb.GdbServer,
     terminal_state: ?nix.termios,
 };
 
