@@ -31,6 +31,7 @@ Experimental KVM based VMM platform.
 | **Features** | | |
 | Snapshot/Restore | Yes | No |
 | API (pause/resume) | Yes | Yes |
+| GDB | Yes | Yes |
 
 > [!NOTE]
 > aarch64: Only systems with `GICv2`/`m` like Raspberry Pi 4/5 are supported.
@@ -44,6 +45,8 @@ zig build -Doptimize=ReleaseFast
 ```bash
 Usage:
         --config-path
+        --snapshot-path
+        --gdb-socket-path
 ```
 
 #### Example:
@@ -137,4 +140,17 @@ Kcov:
 ```bash
 zig test src/main.zig -lc --test-cmd kcov --test-cmd "--exclude-pattern=/nix" --test-cmd kcov-output --test-cmd-bin
 
+```
+
+### GDB
+
+Adding `--gdb-socket-path` will make the VM to wait for GDB connection on a socket.
+This even works with snapshot restored VMs.
+```bash
+radiance --config-path ./config.toml --gdb-socket-path ./test.socket
+```
+
+Example GDB connection command
+```bash
+gdb -ex "file PATH_TO_KERNEL" -ex "target remote ./test.socket"
 ```
