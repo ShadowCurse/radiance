@@ -115,17 +115,6 @@ pub const PmemConfigs = struct {
     }
 };
 
-pub const GdbConfig = struct {
-    socket_path: []const u8 = "",
-
-    const Self = @This();
-
-    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
-        const new_self = try parse_type(Self, line_iter);
-        self.* = new_self;
-    }
-};
-
 pub const Config = struct {
     machine: MachineConfig = .{},
     api: ApiConfig = .{},
@@ -134,7 +123,6 @@ pub const Config = struct {
     block: BlockConfigs = .{},
     network: NetConfigs = .{},
     pmem: PmemConfigs = .{},
-    gdb: ?GdbConfig = null,
 };
 
 pub const ParseResult = struct {
@@ -452,9 +440,6 @@ test "dump_and_parse" {
         \\mac = [00, 02, DE, AD, BE, EF]
         \\vhost = false
         \\
-        \\[gdb]
-        \\socket_path = "gdb_sock"
-        \\
     ;
 
     var drives: BlockConfigs = .{};
@@ -505,9 +490,6 @@ test "dump_and_parse" {
         },
         .block = drives,
         .network = nets,
-        .gdb = .{
-            .socket_path = "gdb_sock",
-        },
     };
 
     const System = nix.System;
