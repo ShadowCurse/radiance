@@ -14,161 +14,285 @@ fn type_decl_names(comptime T: type) []const [:0]const u8 {
     return result;
 }
 
+pub const SystemError = error{
+    EPERM, // Operation not permitted
+    ENOENT, // No such file or directory
+    ESRCH, // No such process
+    EINTR, // Interrupted system call
+    EIO, // I/O error
+    ENXIO, // No such device or address
+    E2BIG, // Argument list too long
+    ENOEXEC, // Exec format error
+    EBADF, // Bad file number
+    ECHILD, // No child processes
+    EAGAIN, // Try again
+    ENOMEM, // Out of memory
+    EACCES, // Permission denied
+    EFAULT, // Bad address
+    ENOTBLK, // Block device required
+    EBUSY, // Device or resource busy
+    EEXIST, // File exists
+    EXDEV, // Cross-device link
+    ENODEV, // No such device
+    ENOTDIR, // Not a directory
+    EISDIR, // Is a directory
+    EINVAL, // Invalid argument
+    ENFILE, // File table overflow
+    EMFILE, // Too many open files
+    ENOTTY, // Not a typewriter
+    ETXTBSY, // Text file busy
+    EFBIG, // File too large
+    ENOSPC, // No space left on device
+    ESPIPE, // Illegal seek
+    EROFS, // Read-only file system
+    EMLINK, // Too many links
+    EPIPE, // Broken pipe
+    EDOM, // Math argument out of domain of func
+    ERANGE, // Math result not representable
+};
+
+pub fn syscall_ret_to_system_error(r: usize) SystemError!void {
+    const ret: i64 = @bitCast(r);
+    return switch (ret) {
+        else => return,
+        -1 => SystemError.EPERM,
+        -2 => SystemError.ENOENT,
+        -3 => SystemError.ESRCH,
+        -4 => SystemError.EINTR,
+        -5 => SystemError.EIO,
+        -6 => SystemError.ENXIO,
+        -7 => SystemError.E2BIG,
+        -8 => SystemError.ENOEXEC,
+        -9 => SystemError.EBADF,
+        -10 => SystemError.ECHILD,
+        -11 => SystemError.EAGAIN,
+        -12 => SystemError.ENOMEM,
+        -13 => SystemError.EACCES,
+        -14 => SystemError.EFAULT,
+        -15 => SystemError.ENOTBLK,
+        -16 => SystemError.EBUSY,
+        -17 => SystemError.EEXIST,
+        -18 => SystemError.EXDEV,
+        -19 => SystemError.ENODEV,
+        -20 => SystemError.ENOTDIR,
+        -21 => SystemError.EISDIR,
+        -22 => SystemError.EINVAL,
+        -23 => SystemError.ENFILE,
+        -24 => SystemError.EMFILE,
+        -25 => SystemError.ENOTTY,
+        -26 => SystemError.ETXTBSY,
+        -27 => SystemError.EFBIG,
+        -28 => SystemError.ENOSPC,
+        -29 => SystemError.ESPIPE,
+        -30 => SystemError.EROFS,
+        -31 => SystemError.EMLINK,
+        -32 => SystemError.EPIPE,
+        -33 => SystemError.EDOM,
+        -34 => SystemError.ERANGE,
+    };
+}
+
 pub const System = struct {
     pub fn epoll_ctl(
         epfd: i32,
         op: u32,
         fd: i32,
         event: ?*epoll_event,
-    ) EpollCtlError!void {
+    ) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.epoll_ctl(epfd, op, fd, event);
+        const r = std.os.linux.epoll_ctl(epfd, op, fd, event);
+        return syscall_ret_to_system_error(r);
     }
-    pub fn epoll_wait(epfd: i32, events: []epoll_event, timeout: i32) usize {
+    pub fn epoll_wait(epfd: i32, events: []epoll_event, timeout: i32) SystemError!usize {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.epoll_wait(epfd, events, timeout);
+        const r = std.os.linux.epoll_wait(epfd, events.ptr, @truncate(events.len), timeout);
+        try syscall_ret_to_system_error(r);
+        return r;
     }
-    pub fn epoll_create1(flags: u32) EpollCreateError!i32 {
+    pub fn epoll_create1(flags: u32) SystemError!fd_t {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.epoll_create1(flags);
+        const r = std.os.linux.epoll_create1(flags);
+        try syscall_ret_to_system_error(r);
+        return @truncate(@as(i64, @bitCast(r)));
     }
-    pub fn memfd_create(name: []const u8, flags: u32) MemFdCreateError!fd_t {
+    pub fn memfd_create(name: [:0]const u8, flags: u32) SystemError!fd_t {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.memfd_create(name, flags);
+        const r = std.os.linux.memfd_create(name, flags);
+        try syscall_ret_to_system_error(r);
+        return @truncate(@as(i64, @bitCast(r)));
     }
-    pub fn ftruncate(fd: fd_t, length: u64) TruncateError!void {
+    pub fn ftruncate(fd: fd_t, length: u64) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.ftruncate(fd, length);
+        const r = std.os.linux.ftruncate(fd, @bitCast(length));
+        return syscall_ret_to_system_error(r);
     }
-    pub fn eventfd(initval: u32, flags: u32) EventFdError!i32 {
+    pub fn eventfd(initval: u32, flags: u32) SystemError!fd_t {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.eventfd(initval, flags);
+        const r = std.os.linux.eventfd(initval, flags);
+        try syscall_ret_to_system_error(r);
+        return @truncate(@as(i64, @bitCast(r)));
     }
     pub fn getpid() pid_t {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
         return std.os.linux.getpid();
     }
-    pub fn tkill(tid: u32, sig: i32) usize {
+    pub fn tkill(tid: u32, sig: SIG) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.tkill(@bitCast(tid), sig);
+        const r = std.os.linux.tkill(@bitCast(tid), sig);
+        return syscall_ret_to_system_error(r);
     }
-    pub fn tcgetattr(fd: fd_t, termios_p: *termios) usize {
+    pub fn tcgetattr(fd: fd_t, termios_p: *termios) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.tcgetattr(fd, termios_p);
+        const r = std.os.linux.tcgetattr(fd, termios_p);
+        return syscall_ret_to_system_error(r);
     }
     pub fn tcsetattr(
         fd: fd_t,
         optional_action: TCSA,
         termios_p: *const termios,
-    ) usize {
+    ) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.tcsetattr(fd, optional_action, termios_p);
+        const r = std.os.linux.tcsetattr(fd, optional_action, termios_p);
+        return syscall_ret_to_system_error(r);
     }
     pub fn mmap(
         ptr: ?[*]align(memory.HOST_PAGE_SIZE) u8,
         length: usize,
-        prot: u32,
+        prot: PROT,
         flags: MAP,
         fd: fd_t,
         offset: u64,
-    ) MMapError![]align(memory.HOST_PAGE_SIZE) u8 {
+    ) SystemError![]align(memory.HOST_PAGE_SIZE) u8 {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.mmap(ptr, length, prot, flags, fd, offset);
+        const r = std.os.linux.mmap(ptr, length, prot, flags, fd, @as(i64, @bitCast(offset)));
+        try syscall_ret_to_system_error(r);
+        var slice: []align(memory.HOST_PAGE_SIZE) u8 = undefined;
+        slice.ptr = @ptrFromInt(r);
+        slice.len = length;
+        return slice;
     }
     pub fn munmap(mem: []align(memory.HOST_PAGE_SIZE) const u8) void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.munmap(mem);
+        _ = std.os.linux.munmap(mem.ptr, mem.len);
     }
-    pub fn sigaction(sig: u8, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) usize {
+    pub fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.sigaction(sig, act, oact);
+        const r = std.os.linux.sigaction(sig, act, oact);
+        return syscall_ret_to_system_error(r);
     }
-    pub fn open(
-        file_path: []const u8,
-        flags: std.posix.O,
-        perm: mode_t,
-    ) OpenError!fd_t {
+    pub fn open(file_path: []const u8, flags: std.os.linux.O, perm: mode_t) SystemError!fd_t {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.open(file_path, flags, perm);
+
+        var tmp_path: [std.os.linux.NAME_MAX:0]u8 = undefined;
+        // TODO, check len at config time
+        log.assert(
+            @src(),
+            file_path.len - 1 <= tmp_path.len,
+            "Provided path length: {d}, max: {d}",
+            .{ file_path.len, tmp_path.len - 1 },
+        );
+        @memcpy(tmp_path[0..][0..file_path.len], file_path);
+        tmp_path[file_path.len] = 0;
+
+        const r = std.os.linux.open(&tmp_path, flags, perm);
+        try syscall_ret_to_system_error(r);
+        return @truncate(@as(i64, @bitCast(r)));
     }
     pub fn close(fd: fd_t) void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.close(fd);
+        _ = std.os.linux.close(fd);
     }
-    pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
+    pub fn read(fd: fd_t, buf: []u8) SystemError!usize {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.read(fd, buf);
+        const r = std.os.linux.read(fd, buf.ptr, buf.len);
+        try syscall_ret_to_system_error(r);
+        return r;
     }
-    pub fn readv(fd: fd_t, iov: []const iovec) ReadError!usize {
+    pub fn readv(fd: fd_t, iov: []const iovec) SystemError!usize {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.readv(fd, iov);
+        const r = std.os.linux.readv(fd, iov.ptr, iov.len);
+        try syscall_ret_to_system_error(r);
+        return r;
     }
-    pub fn write(fd: fd_t, bytes: []const u8) WriteError!usize {
+    pub fn write(fd: fd_t, buf: []const u8) SystemError!usize {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.write(fd, bytes);
+        const r = std.os.linux.write(fd, buf.ptr, buf.len);
+        try syscall_ret_to_system_error(r);
+        return r;
     }
-    pub fn writev(fd: fd_t, iov: []const iovec_const) WriteError!usize {
+    pub fn writev(fd: fd_t, iov: []const iovec_const) SystemError!usize {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.writev(fd, iov);
+        const r = std.os.linux.writev(fd, iov.ptr, iov.len);
+        try syscall_ret_to_system_error(r);
+        return r;
     }
-    pub fn accept(
+    pub fn accept4(
         sock: socket_t,
         addr: ?*sockaddr,
         addr_size: ?*socklen_t,
         flags: u32,
-    ) AcceptError!socket_t {
+    ) SystemError!fd_t {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.accept(sock, addr, addr_size, flags);
+        const r = std.os.linux.accept4(sock, addr, addr_size, flags);
+        try syscall_ret_to_system_error(r);
+        return @truncate(@as(i64, @bitCast(r)));
     }
-    pub fn ioctl(fd: fd_t, request: u32, arg: usize) usize {
+    pub fn ioctl(fd: fd_t, request: u32, arg: usize) SystemError!usize {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.ioctl(fd, request, arg);
+        const r = std.os.linux.ioctl(fd, request, arg);
+        try syscall_ret_to_system_error(r);
+        return r;
     }
-    pub fn msync(mem: []align(memory.HOST_PAGE_SIZE) u8, flags: i32) MSyncError!void {
+    pub fn msync(mem: []align(memory.HOST_PAGE_SIZE) u8, flags: i32) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.msync(mem, flags);
+        const r = std.os.linux.msync(mem.ptr, mem.len, flags);
+        return syscall_ret_to_system_error(r);
     }
-    pub fn fsync(fd: fd_t) SyncError!void {
+    pub fn fsync(fd: fd_t) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.fsync(fd);
+        const r = std.os.linux.fsync(fd);
+        return syscall_ret_to_system_error(r);
     }
-    pub fn io_uring_setup(entries: u32, p: *io_uring_params) usize {
+    pub fn io_uring_setup(entries: u32, p: *io_uring_params) SystemError!fd_t {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.io_uring_setup(entries, p);
+        const r = std.os.linux.io_uring_setup(entries, p);
+        try syscall_ret_to_system_error(r);
+        return @truncate(@as(i64, @bitCast(r)));
     }
     pub fn io_uring_register(
         fd: i32,
         opcode: std.os.linux.IORING_REGISTER,
         arg: ?*const anyopaque,
         nr_args: u32,
-    ) usize {
+    ) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.io_uring_register(fd, opcode, arg, nr_args);
+        const r = std.os.linux.io_uring_register(fd, opcode, arg, nr_args);
+        return syscall_ret_to_system_error(r);
     }
     pub fn io_uring_enter(
         fd: i32,
@@ -176,58 +300,52 @@ pub const System = struct {
         min_complete: u32,
         flags: u32,
         sig: ?*sigset_t,
-    ) usize {
+    ) SystemError!usize {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.io_uring_enter(fd, to_submit, min_complete, flags, sig);
+        const r = std.os.linux.io_uring_enter(fd, to_submit, min_complete, flags, sig);
+        try syscall_ret_to_system_error(r);
+        return r;
     }
-
-    pub fn socket(domain: u32, socket_type: u32, protocol: u32) usize {
+    pub fn socket(domain: u32, socket_type: u32, protocol: u32) SystemError!fd_t {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.socket(domain, socket_type, protocol);
+        const r = std.os.linux.socket(domain, socket_type, protocol);
+        try syscall_ret_to_system_error(r);
+        return @truncate(@as(i64, @bitCast(r)));
     }
-    pub fn bind(fd: i32, addr: *const sockaddr, len: socklen_t) usize {
+    pub fn bind(fd: i32, addr: *const sockaddr, len: socklen_t) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.bind(fd, addr, len);
+        const r = std.os.linux.bind(fd, addr, len);
+        return syscall_ret_to_system_error(r);
     }
-    pub fn listen(fd: i32, backlog: u32) usize {
+    pub fn listen(fd: i32, backlog: u32) SystemError!void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.os.linux.listen(fd, backlog);
+        const r = std.os.linux.listen(fd, backlog);
+        return syscall_ret_to_system_error(r);
     }
-
     pub fn gettimeofday(tv: ?*timeval, tz: ?*timezone) void {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
-        return std.posix.gettimeofday(tv, tz);
+        _ = std.os.linux.gettimeofday(tv, tz);
     }
-
-    pub fn statx(fd: fd_t) !Statx {
+    pub fn statx(fd: fd_t) SystemError!Statx {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
 
         var stx = std.mem.zeroes(Statx);
-        const rcx = std.os.linux.statx(
+        const r = std.os.linux.statx(
             fd,
             "\x00",
             std.os.linux.AT.EMPTY_PATH,
-            std.os.linux.STATX_TYPE |
-                std.os.linux.STATX_MODE |
-                std.os.linux.STATX_ATIME |
-                std.os.linux.STATX_MTIME |
-                std.os.linux.STATX_BTIME,
+            .{ .TYPE = true, .MODE = true, .ATIME = true, .MTIME = true, .BTIME = true },
             &stx,
         );
-
-        switch (errno(rcx)) {
-            .SUCCESS => {},
-            else => |e| return std.posix.unexpectedErrno(e),
-        }
+        try syscall_ret_to_system_error(r);
         return stx;
     }
-
     pub fn spawn_thread(
         config: std.Thread.SpawnConfig,
         comptime function: anytype,
@@ -237,7 +355,48 @@ pub const System = struct {
         defer MEASUREMENTS.end(prof_point);
         return std.Thread.spawn(config, function, args);
     }
+
+    pub fn futex2_wait(uaddr: *const anyopaque, val: usize) SystemError!void {
+        const r = std.os.linux.futex2_wait(
+            uaddr,
+            val,
+            0xffffffff,
+            .{ .size = .U32, .private = true },
+            null,
+            .MONOTONIC,
+        );
+        return syscall_ret_to_system_error(r);
+    }
+
+    pub fn futex2_wake(uaddr: *const anyopaque, nr_wake: i32) SystemError!void {
+        const r = std.os.linux.futex2_wake(
+            uaddr,
+            0xffffffff,
+            nr_wake,
+            .{ .size = .U32, .private = true },
+        );
+        log.warn(@src(), "wake: {d}", .{r});
+        return syscall_ret_to_system_error(r);
+    }
 };
+
+pub fn sleep(ns: i64) void {
+    var timespec: std.os.linux.timespec = .{ .sec = 0, .nsec = ns };
+    _ = std.os.linux.clock_nanosleep(.MONOTONIC, .{ .ABSTIME = false }, &timespec, null);
+}
+
+pub fn configure_unix_socket(socket_path: []const u8) std.os.linux.sockaddr.un {
+    var result = std.os.linux.sockaddr.un{ .family = std.os.linux.AF.UNIX, .path = undefined };
+    log.assert(
+        @src(),
+        socket_path.len + 1 <= result.path.len,
+        "Api socket name is too long: {s}",
+        .{socket_path},
+    );
+    @memset(&result.path, 0);
+    @memcpy(result.path[0..socket_path.len], socket_path);
+    return result;
+}
 
 pub const STDIN = std.os.linux.STDIN_FILENO;
 pub const STDOUT = std.os.linux.STDOUT_FILENO;
@@ -1068,70 +1227,38 @@ pub const setup_data = extern struct {
 pub const EFD_NONBLOCK = 0o4000;
 pub const SIGUSR1 = 10;
 
-pub const ReadError = std.posix.ReadError;
-pub const MMapError = std.posix.MMapError;
-pub const OpenError = std.posix.OpenError;
-pub const SyncError = std.posix.SyncError;
-pub const WriteError = std.posix.WriteError;
-pub const MSyncError = std.posix.MSyncError;
-pub const AcceptError = std.posix.AcceptError;
-pub const EventFdError = std.posix.EventFdError;
-pub const EpollCtlError = std.posix.EpollCtlError;
-pub const TruncateError = std.posix.TruncateError;
-pub const EpollCreateError = std.posix.EpollCreateError;
-pub const MemFdCreateError = std.posix.MemFdCreateError;
-
-pub const fd_t = std.posix.fd_t;
-pub const mode_t = std.posix.mode_t;
+pub const fd_t = std.os.linux.fd_t;
+pub const mode_t = std.os.linux.mode_t;
 pub const pid_t = std.os.linux.pid_t;
-pub const socket_t = std.posix.socket_t;
+pub const socket_t = std.os.linux.socket_t;
 
 pub const PROT = std.os.linux.PROT;
 pub const MAP = std.os.linux.MAP;
 pub const MAP_TYPE = std.os.linux.MAP_TYPE;
+pub const SIG = std.os.linux.SIG;
 pub const Sigaction = std.os.linux.Sigaction;
 pub const sigset_t = std.os.linux.sigset_t;
 pub const TCSA = std.os.linux.TCSA;
-pub const termios = std.posix.termios;
-pub const sockaddr = std.posix.sockaddr;
-pub const socklen_t = std.posix.socklen_t;
-pub const STDIN_FILENO = std.posix.STDIN_FILENO;
-pub const STDOUT_FILENO = std.posix.STDOUT_FILENO;
-pub const SOCK = std.posix.SOCK;
+pub const termios = std.os.linux.termios;
+pub const sockaddr = std.os.linux.sockaddr;
+pub const socklen_t = std.os.linux.socklen_t;
+pub const STDIN_FILENO = std.os.linux.STDIN_FILENO;
+pub const STDOUT_FILENO = std.os.linux.STDOUT_FILENO;
+pub const SOCK = std.os.linux.SOCK;
 pub const iovec = std.posix.iovec;
 pub const iovec_const = std.posix.iovec_const;
-pub const timeval = std.posix.timeval;
-pub const timezone = std.posix.timezone;
+pub const timeval = std.os.linux.timeval;
+pub const timezone = std.os.linux.timezone;
 
-pub const MSF = std.posix.MSF;
+pub const MSF = std.os.linux.MSF;
 
 pub const Statx = std.os.linux.Statx;
-pub const FD_CLOEXEC = std.posix.FD_CLOEXEC;
-pub const memfd_create = std.posix.memfd_create;
-pub const ftruncate = std.posix.ftruncate;
+pub const FD_CLOEXEC = std.os.linux.FD_CLOEXEC;
 
-fn clean_return_type(
-    comptime src: std.builtin.SourceLocation,
-    comptime function: anytype,
-) type {
+fn clean_return_type(comptime function: anytype) type {
     const fn_type = @typeInfo(function);
-    if (fn_type.@"fn".return_type) |t| {
-        const return_type = @typeInfo(t);
-        switch (t) {
-            usize => return i32,
-            else => switch (return_type) {
-                .error_union => return return_type.error_union.payload,
-                else => {},
-            },
-        }
-    }
-    comptime log.comptime_err(
-        src,
-        "Invalid type: {s} Note: nix.assert can only be called with functions returning usize or error union",
-        .{
-            @typeName(fn_type.@"fn".return_type.?),
-        },
-    );
+    const rtti = @typeInfo(fn_type.@"fn".return_type.?);
+    return rtti.error_union.payload;
 }
 
 pub fn args_fmt(comptime args_type: type) []const u8 {
@@ -1150,37 +1277,42 @@ pub fn args_fmt(comptime args_type: type) []const u8 {
 
 pub fn make_struct(comptime T: type, comptime Err: type) type {
     const type_fields = comptime @typeInfo(T).@"struct".fields;
-    var fields: [type_fields.len + 2]std.builtin.Type.StructField = undefined;
-    fields[0] = .{
-        .name = "0",
-        .type = []const u8,
+    // var fields: [type_fields.len + 2]std.builtin.Type.StructField = undefined;
+    var field_names: [type_fields.len + 2][]const u8 = undefined;
+    var field_types: [type_fields.len + 2]type = undefined;
+    var field_attrs: [type_fields.len + 2]std.builtin.Type.StructField.Attributes = undefined;
+
+    field_names[0] = "0";
+    field_types[0] = []const u8;
+    field_attrs[0] = .{
+        .@"comptime" = false,
+        .@"align" = @alignOf([]const u8),
         .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = @alignOf([]const u8),
     };
-    fields[1] = .{
-        .name = "1",
-        .type = Err,
+    field_names[1] = "1";
+    field_types[1] = Err;
+    field_attrs[1] = .{
+        .@"comptime" = false,
+        .@"align" = @alignOf(Err),
         .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = @alignOf(Err),
     };
     for (type_fields, 2..) |f, i| {
-        var ff = f;
-        ff.name = std.fmt.comptimePrint("{d}", .{i});
-        ff.is_comptime = false;
-        ff.default_value_ptr = null;
-        fields[i] = ff;
+        field_names[i] = std.fmt.comptimePrint("{d}", .{i});
+        field_types[i] = f.type;
+        field_attrs[i] = .{
+            .@"comptime" = f.is_comptime,
+            .@"align" = f.alignment,
+            .default_value_ptr = f.default_value_ptr,
+        };
     }
 
-    return @Type(.{
-        .@"struct" = .{
-            .layout = .auto,
-            .fields = fields[0..],
-            .decls = &[_]std.builtin.Type.Declaration{},
-            .is_tuple = true,
-        },
-    });
+    return @Struct(
+        .auto,
+        null,
+        &field_names,
+        &field_types,
+        &field_attrs,
+    );
 }
 
 pub fn fill_struct(comptime T: type, fn_name: []const u8, e: anytype, args: anytype) T {
@@ -1190,9 +1322,6 @@ pub fn fill_struct(comptime T: type, fn_name: []const u8, e: anytype, args: anyt
     @field(t, "0") = fn_name;
     @field(t, "1") = e;
 
-    // need to inline so the loop would be unrolled
-    // because these fields are assigned at runtime
-    // but we need to generate indexes at comptime
     inline for (args_fields, 0..) |_, i| {
         const t_index = std.fmt.comptimePrint("{d}", .{2 + i});
         const args_index = std.fmt.comptimePrint("{d}", .{i});
@@ -1201,19 +1330,18 @@ pub fn fill_struct(comptime T: type, fn_name: []const u8, e: anytype, args: anyt
     return t;
 }
 
-const errno = std.posix.errno;
 pub inline fn assert(
     comptime src: std.builtin.SourceLocation,
     comptime S: type,
     comptime function_name: []const u8,
     args: std.meta.ArgsTuple(@TypeOf(@field(S, function_name))),
-) clean_return_type(src, @TypeOf(@field(S, function_name))) {
+) clean_return_type(@TypeOf(@field(S, function_name))) {
     // TODO try to optimize compile time execution to set
     // quota back to default.
     @setEvalBranchQuota(20000);
     const f = @field(S, function_name);
     const fn_type = @typeInfo(@TypeOf(f));
-    const t = if (fn_type.@"fn".return_type) |tt| tt else void;
+    const t = fn_type.@"fn".return_type orelse void;
     const return_type = @typeInfo(t);
     switch (return_type) {
         .error_union => {
@@ -1228,19 +1356,6 @@ pub inline fn assert(
                 );
                 unreachable;
             };
-        },
-        .int => {
-            const r = @call(.always_inline, f, args);
-            const err = errno(r);
-            const T = make_struct(@TypeOf(args), @TypeOf(err));
-            const ttt = fill_struct(T, function_name, err, args);
-            log.assert(
-                src,
-                err == .SUCCESS,
-                "'{s}' failed with error: {t}\nargs:" ++ args_fmt(@TypeOf(args)),
-                ttt,
-            );
-            return @bitCast(@as(u32, @truncate(r)));
         },
         else => comptime log.comptime_err(
             src,

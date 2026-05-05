@@ -1,4 +1,4 @@
-const std = @import("std");
+const nix = @import("nix.zig");
 const builtin = @import("builtin");
 
 pub const load_store_barrier = if (builtin.cpu.arch == .aarch64)
@@ -103,9 +103,8 @@ pub const x64 = struct {
 
     pub inline fn tsc_freq() u64 {
         const s = rdtc();
-        std.Thread.sleep(1000_000);
+        nix.sleep(1000_000);
         const e = rdtc();
         return (e - s) * 1000;
     }
 };
-

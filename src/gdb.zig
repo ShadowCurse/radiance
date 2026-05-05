@@ -174,8 +174,7 @@ fn translate_gva(vcpu: *Vcpu, memory: *const Memory.Guest, gva: u64) ?u64 {
 
 fn translate_gva_x64(vcpu: *Vcpu, gva: u64) ?u64 {
     var translation: nix.kvm_translation = .{ .linear_address = gva };
-    const ret = nix.System.ioctl(vcpu.fd, nix.KVM_TRANSLATE, @intFromPtr(&translation));
-    if (ret < 0) return null;
+    _ = nix.System.ioctl(vcpu.fd, nix.KVM_TRANSLATE, @intFromPtr(&translation)) catch return null;
     if (translation.valid == 0) return null;
 
     // Combine page-aligned GPA with page offset from GVA
@@ -1265,9 +1264,8 @@ const Payload = union(PayloadEnum) {
 };
 
 pub const GdbServer = struct {
-    address: std.net.Address,
-    server: std.net.Server,
-    connection: std.net.Server.Connection,
+    socket_fd: nix.fd_t,
+    connection_fd: nix.fd_t,
 
     read_buffer: [2048]u8 = undefined,
     write_buffer: [2048]u8 = undefined,
@@ -1275,7 +1273,7 @@ pub const GdbServer = struct {
 
     vcpus: []Vcpu,
     vcpu_threads: []std.Thread,
-    vcpus_barier: *std.Thread.ResetEvent,
+    vcpus_barier: *Vcpu.Barrier,
     memory: Memory.Guest,
     mmio: *Mmio,
     event_loop: *EventLoop,
@@ -1326,35 +1324,45 @@ pub const GdbServer = struct {
         socket_path: []const u8,
         vcpus: []Vcpu,
         vcpu_threads: []std.Thread,
-        vcpus_barier: *std.Thread.ResetEvent,
+        vcpus_barier: *Vcpu.Barrier,
         memory: Memory.Guest,
         mmio: *Mmio,
         event_loop: *EventLoop,
     ) !Self {
         log.debug(@src(), "Initializing gdb connection ...", .{});
-        const address = try std.net.Address.initUnix(socket_path);
-        var server = try address.listen(.{});
-        errdefer server.deinit();
-
-        var accepted_addr: std.net.Address = undefined;
-        var addr_len: nix.socklen_t = @sizeOf(std.net.Address);
-        const fd = try System.accept(
-            server.stream.handle,
-            &accepted_addr.any,
-            &addr_len,
-            nix.SOCK.CLOEXEC | nix.SOCK.NONBLOCK,
+        const sock_addr = nix.configure_unix_socket(socket_path);
+        const socket_fd = nix.assert(
+            @src(),
+            System,
+            "socket",
+            .{ sock_addr.family, nix.SOCK.STREAM | nix.SOCK.CLOEXEC, 0 },
         );
-        const connection = std.net.Server.Connection{
-            .stream = .{ .handle = fd },
-            .address = accepted_addr,
-        };
+        _ = nix.assert(
+            @src(),
+            System,
+            "bind",
+            .{ socket_fd, @ptrCast(&sock_addr), @sizeOf(std.os.linux.sockaddr.un) },
+        );
+        _ = nix.assert(@src(), System, "listen", .{ socket_fd, 128 });
+        var accepted_addr: std.os.linux.sockaddr.un = undefined;
+        var addr_len: nix.socklen_t = @sizeOf(std.os.linux.sockaddr.un);
+        const connection_fd = nix.assert(
+            @src(),
+            System,
+            "accept4",
+            .{
+                socket_fd,
+                @ptrCast(&accepted_addr),
+                &addr_len,
+                nix.SOCK.CLOEXEC | nix.SOCK.NONBLOCK,
+            },
+        );
+
         log.debug(@src(), "gdb connection established", .{});
 
         return .{
-            .address = address,
-            .server = server,
-            .connection = connection,
-
+            .socket_fd = socket_fd,
+            .connection_fd = connection_fd,
             .vcpus = vcpus,
             .vcpu_threads = vcpu_threads,
             .vcpus_barier = vcpus_barier,
@@ -1368,11 +1376,8 @@ pub const GdbServer = struct {
         while (true) {
             log.debug(@src(), "reading payload", .{});
 
-            const len = self.connection.stream.read(&self.read_buffer) catch |err| {
-                if (err == std.posix.ReadError.WouldBlock) {
-                    return;
-                }
-                return err;
+            const len = nix.System.read(self.connection_fd, &self.read_buffer) catch |err| {
+                if (err == nix.SystemError.EAGAIN) return else return err;
             };
             if (len == 0) {
                 self.event_loop.exit = true;
@@ -1395,19 +1400,18 @@ pub const GdbServer = struct {
                             //     "sending Retransmission: {s}",
                             //     .{self.last_response},
                             // );
-                            // _ = try self.connection.stream.write(self.last_response);
                         },
                         .Interrupt => |*inner_payload| {
                             self.last_response =
                                 try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending Interrupt ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .qSupported => |*inner_payload| {
                             self.last_response =
                                 try inner_payload.response(&self.write_buffer);
                             log.debug(@src(), "sending qSupported ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .qfThreadInfo => |*inner_payload| {
                             self.last_response =
@@ -1417,7 +1421,7 @@ pub const GdbServer = struct {
                                 "sending qfThreadInfo ack: {s}",
                                 .{self.last_response},
                             );
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .qsThreadInfo => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer);
@@ -1426,90 +1430,90 @@ pub const GdbServer = struct {
                                 "sending qsThreadInfo ack: {s}",
                                 .{self.last_response},
                             );
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .qAttached => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer);
                             log.debug(@src(), "sending qAttached ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .qC => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending qC ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .vCont => |*inner_payload| {
                             self.last_response =
                                 try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending vCont ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .H => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending H ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .G => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending G ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .g => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending g ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .T => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending T ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .P => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending P ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .p => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending p ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .M => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending M ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .m => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending m ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .Z0 => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending Z0 ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .z0 => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending z0 ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .c => |*inner_payload| {
                             self.last_response =
                                 try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending c ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .s => |*inner_payload| {
                             self.last_response =
                                 try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending s ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .D => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
                             log.debug(@src(), "sending D ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .QuestionMark => |*inner_payload| {
                             self.last_response = try inner_payload.response(&self.write_buffer, self);
@@ -1518,12 +1522,12 @@ pub const GdbServer = struct {
                                 "sending QuestionMark ack: {s}",
                                 .{self.last_response},
                             );
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                         .Unknown => |*inner_payload| {
                             self.last_response = try inner_payload.response();
                             log.debug(@src(), "sending Unknown ack: {s}", .{self.last_response});
-                            _ = try self.connection.stream.write(self.last_response);
+                            _ = try nix.System.write(self.connection_fd, self.last_response);
                         },
                     }
                 } else {
@@ -1533,7 +1537,7 @@ pub const GdbServer = struct {
             } else |err| {
                 log.err(@src(), "payload err: {any}", .{err});
                 log.debug(@src(), "sending retransmit", .{});
-                _ = try self.connection.stream.write("-");
+                _ = try nix.System.write(self.connection_fd, "-");
             }
         }
     }

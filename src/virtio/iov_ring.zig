@@ -19,33 +19,24 @@ pub fn init(comptime System: type, memory: []align(HOST_PAGE_SIZE) u8) Self {
     const mem = nix.assert(@src(), System, "mmap", .{
         null,
         HOST_PAGE_SIZE * 2,
-        nix.PROT.NONE,
-        nix.MAP{
-            .TYPE = .PRIVATE,
-            .ANONYMOUS = true,
-        },
+        .{},
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
         -1,
         0,
     });
     _ = nix.assert(@src(), System, "mmap", .{
         mem.ptr,
         HOST_PAGE_SIZE,
-        nix.PROT.READ | nix.PROT.WRITE,
-        nix.MAP{
-            .TYPE = .SHARED,
-            .FIXED = true,
-        },
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .SHARED, .FIXED = true },
         memfd,
         0,
     });
     _ = nix.assert(@src(), System, "mmap", .{
         mem.ptr + HOST_PAGE_SIZE,
         HOST_PAGE_SIZE,
-        nix.PROT.READ | nix.PROT.WRITE,
-        nix.MAP{
-            .TYPE = .SHARED,
-            .FIXED = true,
-        },
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .SHARED, .FIXED = true },
         memfd,
         0,
     });
@@ -55,20 +46,12 @@ pub fn init(comptime System: type, memory: []align(HOST_PAGE_SIZE) u8) Self {
     _ = nix.assert(@src(), System, "mmap", .{
         memory.ptr,
         HOST_PAGE_SIZE,
-        nix.PROT.READ | nix.PROT.WRITE,
-        nix.MAP{
-            .TYPE = .SHARED,
-            .FIXED = true,
-        },
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .SHARED, .FIXED = true },
         memfd,
         0,
     });
-    return .{
-        .iovecs = @ptrCast(mem.ptr),
-        .start = 0,
-        .len = 0,
-        .capacity = 0,
-    };
+    return .{ .iovecs = @ptrCast(mem.ptr), .start = 0, .len = 0, .capacity = 0 };
 }
 
 pub fn restore(self: *Self, comptime System: type, memory: []align(HOST_PAGE_SIZE) u8) void {
@@ -77,33 +60,24 @@ pub fn restore(self: *Self, comptime System: type, memory: []align(HOST_PAGE_SIZ
     const mem = nix.assert(@src(), System, "mmap", .{
         null,
         HOST_PAGE_SIZE * 2,
-        nix.PROT.NONE,
-        nix.MAP{
-            .TYPE = .PRIVATE,
-            .ANONYMOUS = true,
-        },
+        .{},
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
         -1,
         0,
     });
     _ = nix.assert(@src(), System, "mmap", .{
         mem.ptr,
         HOST_PAGE_SIZE,
-        nix.PROT.READ | nix.PROT.WRITE,
-        nix.MAP{
-            .TYPE = .SHARED,
-            .FIXED = true,
-        },
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .SHARED, .FIXED = true },
         memfd,
         0,
     });
     _ = nix.assert(@src(), System, "mmap", .{
         mem.ptr + HOST_PAGE_SIZE,
         HOST_PAGE_SIZE,
-        nix.PROT.READ | nix.PROT.WRITE,
-        nix.MAP{
-            .TYPE = .SHARED,
-            .FIXED = true,
-        },
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .SHARED, .FIXED = true },
         memfd,
         0,
     });
@@ -116,11 +90,8 @@ pub fn restore(self: *Self, comptime System: type, memory: []align(HOST_PAGE_SIZ
     _ = nix.assert(@src(), System, "mmap", .{
         memory.ptr,
         HOST_PAGE_SIZE,
-        nix.PROT.READ | nix.PROT.WRITE,
-        nix.MAP{
-            .TYPE = .SHARED,
-            .FIXED = true,
-        },
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .SHARED, .FIXED = true },
         memfd,
         0,
     });

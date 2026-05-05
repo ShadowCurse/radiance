@@ -350,10 +350,8 @@ pub fn add_header(
                 .capabilities_pointer = @sizeOf(Type0ConfigurationHeader),
             },
         };
-    self.headers_meta[self.num_devices] =
-        .{
-            .sizes = .{HeaderBarSizes.Size{ .size = Memory.PCI_BAR_SIZE }} ++ .{} ** 5,
-        };
+    self.headers_meta[self.num_devices] = .{};
+    self.headers_meta[self.num_devices].sizes[0] = .{ .size = Memory.PCI_BAR_SIZE };
     self.num_devices += 1;
 }
 

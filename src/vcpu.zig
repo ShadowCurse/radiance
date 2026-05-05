@@ -379,7 +379,7 @@ exit_event: EventFd,
 
 const Self = @This();
 
-fn signal_handler(s: c_int) callconv(.c) void {
+fn signal_handler(s: nix.SIG) callconv(.c) void {
     _ = s;
 }
 
@@ -389,13 +389,13 @@ fn set_thread_handler(comptime System: type) void {
         .flags = 4,
         .mask = std.mem.zeroes(nix.sigset_t),
     };
-    _ = nix.assert(@src(), System, "sigaction", .{ VCPU_SIGNAL, &sigact, null });
+    _ = nix.assert(@src(), System, "sigaction", .{ @enumFromInt(VCPU_SIGNAL), &sigact, null });
 }
 
 pub fn pause(self: *const Self, comptime System: type) void {
     self.kvm_run.immediate_exit = 1;
     arch.load_store_barrier();
-    _ = System.tkill(self.tid, VCPU_SIGNAL);
+    _ = System.tkill(self.tid, @enumFromInt(VCPU_SIGNAL)) catch {};
 }
 
 pub fn create(
@@ -405,22 +405,15 @@ pub fn create(
     exit_event: EventFd,
     vcpu_mmap_size: u32,
 ) Self {
-    const fd = nix.assert(@src(), System, "ioctl", .{
-        vm.fd,
-        nix.KVM_CREATE_VCPU,
-        index,
-    });
+    const r = nix.assert(@src(), System, "ioctl", .{ vm.fd, nix.KVM_CREATE_VCPU, index });
+    const fd: nix.fd_t = @truncate(@as(i64, @bitCast(r)));
 
     const size: usize = @intCast(vcpu_mmap_size);
-    const prot = nix.PROT.READ | nix.PROT.WRITE;
-    const flags = nix.MAP{
-        .TYPE = .SHARED,
-    };
     const kvm_run = nix.assert(@src(), System, "mmap", .{
         null,
         size,
-        prot,
-        flags,
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .SHARED },
         fd,
         @as(u64, 0),
     });
@@ -454,21 +447,23 @@ pub fn init(
 }
 
 pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
-    const r = System.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0));
-    if (r < 0) {
-        const e = nix.errno(r);
-        switch (e) {
-            .INTR => return false,
-            else => {
-                log.err(
-                    @src(),
-                    "[VCPU: {d}] ioctl call error: {}:{}",
-                    .{ self.tid, r, e },
-                );
-                self.exit_event.write(System, 1);
-                return false;
-            },
-        }
+    loop: while (true) {
+        _ = System.ioctl(self.fd, nix.KVM_RUN, @as(u32, 0)) catch |e| {
+            switch (e) {
+                nix.SystemError.EINTR => return false,
+                nix.SystemError.EAGAIN => continue :loop,
+                else => {
+                    log.err(
+                        @src(),
+                        "[VCPU: {d}] ioctl call error: {}",
+                        .{ self.tid, e },
+                    );
+                    self.exit_event.write(System, 1);
+                    return false;
+                },
+            }
+        };
+        break;
     }
 
     switch (self.kvm_run.exit_reason) {
@@ -588,7 +583,7 @@ pub fn run(self: *Self, comptime System: type, mmio: *Mmio) bool {
 pub fn run_threaded(
     self: *Self,
     comptime System: type,
-    barrier: *std.Thread.ResetEvent,
+    barrier: *Barrier,
     mmio: *Mmio,
 ) void {
     profiler.take_thread_id();
@@ -600,3 +595,39 @@ pub fn run_threaded(
         barrier.wait();
     }
 }
+
+pub const Barrier = enum(u32) {
+    unset,
+    waiting,
+    is_set,
+
+    pub fn wait(barrier: *Barrier) void {
+        if (@cmpxchgStrong(Barrier, barrier, .unset, .waiting, .acquire, .acquire)) |prev| switch (prev) {
+            .unset => unreachable,
+            .waiting => {},
+            .is_set => return,
+        };
+        loop: while (true) {
+            nix.System.futex2_wait(barrier, @intFromEnum(Barrier.waiting)) catch |e| {
+                if (e == nix.SystemError.EAGAIN) continue :loop;
+            };
+            switch (@atomicLoad(Barrier, barrier, .acquire)) {
+                .unset => unreachable,
+                .waiting => continue,
+                .is_set => return,
+            }
+        }
+    }
+
+    pub fn set(e: *Barrier) void {
+        log.info(@src(), "barrier set", .{});
+        switch (@atomicRmw(Barrier, e, .Xchg, .is_set, .release)) {
+            .unset, .is_set => {},
+            .waiting => nix.System.futex2_wake(e, std.math.maxInt(i32)) catch unreachable,
+        }
+    }
+
+    pub fn reset(e: *Barrier) void {
+        @atomicStore(Barrier, e, .unset, .monotonic);
+    }
+};

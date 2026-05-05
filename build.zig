@@ -35,13 +35,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     const unit_tests = b.addTest(.{
         .name = "unit_tests",
         .root_module = unit_test_mod,
         .filters = b.args orelse &.{},
     });
-    unit_tests.linkLibC();
     b.installArtifact(unit_tests);
 
     if (b.option(bool, "generate-coverage", "Generate test coverage")) |_| {

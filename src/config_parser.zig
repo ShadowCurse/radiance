@@ -136,7 +136,7 @@ pub const ParseResult = struct {
     }
 };
 
-pub fn parse_file(comptime System: type, config_path: []const u8) !ParseResult {
+pub fn parse_file(comptime System: type, config_path: [:0]const u8) !ParseResult {
     const prof_point = MEASUREMENTS.start_named("parse_file");
     defer MEASUREMENTS.end(prof_point);
 
@@ -157,10 +157,8 @@ pub fn parse_fd(comptime System: type, fd: nix.fd_t) !ParseResult {
     const file_mem = try System.mmap(
         null,
         statx.size,
-        nix.PROT.READ,
-        .{
-            .TYPE = .PRIVATE,
-        },
+        .{ .READ = true },
+        .{ .TYPE = .PRIVATE },
         fd,
         0,
     );
@@ -506,10 +504,8 @@ test "dump_and_parse" {
     const file_mem = try System.mmap(
         null,
         statx.size,
-        nix.PROT.READ,
-        .{
-            .TYPE = .PRIVATE,
-        },
+        .{ .READ = true },
+        .{ .TYPE = .PRIVATE },
         memfd,
         0,
     );

@@ -8,24 +8,19 @@ pub const DummyFilePath = "./dummy";
 pub const RadianceBin = "./zig-out/bin/radiance";
 pub const RadianceBootTimeDelay = 2 * std.time.ns_per_s;
 
-pub fn vmtouch_files(
-    alloc: Allocator,
-    other_paths: []const []const u8,
-) !void {
+pub fn vmtouch_files(io: std.Io, other_paths: []const []const u8) !void {
     std.log.info("using vmtouch on all files", .{});
-    try Process.run(&.{ "vmtouch", "-L", "-d", KernelPath }, alloc);
-    try Process.run(&.{ "vmtouch", "-L", "-d", RootFsPath }, alloc);
-    for (other_paths) |op| {
-        try Process.run(&.{ "vmtouch", "-L", "-d", op }, alloc);
-    }
+    try Process.run(io, &.{ "vmtouch", "-L", "-d", KernelPath });
+    try Process.run(io, &.{ "vmtouch", "-L", "-d", RootFsPath });
+    for (other_paths) |op| try Process.run(io, &.{ "vmtouch", "-L", "-d", op });
 }
 
-pub fn vmtouch_free(alloc: Allocator) void {
+pub fn vmtouch_free(io: std.Io) void {
     std.log.info("killing vmtouch", .{});
-    Process.run(&.{ "killall", "vmtouch" }, alloc) catch unreachable;
+    Process.run(io, &.{ "killall", "vmtouch" }) catch unreachable;
 }
 
-pub fn dummy_block_create(alloc: Allocator, size_mb: u32, block_size: u32) !void {
+pub fn dummy_block_create(io: std.Io, alloc: Allocator, size_mb: u32, block_size: u32) !void {
     const block_count = size_mb * 1024 * 1024 / block_size;
     const bs = try std.fmt.allocPrint(alloc, "bs={d}", .{block_size});
     defer alloc.free(bs);
@@ -35,12 +30,12 @@ pub fn dummy_block_create(alloc: Allocator, size_mb: u32, block_size: u32) !void
         "creating dummy block with size: {d}MB, block_size: {d}, blocks: {d}",
         .{ size_mb, block_size, block_count },
     );
-    try Process.run(&.{ "dd", "if=/dev/zero", "of=" ++ DummyFilePath, bs, count }, alloc);
+    try Process.run(io, &.{ "dd", "if=/dev/zero", "of=" ++ DummyFilePath, bs, count });
 }
 
-pub fn dummy_block_delete(alloc: Allocator) !void {
+pub fn dummy_block_delete(io: std.Io) !void {
     std.log.info("deleting dummy block", .{});
-    try Process.run(&.{ "rm", "dummy" }, alloc);
+    try Process.run(io, &.{ "rm", "dummy" });
 }
 
 pub fn RadianceCmd(comptime config_path: []const u8) [4][]const u8 {
@@ -128,100 +123,93 @@ pub const Process = struct {
     child: std.process.Child,
 
     pub const Output = struct {
-        stdout: std.ArrayListUnmanaged(u8),
-        stderr: std.ArrayListUnmanaged(u8),
+        stdout: []const u8,
+        stderr: []const u8,
 
-        pub fn deinit(self: *Output, allocator: Allocator) void {
-            self.stdout.deinit(allocator);
-            self.stderr.deinit(allocator);
+        pub fn deinit(self: *Output, alloc: Allocator) void {
+            alloc.free(self.stderr);
+            alloc.free(self.stdout);
         }
     };
 
-    pub fn run(argv: []const []const u8, allocator: std.mem.Allocator) !void {
+    pub fn run(io: std.Io, argv: []const []const u8) !void {
         std.log.info("Running:", .{});
-
-        for (argv) |arg| {
-            std.debug.print("{s} ", .{arg});
-        }
+        for (argv) |arg| std.debug.print("{s} ", .{arg});
         std.debug.print("\n", .{});
 
-        var p = std.process.Child.init(argv, allocator);
-        _ = try p.spawnAndWait();
+        var p = try std.process.spawn(io, .{ .argv = argv });
+        _ = try p.wait(io);
         return;
     }
 
-    pub fn start(name: []const u8, argv: []const []const u8, allocator: std.mem.Allocator) !Process {
+    pub fn start(io: std.Io, name: []const u8, argv: []const []const u8) !Process {
         std.log.info("Starting {s}", .{name});
-        for (argv) |arg| {
-            std.debug.print("{s} ", .{arg});
-        }
+        for (argv) |arg| std.debug.print("{s} ", .{arg});
         std.debug.print("\n", .{});
-        var child = std.process.Child.init(argv, allocator);
-        child.request_resource_usage_statistics = true;
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Pipe;
-        try child.spawn();
-        return .{
-            .name = name,
-            .child = child,
-        };
+        const child = try std.process.spawn(io, .{
+            .argv = argv,
+            .request_resource_usage_statistics = true,
+            .stdin = .ignore,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        });
+        return .{ .name = name, .child = child };
     }
 
-    pub fn end(self: *Process, allocator: std.mem.Allocator) !Output {
+    pub fn end(self: *Process, io: std.Io, alloc: std.mem.Allocator) !Output {
         std.log.info("Ending {s}", .{self.name});
-        var stdout = std.ArrayListUnmanaged(u8).empty;
-        var stderr = std.ArrayListUnmanaged(u8).empty;
-        try self.child.collectOutput(allocator, &stdout, &stderr, std.math.maxInt(usize));
 
-        const exit = try self.child.wait();
+        const exit = try self.child.wait(io);
         std.log.info("{s} exit: {any}", .{ self.name, exit });
-        std.log.info("{s} stdout: {s}", .{ self.name, stdout.items });
-        std.log.info("{s} stderr: {s}", .{ self.name, stderr.items });
 
-        return .{
-            .stdout = stdout,
-            .stderr = stderr,
-        };
+        var stdout_reader = self.child.stdout.?.reader(io, &.{});
+        const stdout = try stdout_reader.interface.allocRemaining(alloc, .unlimited);
+        var stderr_reader = self.child.stderr.?.reader(io, &.{});
+        const stderr = try stderr_reader.interface.allocRemaining(alloc, .unlimited);
+
+        std.log.info("{s} stdout: {s}", .{ self.name, stdout });
+        std.log.info("{s} stderr: {s}", .{ self.name, stderr });
+
+        return .{ .stdout = stdout, .stderr = stderr };
     }
 };
 
 pub const ProcessResourceUsage = struct {
-    file: std.fs.File,
+    file: std.Io.File,
 
     const Self = @This();
 
-    pub fn init(comptime result_path: []const u8) !Self {
+    pub fn init(io: std.Io, comptime result_path: []const u8) !Self {
         const usage_path = result_path ++ "/resource_usage.txt";
         std.log.info("{s}", .{usage_path});
-        const file = try std.fs.cwd().createFile(usage_path, .{});
-        return .{
-            .file = file,
-        };
+        const file = try std.Io.Dir.cwd().createFile(io, usage_path, .{});
+        return .{ .file = file };
     }
 
-    pub fn deinit(self: *const Self) void {
-        self.file.close();
+    pub fn deinit(self: *const Self, io: std.Io) void {
+        self.file.close(io);
     }
 
-    pub fn update(self: *Self, process: *const Process, allocator: Allocator) !void {
+    pub fn update(self: *Self, io: std.Io, process: *const Process, alloc: Allocator) !void {
         const rusage = process.child.resource_usage_statistics.rusage.?;
         const t = @TypeOf(rusage);
         const fields = @typeInfo(t).@"struct".fields;
         inline for (fields) |field| {
             switch (field.type) {
                 isize => {
-                    const s = try std.fmt.allocPrint(allocator, "{s} {}\n", .{ field.name, @field(rusage, field.name) });
-                    defer allocator.free(s);
+                    const s = try std.fmt.allocPrint(alloc, "{s} {}\n", .{ field.name, @field(rusage, field.name) });
+                    defer alloc.free(s);
 
-                    _ = try self.file.write(s);
+                    var w = self.file.writer(io, &.{});
+                    _ = try w.interface.write(s);
                 },
                 std.os.linux.timeval => {
                     const f = @field(rusage, field.name);
-                    const s = try std.fmt.allocPrint(allocator, "{s} {} {}\n", .{ field.name, f.sec, f.usec });
-                    defer allocator.free(s);
+                    const s = try std.fmt.allocPrint(alloc, "{s} {} {}\n", .{ field.name, f.sec, f.usec });
+                    defer alloc.free(s);
 
-                    _ = try self.file.write(s);
+                    var w = self.file.writer(io, &.{});
+                    _ = try w.interface.write(s);
                 },
                 else => {},
             }
@@ -230,75 +218,80 @@ pub const ProcessResourceUsage = struct {
 };
 
 pub const ProcessStartupTime = struct {
-    file: std.fs.File,
+    file: std.Io.File,
 
     const LINE_START = "[profiler.zig:162:INFO] Total ";
     const Self = @This();
 
-    pub fn init(comptime result_path: []const u8) !Self {
+    pub fn init(io: std.Io, comptime result_path: []const u8) !Self {
         const usage_path = result_path ++ "/startup_time.txt";
         std.log.info("{s}", .{usage_path});
-        const file = try std.fs.cwd().createFile(usage_path, .{});
-        return .{
-            .file = file,
-        };
+        const file = try std.Io.Dir.cwd().createFile(io, usage_path, .{});
+        return .{ .file = file };
     }
 
-    pub fn deinit(self: *const Self) void {
-        self.file.close();
+    pub fn deinit(self: *const Self, io: std.Io) void {
+        self.file.close(io);
     }
 
-    pub fn update(self: *Self, output: *const Process.Output) !void {
-        var iter = std.mem.splitScalar(u8, output.stderr.items, '\n');
+    pub fn update(self: *Self, io: std.Io, output: *const Process.Output) !void {
+        var iter = std.mem.splitScalar(u8, output.stderr, '\n');
         while (iter.next()) |line| {
             if (std.mem.indexOf(u8, line, LINE_START)) |_| {
                 const time = line[LINE_START.len..];
                 const time_ms = time[0 .. time.len - "ms".len];
-                _ = try self.file.write(time_ms);
-                _ = try self.file.write("\n");
+                var w = self.file.writer(io, &.{});
+                _ = try w.interface.write(time_ms);
+                _ = try w.interface.write("\n");
             }
         }
     }
 };
 
 pub const SystemCpuUsage = struct {
-    file: std.fs.File,
+    file: std.Io.File,
 
     const Self = @This();
 
-    pub fn init(comptime result_path: []const u8) !Self {
+    pub fn init(io: std.Io, comptime result_path: []const u8) !Self {
         const usage_path = result_path ++ "/cpu_usage.txt";
         std.log.info("{s}", .{usage_path});
-        const file = try std.fs.cwd().createFile(usage_path, .{});
-        return .{
-            .file = file,
-        };
+        const file = try std.Io.Dir.cwd().createFile(io, usage_path, .{});
+        return .{ .file = file };
     }
 
-    pub fn deinit(self: *const Self) void {
-        self.file.close();
+    pub fn deinit(self: *const Self, io: std.Io) void {
+        self.file.close(io);
     }
 
-    pub fn update(self: *Self, alloc: Allocator) !void {
-        const cpustat = try std.fs.openFileAbsolute("/proc/stat", .{ .mode = .read_only });
-        defer cpustat.close();
+    pub fn update(self: *Self, io: std.Io, alloc: Allocator) !void {
+        const cpustat = try std.Io.Dir.openFileAbsolute(io, "/proc/stat", .{ .mode = .read_only });
+        defer cpustat.close(io);
 
-        const text = try cpustat.readToEndAlloc(alloc, std.math.maxInt(usize));
+        var text_reader = cpustat.reader(io, &.{});
+        const text = try text_reader.interface.allocRemaining(alloc, .unlimited);
         defer alloc.free(text);
 
         var iter = std.mem.splitScalar(u8, text, '\n');
         while (iter.next()) |line| {
             if (std.mem.startsWith(u8, line, "cpu")) {
-                _ = try self.file.write(line);
-                _ = try self.file.write("\n");
+                var w = self.file.writer(io, &.{});
+                _ = try w.interface.write(line);
+                _ = try w.interface.write("\n");
             }
         }
     }
 };
 
-pub fn system_cpu_usage_thread(system_cpu_usage: *SystemCpuUsage, alloc: Allocator, delta: u64, stop: *bool) !void {
+pub fn system_cpu_usage_thread(
+    io: std.Io,
+    alloc: Allocator,
+    system_cpu_usage: *SystemCpuUsage,
+    delta: u64,
+    stop: *bool,
+) !void {
     while (!stop.*) {
-        try system_cpu_usage.update(alloc);
-        std.Thread.sleep(delta);
+        try system_cpu_usage.update(io, alloc);
+        std.Io.sleep(io, .fromNanoseconds(delta), .real) catch unreachable;
     }
 }

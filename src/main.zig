@@ -83,9 +83,9 @@ const ALL_MEASUREMENTS = &.{
 };
 
 const Args = struct {
-    config_path: ?[]const u8 = null,
-    snapshot_path: ?[]const u8 = null,
-    gdb_socket_path: ?[]const u8 = null,
+    config_path: ?[:0]const u8 = null,
+    snapshot_path: ?[:0]const u8 = null,
+    gdb_socket_path: ?[:0]const u8 = null,
 };
 
 pub const ConfigState = extern struct {
@@ -133,11 +133,11 @@ fn check_aligments() void {
     }
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     comptime check_aligments();
 
     profiler.start();
-    const args = try args_parser.parse(Args);
+    const args = try args_parser.parse(init.args, Args);
 
     var runtime: Runtime = undefined;
     var state: State = undefined;
@@ -147,7 +147,7 @@ pub fn main() !void {
     } else if (args.snapshot_path) |snapshot_path| {
         try build_from_snapshot(snapshot_path, &runtime, &state);
     } else {
-        try args_parser.print_help(Args);
+        args_parser.print_help(Args);
         return;
     }
 
@@ -174,7 +174,7 @@ pub fn main() !void {
         );
         runtime.el.add_event(
             nix.System,
-            runtime.gdb_server.?.connection.stream.handle,
+            runtime.gdb_server.?.connection_fd,
             @ptrCast(&gdb.GdbServer.process_request),
             &runtime.gdb_server.?,
         );
@@ -185,11 +185,11 @@ pub fn main() !void {
     runtime.el.run(nix.System);
 
     log.info(@src(), "Shutting down", .{});
-    if (runtime.terminal_state) |ts| restore_terminal(nix.System, &ts);
+    if (runtime.terminal_state) |ts| try restore_terminal(nix.System, &ts);
     return;
 }
 
-fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) !void {
+fn build_from_config(config_path: [:0]const u8, runtime: *Runtime, state: *State) !void {
     const prof_point = MEASUREMENTS.start(@src());
     defer MEASUREMENTS.end(prof_point);
 
@@ -219,7 +219,7 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
             @ptrCast(&runtime.io_uring),
         );
     }
-    runtime.vcpu_barrier = .{};
+    runtime.vcpu_barrier = .unset;
     if (config.api.socket_path) |socket_path| {
         runtime.api = .init(
             nix.System,
@@ -256,7 +256,7 @@ fn build_from_config(config_path: []const u8, runtime: *Runtime, state: *State) 
     }
 
     if (config.uart.enabled) {
-        runtime.terminal_state = configure_terminal(nix.System);
+        runtime.terminal_state = try configure_terminal(nix.System);
         state.uart.init(nix.System, &runtime.vm, nix.STDIN_FILENO, nix.STDOUT_FILENO);
         runtime.mmio.set_uart(.{
             .ptr = state.uart,
@@ -742,7 +742,7 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
             @ptrCast(&runtime.io_uring),
         );
     }
-    runtime.vcpu_barrier = .{};
+    runtime.vcpu_barrier = .unset;
 
     const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
     runtime.el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &runtime.el);
@@ -774,7 +774,7 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
     }
 
     if (state.config_state.uart_enabled) {
-        runtime.terminal_state = configure_terminal(nix.System);
+        runtime.terminal_state = try configure_terminal(nix.System);
         state.uart.restore(nix.System, &runtime.vm);
         runtime.mmio.set_uart(.{
             .ptr = state.uart,
@@ -966,11 +966,11 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
     }
 }
 
-fn configure_terminal(comptime System: type) nix.termios {
+fn configure_terminal(comptime System: type) !nix.termios {
     var ttystate: nix.termios = undefined;
     var ttysave: nix.termios = undefined;
 
-    _ = System.tcgetattr(nix.STDIN, &ttystate);
+    _ = try System.tcgetattr(nix.STDIN, &ttystate);
     ttysave = ttystate;
 
     //turn off canonical mode and echo
@@ -980,13 +980,13 @@ fn configure_terminal(comptime System: type) nix.termios {
     ttystate.cc[4] = 1;
 
     //set the terminal attributes.
-    _ = System.tcsetattr(nix.STDIN, nix.TCSA.NOW, &ttystate);
+    _ = try System.tcsetattr(nix.STDIN, nix.TCSA.NOW, &ttystate);
     return ttysave;
 }
 
-fn restore_terminal(comptime System: type, state: *const nix.termios) void {
+fn restore_terminal(comptime System: type, state: *const nix.termios) !void {
     //set the terminal attributes.
-    _ = System.tcsetattr(nix.STDIN, nix.TCSA.NOW, state);
+    _ = try System.tcsetattr(nix.STDIN, nix.TCSA.NOW, state);
 }
 
 pub const RuntimeArch = if (builtin.cpu.arch == .aarch64) struct {
@@ -1003,7 +1003,7 @@ pub const Runtime = struct {
     mmio: Mmio,
     el: EventLoop,
     io_uring: IoUring,
-    vcpu_barrier: std.Thread.ResetEvent,
+    vcpu_barrier: Vcpu.Barrier,
     api: Api,
     // TOOD: GdbServer is big so maybe it should not be in the `Runtime`,
     // but in a separate allocation

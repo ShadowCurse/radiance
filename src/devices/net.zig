@@ -257,7 +257,7 @@ pub const NetMmio = struct {
             const bytes = System.readv(self.tun, iov_slice) catch |e| {
                 log.assert(
                     @src(),
-                    e == nix.ReadError.WouldBlock,
+                    e == nix.SystemError.EAGAIN,
                     "readv error: {}",
                     .{e},
                 );

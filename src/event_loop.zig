@@ -98,8 +98,7 @@ pub fn run(self: *Self, comptime System: type) void {
         );
         log.assert(@src(), 0 < nfds, "epoll_wait returned {}", .{nfds});
 
-        const n: usize = @intCast(nfds);
-        for (0..n) |i| {
+        for (0..nfds) |i| {
             const event = &self.events[i];
             const callback = self.events_info[event.data.u64].callback;
             callback.callback(callback.parameter);

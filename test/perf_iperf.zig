@@ -10,32 +10,32 @@ const Iterations = 10;
 const ResultsPath = "perf_results/iperf";
 const ConfigPath = "test/iperf_config.toml";
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const alloc = init.arena.allocator();
 
-    const timestamp = std.time.timestamp();
+    const timestamp = std.Io.Timestamp.now(io, .real);
     const results_path = try std.fmt.allocPrint(alloc, "{s}_{}", .{ ResultsPath, timestamp });
     defer alloc.free(results_path);
 
-    try utils.vmtouch_files(alloc, &.{ConfigPath});
-    defer utils.vmtouch_free(alloc);
+    try utils.vmtouch_files(io, &.{ConfigPath});
+    defer utils.vmtouch_free(io);
 
     std.log.info("creating results directory", .{});
-    try utils.Process.run(&.{ "mkdir", "-p", ResultsPath }, alloc);
+    try utils.Process.run(io, &.{ "mkdir", "-p", ResultsPath });
 
     {
-        var system_cpu_usage = try utils.SystemCpuUsage.init(ResultsPath);
-        defer system_cpu_usage.deinit();
+        var system_cpu_usage = try utils.SystemCpuUsage.init(io, ResultsPath);
+        defer system_cpu_usage.deinit(io);
 
-        var process_resource_usage = try utils.ProcessResourceUsage.init(ResultsPath);
-        defer process_resource_usage.deinit();
+        var process_resource_usage = try utils.ProcessResourceUsage.init(io, ResultsPath);
+        defer process_resource_usage.deinit(io);
 
         var cpu_usage_thread_stop: bool = false;
         const cpu_usage_thread = try std.Thread.spawn(.{}, utils.system_cpu_usage_thread, .{
-            &system_cpu_usage,
+            io,
             alloc,
+            &system_cpu_usage,
             std.time.ns_per_s,
             &cpu_usage_thread_stop,
         });
@@ -47,28 +47,32 @@ pub fn main() !void {
             };
             inline for (modes) |mode| {
                 std.log.info("Starting iperf on the host", .{});
-                try utils.Process.run(&.{ "iperf3", "-s", "-D", "-1" }, alloc);
+                try utils.Process.run(io, &.{ "iperf3", "-s", "-D", "-1" });
 
-                var radinace_process = try utils.Process.start("radiance", &utils.RadianceCmd(ConfigPath), alloc);
+                var radinace_process = try utils.Process.start(
+                    io,
+                    "radiance",
+                    &utils.RadianceCmd(ConfigPath),
+                );
 
                 std.log.info("Waiting for radiance to boot", .{});
-                std.Thread.sleep(utils.RadianceBootTimeDelay);
+                std.Io.sleep(io, .fromNanoseconds(utils.RadianceBootTimeDelay), .real) catch unreachable;
 
                 const iperf_cmd = utils.IperfCmd(mode[0]);
-                try utils.Process.run(&(utils.SshCmd ++ iperf_cmd), alloc);
+                try utils.Process.run(io, &(utils.SshCmd ++ iperf_cmd));
 
                 const scp_result_file = ResultsPath ++ "/iperf_" ++ mode[1] ++ ".json";
                 const result_file = try std.fmt.allocPrint(alloc, "{s}/iperf_{s}_{}.json", .{ ResultsPath, mode[1], i });
                 defer alloc.free(result_file);
 
-                try utils.Process.run(&utils.ScpCmd(utils.IperfResult, scp_result_file), alloc);
-                try utils.Process.run(&.{ "mv", scp_result_file, result_file }, alloc);
+                try utils.Process.run(io, &utils.ScpCmd(utils.IperfResult, scp_result_file));
+                try utils.Process.run(io, &.{ "mv", scp_result_file, result_file });
 
-                try utils.Process.run(&(utils.SshCmd ++ .{"reboot"}), alloc);
-                var output = try radinace_process.end(alloc);
+                try utils.Process.run(io, &(utils.SshCmd ++ .{"reboot"}));
+                var output = try radinace_process.end(io, alloc);
                 defer output.deinit(alloc);
 
-                try process_resource_usage.update(&radinace_process, alloc);
+                try process_resource_usage.update(io, &radinace_process, alloc);
             }
         }
 
@@ -77,5 +81,5 @@ pub fn main() !void {
     }
 
     std.log.info("moving results to {s}", .{results_path});
-    try utils.Process.run(&.{ "mv", ResultsPath, results_path }, alloc);
+    try utils.Process.run(io, &.{ "mv", ResultsPath, results_path });
 }

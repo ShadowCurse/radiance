@@ -13,7 +13,7 @@ fd: nix.fd_t,
 
 vcpus: []Vcpu,
 vcpu_threads: []std.Thread,
-vcpus_barrier: *std.Thread.ResetEvent,
+vcpus_barrier: *Vcpu.Barrier,
 runtime_arch: *root.RuntimeArch,
 state_arch: *root.StateArch,
 permanent_memory: Memory.Permanent,
@@ -25,22 +25,19 @@ pub fn init(
     socket_path: []const u8,
     vcpus: []Vcpu,
     vcpu_threads: []std.Thread,
-    vcpus_barrier: *std.Thread.ResetEvent,
+    vcpus_barrier: *Vcpu.Barrier,
     runtime_arch: *root.RuntimeArch,
     state_arch: *root.StateArch,
     permanent_memory: Memory.Permanent,
 ) Self {
-    const address = std.net.Address.initUnix(socket_path) catch |err| {
-        log.panic(@src(), "Api socket name is too long: {t}", .{err});
-    };
-    const sock_flags = nix.SOCK.STREAM | nix.SOCK.CLOEXEC;
-    const proto: u32 = 0;
-
-    const fd = nix.assert(@src(), System, "socket", .{ address.any.family, sock_flags, proto });
-    errdefer System.close(fd);
-
-    const socklen = address.getOsSockLen();
-    _ = nix.assert(@src(), System, "bind", .{ fd, &address.any, socklen });
+    const sock_addr = nix.configure_unix_socket(socket_path);
+    const fd = nix.assert(
+        @src(),
+        System,
+        "socket",
+        .{ sock_addr.family, nix.SOCK.STREAM | nix.SOCK.CLOEXEC, 0 },
+    );
+    _ = nix.assert(@src(), System, "bind", .{ fd, @ptrCast(&sock_addr), @sizeOf(std.os.linux.sockaddr.un) });
     _ = nix.assert(@src(), System, "listen", .{ fd, KERNEL_BACKLOG });
     return .{
         .fd = fd,
@@ -59,15 +56,15 @@ pub fn handle_default(self: *Self) void {
 pub fn handle(self: *Self, comptime System: type) void {
     log.info(@src(), "api server handle", .{});
 
-    var accepted_addr: std.net.Address = undefined;
-    var addr_len: nix.socklen_t = @sizeOf(std.net.Address);
+    var accepted_addr: std.os.linux.sockaddr.un = undefined;
+    var addr_len: nix.socklen_t = @sizeOf(std.os.linux.sockaddr.un);
     const fd = nix.assert(
         @src(),
         System,
-        "accept",
+        "accept4",
         .{
             self.fd,
-            &accepted_addr.any,
+            @ptrCast(&accepted_addr),
             &addr_len,
             nix.SOCK.CLOEXEC | nix.SOCK.NONBLOCK,
         },
@@ -77,7 +74,7 @@ pub fn handle(self: *Self, comptime System: type) void {
         var buffer: [1024]u8 = undefined;
 
         const len = System.read(fd, &buffer) catch |err| {
-            log.assert(@src(), err == nix.ReadError.WouldBlock, "read err: {t}", .{err});
+            log.assert(@src(), err == nix.SystemError.EAGAIN, "read err: {t}", .{err});
             break;
         };
         if (len == 0) break;

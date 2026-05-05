@@ -83,7 +83,7 @@ pub fn Block(comptime Context: type) type {
             self.file_mem = nix.assert(@src(), System, "mmap", .{
                 null,
                 statx.size,
-                if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
+                .{ .READ = true, .WRITE = !read_only },
                 .{ .TYPE = if (read_only) .PRIVATE else .SHARED },
                 fd,
                 0,
@@ -129,7 +129,7 @@ pub fn Block(comptime Context: type) type {
             self.file_mem = nix.assert(@src(), System, "mmap", .{
                 null,
                 statx.size,
-                if (read_only) nix.PROT.READ else nix.PROT.READ | nix.PROT.WRITE,
+                .{ .READ = true, .WRITE = !read_only },
                 .{ .TYPE = if (read_only) .PRIVATE else .SHARED },
                 fd,
                 0,

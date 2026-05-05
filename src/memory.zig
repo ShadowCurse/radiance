@@ -170,9 +170,12 @@ pub const Guest = struct {
         defer System.close(fd);
         const meta = nix.assert(@src(), System, "statx", .{fd});
 
-        const prot = nix.PROT.READ;
-        const flags = nix.MAP{ .TYPE = .SHARED };
-        const file_mem = nix.assert(@src(), System, "mmap", .{ null, meta.size, prot, flags, fd, 0 });
+        const file_mem = nix.assert(
+            @src(),
+            System,
+            "mmap",
+            .{ null, meta.size, .{ .READ = true }, .{ .TYPE = .SHARED }, fd, 0 },
+        );
 
         const ehdr: *const nix.Elf64_Ehdr = @ptrCast(@alignCast(file_mem.ptr));
         log.assert(
@@ -214,12 +217,8 @@ pub const Guest = struct {
                 _ = nix.assert(@src(), System, "mmap", .{
                     @ptrCast(@alignCast(self.mem.ptr + section_start)),
                     phdr.p_filesz,
-                    nix.PROT.READ | nix.PROT.WRITE,
-                    nix.MAP{
-                        .TYPE = .PRIVATE,
-                        .FIXED = true,
-                        .NORESERVE = true,
-                    },
+                    .{ .READ = true, .WRITE = true },
+                    .{ .TYPE = .PRIVATE, .FIXED = true, .NORESERVE = true },
                     fd,
                     phdr.p_offset,
                 });
@@ -252,13 +251,8 @@ pub const Permanent = struct {
         const mem = nix.assert(@src(), System, "mmap", .{
             @ptrFromInt(LOCATION),
             size,
-            nix.PROT.READ | nix.PROT.WRITE,
-            nix.MAP{
-                .TYPE = .PRIVATE,
-                .FIXED = true,
-                .ANONYMOUS = true,
-                .NORESERVE = true,
-            },
+            .{ .READ = true, .WRITE = true },
+            .{ .TYPE = .PRIVATE, .FIXED = true, .ANONYMOUS = true, .NORESERVE = true },
             -1,
             0,
         });
@@ -277,12 +271,8 @@ pub const Permanent = struct {
         const mem = nix.assert(@src(), System, "mmap", .{
             @ptrFromInt(LOCATION),
             statx.size,
-            nix.PROT.READ | nix.PROT.WRITE,
-            .{
-                .TYPE = .PRIVATE,
-                .FIXED = true,
-                .NORESERVE = true,
-            },
+            .{ .READ = true, .WRITE = true },
+            .{ .TYPE = .PRIVATE, .FIXED = true, .NORESERVE = true },
             fd,
             0,
         });

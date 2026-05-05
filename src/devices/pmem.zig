@@ -30,7 +30,7 @@ pub fn attach(
         const file_mem = nix.assert(@src(), System, "mmap", .{
             null,
             statx.size,
-            nix.PROT.READ | nix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .PRIVATE },
             fd,
             0,
@@ -54,7 +54,7 @@ pub fn attach(
         const pmem_mem = nix.assert(@src(), System, "mmap", .{
             null,
             alined_size,
-            nix.PROT.READ | nix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             -1,
             0,
@@ -62,7 +62,7 @@ pub fn attach(
         const file_mem = nix.assert(@src(), System, "mmap", .{
             pmem_mem.ptr,
             statx.size,
-            nix.PROT.READ | nix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .PRIVATE, .FIXED = true },
             fd,
             0,

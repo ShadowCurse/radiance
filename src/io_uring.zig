@@ -93,7 +93,7 @@ pub fn init(comptime System: type, entries: u32) Self {
     const submit_ring = nix.assert(@src(), System, "mmap", .{
         null,
         submit_ring_size,
-        nix.PROT.READ | nix.PROT.WRITE,
+        .{ .READ = true, .WRITE = true },
         .{ .TYPE = .SHARED, .POPULATE = true },
         fd,
         nix.IORING_OFF_SQ_RING,
@@ -106,7 +106,7 @@ pub fn init(comptime System: type, entries: u32) Self {
     const submit_queue_entries_u8 = nix.assert(@src(), System, "mmap", .{
         null,
         submit_queue_size,
-        nix.PROT.READ | nix.PROT.WRITE,
+        .{ .READ = true, .WRITE = true },
         .{ .TYPE = .SHARED, .POPULATE = true },
         fd,
         nix.IORING_OFF_SQES,
@@ -120,7 +120,7 @@ pub fn init(comptime System: type, entries: u32) Self {
         complete_ring = nix.assert(@src(), System, "mmap", .{
             null,
             complete_ring_size,
-            nix.PROT.READ | nix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .SHARED, .POPULATE = true },
             fd,
             nix.IORING_OFF_CQ_RING,

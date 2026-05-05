@@ -8,13 +8,9 @@ num_slots: u32,
 const Self = @This();
 
 pub fn init(comptime System: type, kvm: Kvm) Self {
-    const fd = nix.assert(@src(), System, "ioctl", .{
-        kvm.fd,
-        nix.KVM_CREATE_VM,
-        @as(usize, 0),
-    });
+    const fd = nix.assert(@src(), System, "ioctl", .{ kvm.fd, nix.KVM_CREATE_VM, @as(usize, 0) });
     return Self{
-        .fd = fd,
+        .fd = @truncate(@as(i64, @bitCast(fd))),
         .num_slots = 0,
     };
 }
@@ -31,10 +27,7 @@ pub fn set_memory(self: *Self, comptime System: type, memory: nix.kvm_userspace_
     });
 }
 
-pub fn get_preferred_target(
-    self: *const Self,
-    comptime System: type,
-) nix.kvm_vcpu_init {
+pub fn get_preferred_target(self: *const Self, comptime System: type) nix.kvm_vcpu_init {
     var kvi: nix.kvm_vcpu_init = undefined;
     _ = nix.assert(@src(), System, "ioctl", .{
         self.fd,
