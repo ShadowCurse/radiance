@@ -57,6 +57,8 @@ pub const profiler_options = profiler.Options{
     .enabled = false,
 };
 
+pub const panic = if (builtin.mode == .ReleaseFast) std.debug.simple_panic else void;
+
 pub const MEASUREMENTS = profiler.Measurements("main", &.{
     "build_from_config",
     "create_block_mmio",
