@@ -111,17 +111,16 @@ pub const Guest = struct {
         });
         const meta = nix.assert(@src(), System, "statx", .{fd});
 
-        const prot = nix.PROT.READ | nix.PROT.WRITE;
-        const flags = nix.MAP{
-            .TYPE = .PRIVATE,
-            .FIXED = true,
-            .NORESERVE = true,
-        };
         const file_mem = nix.assert(@src(), System, "mmap", .{
             self.mem.ptr,
             meta.size,
-            prot,
-            flags,
+            .{ .READ = true, .WRITE = true },
+            .{
+                .TYPE = .PRIVATE,
+                .FIXED = true,
+                .NORESERVE = true,
+            },
+
             fd,
             0,
         });

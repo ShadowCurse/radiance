@@ -128,7 +128,7 @@ pub const aarch64 = struct {
     pub fn try_get_reg(self: *const Self, comptime T: type, comptime System: type, reg_id: u64) ?T {
         var value: T = undefined;
         const kor: nix.kvm_one_reg = .{ .id = reg_id, .addr = @intFromPtr(&value) };
-        const r = System.ioctl(self.fd, nix.KVM_GET_ONE_REG, @intFromPtr(&kor));
+        const r = System.ioctl(self.fd, nix.KVM_GET_ONE_REG, @intFromPtr(&kor)) catch return null;
         log.debug(@src(), "vcpu: get_reg: id: 0x{x}, value: 0x{x}", .{ reg_id, value });
         if (r == 0) return value else return null;
     }
