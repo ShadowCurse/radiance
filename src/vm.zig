@@ -36,3 +36,51 @@ pub fn get_preferred_target(self: *const Self, comptime System: type) nix.kvm_vc
     });
     return kvi;
 }
+
+pub fn get_pit2(self: *const Self, comptime System: type, result: *nix.kvm_pit_state2) void {
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_GET_PIT2,
+        @intFromPtr(result),
+    });
+}
+
+pub fn set_pit2(self: *const Self, comptime System: type, result: *const nix.kvm_pit_state2) void {
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_SET_PIT2,
+        @intFromPtr(result),
+    });
+}
+
+pub fn get_clock(self: *const Self, comptime System: type, result: *nix.kvm_clock_data) void {
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_GET_CLOCK,
+        @intFromPtr(result),
+    });
+}
+
+pub fn set_clock(self: *const Self, comptime System: type, result: *const nix.kvm_clock_data) void {
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_SET_CLOCK,
+        @intFromPtr(result),
+    });
+}
+
+pub fn get_irqchip(self: *const Self, comptime System: type, result: *nix.kvm_irqchip) void {
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_GET_IRQCHIP,
+        @intFromPtr(result),
+    });
+}
+
+pub fn set_irqchip(self: *const Self, comptime System: type, result: *const nix.kvm_irqchip) void {
+    _ = nix.assert(@src(), System, "ioctl", .{
+        self.fd,
+        nix.KVM_SET_IRQCHIP,
+        @intFromPtr(result),
+    });
+}

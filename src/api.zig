@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const root = @import("root");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
+
+const Apic = @import("apic.zig");
 const Vcpu = @import("vcpu.zig");
 const Gicv2 = @import("gicv2.zig");
 const Memory = @import("memory.zig");
@@ -14,8 +16,8 @@ fd: nix.fd_t,
 vcpus: []Vcpu,
 vcpu_threads: []std.Thread,
 vcpus_barrier: *Vcpu.Barrier,
-runtime_arch: *root.RuntimeArch,
-state_arch: *root.StateArch,
+runtime: *const root.Runtime,
+state: *root.State,
 permanent_memory: Memory.Permanent,
 
 const Self = @This();
@@ -26,8 +28,8 @@ pub fn init(
     vcpus: []Vcpu,
     vcpu_threads: []std.Thread,
     vcpus_barrier: *Vcpu.Barrier,
-    runtime_arch: *root.RuntimeArch,
-    state_arch: *root.StateArch,
+    runtime: *const root.Runtime,
+    state: *root.State,
     permanent_memory: Memory.Permanent,
 ) Self {
     const sock_addr = nix.configure_unix_socket(socket_path);
@@ -44,8 +46,8 @@ pub fn init(
         .vcpus = vcpus,
         .vcpu_threads = vcpu_threads,
         .vcpus_barrier = vcpus_barrier,
-        .runtime_arch = runtime_arch,
-        .state_arch = state_arch,
+        .runtime = runtime,
+        .state = state,
         .permanent_memory = permanent_memory,
     };
 }
@@ -100,27 +102,45 @@ pub fn handle(self: *Self, comptime System: type) void {
             _ = std.os.linux.ftruncate(snapshot_fd, @intCast(self.permanent_memory.mem.len));
 
             if (builtin.cpu.arch == .aarch64) {
-                self.runtime_arch.gicv2.save_state(
+                self.runtime.arch.gicv2.save_state(
                     nix.System,
-                    self.state_arch.gicv2_state,
+                    self.state.arch.gicv2_state,
                     @intCast(self.vcpus.len),
                 );
                 // No reason to query list more than 1 time
-                if (self.state_arch.vcpu_reg_list[0] == 0) {
-                    Vcpu.aarch64.get_reg_list(&self.vcpus[0], nix.System, self.state_arch.vcpu_reg_list);
+                if (self.state.arch.vcpu_reg_list[0] == 0) {
+                    Vcpu.aarch64.get_reg_list(&self.vcpus[0], nix.System, self.state.arch.vcpu_reg_list);
                 }
-                var regs_bytes = self.state_arch.vcpu_regs;
-                for (self.vcpus, self.state_arch.vcpu_mp_states) |*vcpu, *mpstate| {
+                var regs_bytes = self.state.arch.vcpu_regs;
+                for (self.vcpus, self.state.arch.vcpu_mp_states) |*vcpu, *mpstate| {
                     const used = Vcpu.aarch64.save_regs(
                         vcpu,
                         nix.System,
-                        self.state_arch.vcpu_reg_list,
+                        self.state.arch.vcpu_reg_list,
                         regs_bytes,
                         mpstate,
                     );
                     regs_bytes = regs_bytes[used..];
                 }
-            }
+            } else if (builtin.cpu.arch == .x86_64) {
+                Apic.save_state(System, self.runtime.vm, self.state.arch.apic_state);
+                const arch_config = self.state.config_state.arch;
+                var msr_list = self.runtime.kvm.get_msr_list(System);
+                log.assert(
+                    @src(),
+                    msr_list.nmsrs == arch_config.msr_list_n,
+                    "msr list has {d} entries, expected {d}",
+                    .{ msr_list.nmsrs, arch_config.msr_list_n },
+                );
+                const msr_indices = msr_list.as().indices(msr_list.nmsrs);
+                for (self.vcpus, 0..) |*vcpu, i|
+                    Vcpu.x64.save_state(
+                        vcpu,
+                        System,
+                        self.state.arch.vcpu_state(i, arch_config),
+                        msr_indices,
+                    );
+            } else @compileError("Only aarch64 and x64 are supported");
 
             _ = nix.assert(
                 @src(),

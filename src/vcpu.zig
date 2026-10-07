@@ -368,6 +368,163 @@ pub const x64 = struct {
         });
         // }
     }
+
+    /// Views into snapshot memory holding the state of a single vcpu.
+    pub const State = struct {
+        regs: *nix.kvm_regs,
+        sregs: *nix.kvm_sregs,
+        xcrs: *nix.kvm_xcrs,
+        debugregs: *nix.kvm_debugregs,
+        vcpu_events: *nix.kvm_vcpu_events,
+        msrs: []nix.kvm_msr_entry,
+        mp_state: *nix.kvm_mp_state,
+        tsc_khz: *u32,
+        cpuid: []nix.kvm_cpuid_entry2,
+        xsave: []align(4) u8,
+        lapic: *nix.kvm_lapic_state,
+    };
+
+    pub fn save_state(
+        self: *const Self,
+        comptime System: type,
+        state: State,
+        msr_indices: []const u32,
+    ) void {
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_GET_REGS, @intFromPtr(state.regs) });
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_GET_SREGS, @intFromPtr(state.sregs) });
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_GET_XCRS, @intFromPtr(state.xcrs) });
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_GET_DEBUGREGS,
+            @intFromPtr(state.debugregs),
+        });
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_GET_VCPU_EVENTS,
+            @intFromPtr(state.vcpu_events),
+        });
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_GET_MP_STATE,
+            @intFromPtr(state.mp_state),
+        });
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_GET_LAPIC, @intFromPtr(state.lapic) });
+        // KVM_GET_TSC_KHZ returns the frequency as the ioctl return value
+        state.tsc_khz.* = @intCast(nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_GET_TSC_KHZ,
+            @as(usize, 0),
+        }));
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_GET_XSAVE2,
+            @intFromPtr(state.xsave.ptr),
+        });
+
+        var cpuid: nix.kvm_cpuid2.with_entries(nix.KVM_MAX_CPUID_ENTRIES) = .{};
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_GET_CPUID2, @intFromPtr(&cpuid) });
+        log.assert(
+            @src(),
+            cpuid.nent == state.cpuid.len,
+            "vcpu has {d} cpuid entries, expected {d}",
+            .{ cpuid.nent, state.cpuid.len },
+        );
+        @memcpy(state.cpuid, cpuid.entries[0..cpuid.nent]);
+
+        log.assert(
+            @src(),
+            msr_indices.len == state.msrs.len and msr_indices.len < nix.KVM_MAX_MSR_ENTRIES,
+            "msr indices: {d}, msr storage: {d}, max: {d}",
+            .{ msr_indices.len, state.msrs.len, @as(u32, nix.KVM_MAX_MSR_ENTRIES) },
+        );
+        var msrs: nix.kvm_msrs.with_entries(nix.KVM_MAX_MSR_ENTRIES) = .{
+            .nmsrs = @intCast(msr_indices.len),
+        };
+        for (msrs.entries[0..msr_indices.len], msr_indices) |*entry, index|
+            entry.* = .{ .index = index };
+        // KVM_GET_MSRS returns the number of successfully read msrs
+        const read = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_GET_MSRS, @intFromPtr(&msrs) });
+        log.assert(
+            @src(),
+            read == msr_indices.len,
+            "only read {d} out of {d} msrs. Failed msr: 0x{x}",
+            .{ read, msr_indices.len, if (read < msr_indices.len) msr_indices[read] else 0 },
+        );
+        @memcpy(state.msrs, msrs.entries[0..msr_indices.len]);
+    }
+
+    pub fn restore_state(self: *const Self, comptime System: type, state: State) void {
+        // Only attempt to change TSC frequency if it differs from the
+        // current one, since setting it requires TSC scaling support.
+        const tsc_khz = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_GET_TSC_KHZ,
+            @as(usize, 0),
+        });
+        if (tsc_khz != state.tsc_khz.*)
+            _ = nix.assert(@src(), System, "ioctl", .{
+                self.fd,
+                nix.KVM_SET_TSC_KHZ,
+                @as(usize, state.tsc_khz.*),
+            });
+
+        log.assert(
+            @src(),
+            state.cpuid.len <= nix.KVM_MAX_CPUID_ENTRIES,
+            "too many cpuid entries: {d}",
+            .{state.cpuid.len},
+        );
+        var cpuid: nix.kvm_cpuid2.with_entries(nix.KVM_MAX_CPUID_ENTRIES) = .{
+            .nent = @intCast(state.cpuid.len),
+        };
+        @memcpy(cpuid.entries[0..state.cpuid.len], state.cpuid);
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_SET_CPUID2, @intFromPtr(&cpuid) });
+
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_SET_MP_STATE,
+            @intFromPtr(state.mp_state),
+        });
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_SET_REGS, @intFromPtr(state.regs) });
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_SET_SREGS, @intFromPtr(state.sregs) });
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_SET_XSAVE,
+            @intFromPtr(state.xsave.ptr),
+        });
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_SET_XCRS, @intFromPtr(state.xcrs) });
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_SET_DEBUGREGS,
+            @intFromPtr(state.debugregs),
+        });
+        _ = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_SET_LAPIC, @intFromPtr(state.lapic) });
+
+        log.assert(
+            @src(),
+            state.msrs.len < nix.KVM_MAX_MSR_ENTRIES,
+            "too many msrs: {d}",
+            .{state.msrs.len},
+        );
+        var msrs: nix.kvm_msrs.with_entries(nix.KVM_MAX_MSR_ENTRIES) = .{
+            .nmsrs = @intCast(state.msrs.len),
+        };
+        @memcpy(msrs.entries[0..state.msrs.len], state.msrs);
+        // KVM_SET_MSRS returns the number of successfully written msrs
+        const written = nix.assert(@src(), System, "ioctl", .{ self.fd, nix.KVM_SET_MSRS, @intFromPtr(&msrs) });
+        log.assert(
+            @src(),
+            written == state.msrs.len,
+            "only wrote {d} out of {d} msrs. Failed msr: 0x{x}",
+            .{ written, state.msrs.len, if (written < state.msrs.len) state.msrs[written].index else 0 },
+        );
+
+        _ = nix.assert(@src(), System, "ioctl", .{
+            self.fd,
+            nix.KVM_SET_VCPU_EVENTS,
+            @intFromPtr(state.vcpu_events),
+        });
+    }
 };
 
 pub const VCPU_SIGNAL = nix.SIGUSR1;

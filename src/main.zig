@@ -49,7 +49,7 @@ pub const std_options = std.Options{
 };
 
 pub const log_options = log.Options{
-    .level = .info,
+    .level = .debug,
     .colors = true,
 };
 
@@ -57,7 +57,7 @@ pub const profiler_options = profiler.Options{
     .enabled = false,
 };
 
-pub const panic = if (builtin.mode == .ReleaseFast) std.debug.simple_panic else 0;
+// pub const panic = if (builtin.mode == .ReleaseFast) std.debug.simple_panic else void;
 
 pub const MEASUREMENTS = profiler.Measurements("main", &.{
     "build_from_config",
@@ -90,7 +90,16 @@ const Args = struct {
     gdb_socket_path: ?[:0]const u8 = null,
 };
 
+pub const ConfigSpaceArch = if (builtin.cpu.arch == .aarch64) extern struct {
+    //
+} else if (builtin.cpu.arch == .x86_64) extern struct {
+    cpuid_n: u32,
+    msr_list_n: u32,
+    xsave_size: u32,
+} else @compileError("Only aarch64 and x64 are supported");
+
 pub const ConfigState = extern struct {
+    arch: ConfigSpaceArch,
     memory_mb: u32,
     vcpus: u32,
     uart_enabled: bool,
@@ -200,9 +209,10 @@ fn build_from_config(config_path: [:0]const u8, runtime: *Runtime, state: *State
 
     const config = &config_parse_result.config;
 
-    state.* = .from_config(config);
-
     runtime.kvm = .init(nix.System);
+
+    state.* = .from_config(config, runtime.kvm);
+
     runtime.vm = .init(nix.System, runtime.kvm);
     runtime.vm.set_memory(nix.System, .{
         .guest_phys_addr = Memory.DRAM_START,
@@ -229,8 +239,8 @@ fn build_from_config(config_path: [:0]const u8, runtime: *Runtime, state: *State
             state.vcpus,
             state.vcpu_threads,
             &runtime.vcpu_barrier,
-            &runtime.arch,
-            &state.arch,
+            runtime,
+            state,
             state.permanent_memory,
         );
         runtime.el.add_event(
@@ -437,18 +447,22 @@ fn build_from_config(config_path: [:0]const u8, runtime: *Runtime, state: *State
         x64_boot.configure_e820(&state.memory, cmdline_str, fdt_addr, fdt_size);
         x64_boot.configure_mptable(&state.memory, @truncate(config.machine.vcpus));
 
-        if (arch.x64.is_intel()) {
-            const KVM_TSS_ADDRESS: u64 = 0xfffb_d000;
-            _ = nix.assert(@src(), nix.System, "ioctl", .{
-                runtime.vm.fd,
-                nix.KVM_SET_TSS_ADDR,
-                KVM_TSS_ADDRESS,
-            });
-        }
+        x64_set_tss_addr(runtime.vm);
 
         const supported_cpuid = runtime.kvm.supported_cpuid();
         for (state.vcpus, 0..) |*vcpu, i|
             Vcpu.x64.configure(vcpu, nix.System, @truncate(i), load_result.start, supported_cpuid);
+    }
+}
+
+fn x64_set_tss_addr(vm: Vm) void {
+    if (arch.x64.is_intel()) {
+        const KVM_TSS_ADDRESS: u64 = 0xfffb_d000;
+        _ = nix.assert(@src(), nix.System, "ioctl", .{
+            vm.fd,
+            nix.KVM_SET_TSS_ADDR,
+            KVM_TSS_ADDRESS,
+        });
     }
 }
 
@@ -773,6 +787,15 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
             regs_bytes = regs_bytes[used..];
         }
         runtime.arch.gicv2.restore_state(nix.System, state.arch.gicv2_state, @intCast(state.vcpus.len));
+    } else if (builtin.cpu.arch == .x86_64) {
+        x64_set_tss_addr(runtime.vm);
+        apic.restore_state(nix.System, runtime.vm, state.arch.apic_state);
+        for (state.vcpus, 0..) |*vcpu, i|
+            Vcpu.x64.restore_state(
+                vcpu,
+                nix.System,
+                state.arch.vcpu_state(i, state.config_state.arch),
+            );
     }
 
     if (state.config_state.uart_enabled) {
@@ -993,10 +1016,9 @@ fn restore_terminal(comptime System: type, state: *const nix.termios) !void {
 
 pub const RuntimeArch = if (builtin.cpu.arch == .aarch64) struct {
     gicv2: Gicv2,
-} else if (builtin.cpu.arch == .x86_64)
-    struct {}
-else
-    @compileError("Only aarch64 and x64 are supported");
+} else if (builtin.cpu.arch == .x86_64) struct {
+    //
+} else @compileError("Only aarch64 and x64 are supported");
 pub const Runtime = struct {
     kvm: Kvm,
     vm: Vm,
@@ -1019,10 +1041,46 @@ pub const StateArch = if (builtin.cpu.arch == .aarch64) struct {
     vcpu_regs: []u8,
     vcpu_mp_states: []nix.kvm_mp_state,
     gicv2_state: []u32,
-} else if (builtin.cpu.arch == .x86_64)
-    struct {}
-else
-    @compileError("Only aarch64 and x64 are supported");
+} else if (builtin.cpu.arch == .x86_64) struct {
+    // 8 byte aligned
+    apic_state: []align(8) u8,
+    kvm_regs: []nix.kvm_regs,
+    kvm_sregs: []nix.kvm_sregs,
+    kvm_xcrs: []nix.kvm_xcrs,
+    kvm_debugregs: []nix.kvm_debugregs,
+    kvm_vcpu_events: []nix.kvm_vcpu_events,
+    // `msr_list_n` entries per vcpu
+    msrs: []nix.kvm_msr_entry,
+    // 4 byte aligned
+    mp_state: []nix.kvm_mp_state,
+    tsc_khz: []u32,
+    // `cpuid_n` entries per vcpu
+    cpuid: []nix.kvm_cpuid_entry2,
+    // `xsave_size` bytes per vcpu
+    xsave: []align(4) u8,
+    // 1 byte aligned
+    kvm_lapic: []nix.kvm_lapic_state,
+
+    const Self = @This();
+
+    pub fn vcpu_state(self: *const Self, index: usize, config: ConfigSpaceArch) Vcpu.x64.State {
+        const xsave_size = config.xsave_size;
+        return .{
+            .regs = &self.kvm_regs[index],
+            .sregs = &self.kvm_sregs[index],
+            .xcrs = &self.kvm_xcrs[index],
+            .debugregs = &self.kvm_debugregs[index],
+            .vcpu_events = &self.kvm_vcpu_events[index],
+            .msrs = self.msrs[index * config.msr_list_n ..][0..config.msr_list_n],
+            .mp_state = &self.mp_state[index],
+            .tsc_khz = &self.tsc_khz[index],
+            .cpuid = self.cpuid[index * config.cpuid_n ..][0..config.cpuid_n],
+            .xsave = @alignCast(self.xsave[index * xsave_size ..][0..xsave_size]),
+            .lapic = &self.kvm_lapic[index],
+        };
+    }
+} else @compileError("Only aarch64 and x64 are supported");
+
 pub const State = struct {
     permanent_memory: Memory.Permanent,
     memory: Memory.Guest,
@@ -1042,7 +1100,7 @@ pub const State = struct {
     config_devices_state: []u8,
     config_state: *ConfigState,
 
-    pub fn from_config(config: *const config_parser.Config) State {
+    pub fn from_config(config: *const config_parser.Config, kvm: Kvm) State {
         const prof_point = MEASUREMENTS.start_named("State.from_config");
         defer MEASUREMENTS.end(prof_point);
 
@@ -1104,6 +1162,7 @@ pub const State = struct {
 
         // Additional bytes needed to store VM state
         var arch_state_bytes: usize = 0;
+
         const arch_state_parts = if (builtin.cpu.arch == .aarch64) blk: {
             const parts = .{
                 // 8 byte aligned
@@ -1120,7 +1179,48 @@ pub const State = struct {
                 parts.gicv2_state_bytes;
             break :blk parts;
         } else if (builtin.cpu.arch == .x86_64) blk: {
-            break :blk .{};
+            const cpuid = kvm.supported_cpuid();
+            const msr_list = kvm.get_msr_list(nix.System);
+            // KVM_CAP_XSAVE2 returns 0 if the extension is not supported,
+            // in which case the legacy 4KiB kvm_xsave is used.
+            const xsave_size: u32 = @intCast(@max(
+                kvm.check_extension(nix.System, nix.KVM_CAP_XSAVE2) catch unreachable,
+                @sizeOf(nix.kvm_xsave),
+            ));
+            const parts = .{
+                .cpuid_n = cpuid.nent,
+                .msr_list_n = msr_list.nmsrs,
+                .xsave_size = xsave_size,
+
+                // 8 byte aligned
+                .apic_state_bytes = apic.STATE_BYTES,
+                .kvm_regs_bytes = config.machine.vcpus * @sizeOf(nix.kvm_regs),
+                .kvm_sregs_bytes = config.machine.vcpus * @sizeOf(nix.kvm_sregs),
+                .kvm_xcrs_bytes = config.machine.vcpus * @sizeOf(nix.kvm_xcrs),
+                .kvm_debugregs_bytes = config.machine.vcpus * @sizeOf(nix.kvm_debugregs),
+                .kvm_vcpu_events_bytes = config.machine.vcpus * @sizeOf(nix.kvm_vcpu_events),
+                .msrs_bytes = config.machine.vcpus * msr_list.nmsrs * @sizeOf(nix.kvm_msr_entry),
+                // 4 byte aligned
+                .mp_state_bytes = config.machine.vcpus * @sizeOf(nix.kvm_mp_state),
+                .tsc_khz_bytes = config.machine.vcpus * @sizeOf(u32),
+                .cpuid_bytes = config.machine.vcpus * cpuid.nent * @sizeOf(nix.kvm_cpuid_entry2),
+                .xsave_bytes = config.machine.vcpus * xsave_size,
+                // 1 byte aligned
+                .kvm_lapic_bytes = config.machine.vcpus * @sizeOf(nix.kvm_lapic_state),
+            };
+            arch_state_bytes += parts.apic_state_bytes +
+                parts.kvm_regs_bytes +
+                parts.kvm_sregs_bytes +
+                parts.kvm_xcrs_bytes +
+                parts.kvm_debugregs_bytes +
+                parts.kvm_vcpu_events_bytes +
+                parts.msrs_bytes +
+                parts.mp_state_bytes +
+                parts.tsc_khz_bytes +
+                parts.cpuid_bytes +
+                parts.xsave_bytes +
+                parts.kvm_lapic_bytes;
+            break :blk parts;
         };
 
         // 1 byte aligned
@@ -1225,7 +1325,9 @@ pub const State = struct {
             result.arch.rtc = @ptrCast(@alignCast(pm[0..rtc_bytes]));
             result.arch.rtc.* = .{};
             pm = pm[rtc_bytes..];
-        }
+        } else if (builtin.cpu.arch == .x86_64) {
+            //
+        } else @compileError("Only aarch64 and x64 are supported");
 
         if (config.api.socket_path != null) {
             if (builtin.cpu.arch == .aarch64) {
@@ -1249,13 +1351,69 @@ pub const State = struct {
                 log.debug(@src(), "gicv2_state_bytes: {d}", .{arch_state_parts.gicv2_state_bytes});
                 result.arch.gicv2_state = @ptrCast(@alignCast(pm[0..arch_state_parts.gicv2_state_bytes]));
                 pm = pm[arch_state_parts.gicv2_state_bytes..];
-            }
+            } else if (builtin.cpu.arch == .x86_64) {
+                log.debug(@src(), "apic_state_bytes: {d}", .{arch_state_parts.apic_state_bytes});
+                result.arch.apic_state = @ptrCast(@alignCast(pm[0..arch_state_parts.apic_state_bytes]));
+                pm = pm[arch_state_parts.apic_state_bytes..];
+
+                log.debug(@src(), "kvm_regs_bytes: {d}", .{arch_state_parts.kvm_regs_bytes});
+                result.arch.kvm_regs = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_regs_bytes]));
+                pm = pm[arch_state_parts.kvm_regs_bytes..];
+
+                log.debug(@src(), "kvm_sregs_bytes: {d}", .{arch_state_parts.kvm_sregs_bytes});
+                result.arch.kvm_sregs = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_sregs_bytes]));
+                pm = pm[arch_state_parts.kvm_sregs_bytes..];
+
+                log.debug(@src(), "kvm_xcrs_bytes: {d}", .{arch_state_parts.kvm_xcrs_bytes});
+                result.arch.kvm_xcrs = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_xcrs_bytes]));
+                pm = pm[arch_state_parts.kvm_xcrs_bytes..];
+
+                log.debug(@src(), "kvm_debugregs_bytes: {d}", .{arch_state_parts.kvm_debugregs_bytes});
+                result.arch.kvm_debugregs = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_debugregs_bytes]));
+                pm = pm[arch_state_parts.kvm_debugregs_bytes..];
+
+                log.debug(@src(), "kvm_vcpu_events_bytes: {d}", .{arch_state_parts.kvm_vcpu_events_bytes});
+                result.arch.kvm_vcpu_events = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_vcpu_events_bytes]));
+                pm = pm[arch_state_parts.kvm_vcpu_events_bytes..];
+
+                log.debug(@src(), "msrs_bytes: {d}", .{arch_state_parts.msrs_bytes});
+                result.arch.msrs = @ptrCast(@alignCast(pm[0..arch_state_parts.msrs_bytes]));
+                pm = pm[arch_state_parts.msrs_bytes..];
+
+                log.debug(@src(), "mp_state_bytes: {d}", .{arch_state_parts.mp_state_bytes});
+                result.arch.mp_state = @ptrCast(@alignCast(pm[0..arch_state_parts.mp_state_bytes]));
+                pm = pm[arch_state_parts.mp_state_bytes..];
+
+                log.debug(@src(), "tsc_khz_bytes: {d}", .{arch_state_parts.tsc_khz_bytes});
+                result.arch.tsc_khz = @ptrCast(@alignCast(pm[0..arch_state_parts.tsc_khz_bytes]));
+                pm = pm[arch_state_parts.tsc_khz_bytes..];
+
+                log.debug(@src(), "cpuid_bytes: {d}", .{arch_state_parts.cpuid_bytes});
+                result.arch.cpuid = @ptrCast(@alignCast(pm[0..arch_state_parts.cpuid_bytes]));
+                pm = pm[arch_state_parts.cpuid_bytes..];
+
+                log.debug(@src(), "xsave_bytes: {d}", .{arch_state_parts.xsave_bytes});
+                result.arch.xsave = @ptrCast(@alignCast(pm[0..arch_state_parts.xsave_bytes]));
+                pm = pm[arch_state_parts.xsave_bytes..];
+
+                log.debug(@src(), "kvm_lapic_bytes: {d}", .{arch_state_parts.kvm_lapic_bytes});
+                result.arch.kvm_lapic = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_lapic_bytes]));
+                pm = pm[arch_state_parts.kvm_lapic_bytes..];
+            } else @compileError("Only aarch64 and x64 are supported");
 
             log.debug(@src(), "config_devices_bytes: {d}", .{config_devices_bytes});
             result.config_devices_state = @ptrCast(pm[0..config_devices_bytes]);
             pm = pm[config_devices_bytes..];
 
             result.config_state = @ptrCast(@alignCast(pm[pm.len - @sizeOf(ConfigState) ..]));
+
+            if (builtin.cpu.arch == .aarch64) {
+                //
+            } else if (builtin.cpu.arch == .x86_64) {
+                result.config_state.arch.cpuid_n = arch_state_parts.cpuid_n;
+                result.config_state.arch.msr_list_n = arch_state_parts.msr_list_n;
+                result.config_state.arch.xsave_size = arch_state_parts.xsave_size;
+            } else @compileError("Only aarch64 and x64 are supported");
 
             result.config_state.memory_mb = config.machine.memory_mb;
             result.config_state.vcpus = config.machine.vcpus;
@@ -1428,7 +1586,27 @@ pub const State = struct {
             };
             break :blk parts;
         } else if (builtin.cpu.arch == .x86_64) blk: {
-            break :blk .{};
+            const parts = .{
+                .cpuid_n = result.config_state.arch.cpuid_n,
+                .msr_list_n = result.config_state.arch.msr_list_n,
+                .xsave_size = result.config_state.arch.xsave_size,
+                // 8 byte aligned
+                .apic_state_bytes = apic.STATE_BYTES,
+                .kvm_regs_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_regs),
+                .kvm_sregs_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_sregs),
+                .kvm_xcrs_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_xcrs),
+                .kvm_debugregs_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_debugregs),
+                .kvm_vcpu_events_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_vcpu_events),
+                .msrs_bytes = result.config_state.vcpus * result.config_state.arch.msr_list_n * @sizeOf(nix.kvm_msr_entry),
+                // 4 byte aligned
+                .mp_state_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_mp_state),
+                .tsc_khz_bytes = result.config_state.vcpus * @sizeOf(u32),
+                .cpuid_bytes = result.config_state.vcpus * result.config_state.arch.cpuid_n * @sizeOf(nix.kvm_cpuid_entry2),
+                .xsave_bytes = result.config_state.vcpus * result.config_state.arch.xsave_size,
+                // 1 byte aligned
+                .kvm_lapic_bytes = result.config_state.vcpus * @sizeOf(nix.kvm_lapic_state),
+            };
+            break :blk parts;
         };
 
         log.debug(@src(), "memory_bytes: {d}", .{memory_bytes});
@@ -1507,6 +1685,54 @@ pub const State = struct {
             log.debug(@src(), "gicv2_state_bytes: {d}", .{arch_state_parts.gicv2_state_bytes});
             result.arch.gicv2_state = @ptrCast(@alignCast(pm[0..arch_state_parts.gicv2_state_bytes]));
             pm = pm[arch_state_parts.gicv2_state_bytes..];
+        } else if (builtin.cpu.arch == .x86_64) {
+            log.debug(@src(), "apic_state_bytes: {d}", .{arch_state_parts.apic_state_bytes});
+            result.arch.apic_state = @ptrCast(@alignCast(pm[0..arch_state_parts.apic_state_bytes]));
+            pm = pm[arch_state_parts.apic_state_bytes..];
+
+            log.debug(@src(), "kvm_regs_bytes: {d}", .{arch_state_parts.kvm_regs_bytes});
+            result.arch.kvm_regs = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_regs_bytes]));
+            pm = pm[arch_state_parts.kvm_regs_bytes..];
+
+            log.debug(@src(), "kvm_sregs_bytes: {d}", .{arch_state_parts.kvm_sregs_bytes});
+            result.arch.kvm_sregs = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_sregs_bytes]));
+            pm = pm[arch_state_parts.kvm_sregs_bytes..];
+
+            log.debug(@src(), "kvm_xcrs_bytes: {d}", .{arch_state_parts.kvm_xcrs_bytes});
+            result.arch.kvm_xcrs = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_xcrs_bytes]));
+            pm = pm[arch_state_parts.kvm_xcrs_bytes..];
+
+            log.debug(@src(), "kvm_debugregs_bytes: {d}", .{arch_state_parts.kvm_debugregs_bytes});
+            result.arch.kvm_debugregs = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_debugregs_bytes]));
+            pm = pm[arch_state_parts.kvm_debugregs_bytes..];
+
+            log.debug(@src(), "kvm_vcpu_events_bytes: {d}", .{arch_state_parts.kvm_vcpu_events_bytes});
+            result.arch.kvm_vcpu_events = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_vcpu_events_bytes]));
+            pm = pm[arch_state_parts.kvm_vcpu_events_bytes..];
+
+            log.debug(@src(), "msrs_bytes: {d}", .{arch_state_parts.msrs_bytes});
+            result.arch.msrs = @ptrCast(@alignCast(pm[0..arch_state_parts.msrs_bytes]));
+            pm = pm[arch_state_parts.msrs_bytes..];
+
+            log.debug(@src(), "mp_state_bytes: {d}", .{arch_state_parts.mp_state_bytes});
+            result.arch.mp_state = @ptrCast(@alignCast(pm[0..arch_state_parts.mp_state_bytes]));
+            pm = pm[arch_state_parts.mp_state_bytes..];
+
+            log.debug(@src(), "tsc_khz_bytes: {d}", .{arch_state_parts.tsc_khz_bytes});
+            result.arch.tsc_khz = @ptrCast(@alignCast(pm[0..arch_state_parts.tsc_khz_bytes]));
+            pm = pm[arch_state_parts.tsc_khz_bytes..];
+
+            log.debug(@src(), "cpuid_bytes: {d}", .{arch_state_parts.cpuid_bytes});
+            result.arch.cpuid = @ptrCast(@alignCast(pm[0..arch_state_parts.cpuid_bytes]));
+            pm = pm[arch_state_parts.cpuid_bytes..];
+
+            log.debug(@src(), "xsave_bytes: {d}", .{arch_state_parts.xsave_bytes});
+            result.arch.xsave = @ptrCast(@alignCast(pm[0..arch_state_parts.xsave_bytes]));
+            pm = pm[arch_state_parts.xsave_bytes..];
+
+            log.debug(@src(), "kvm_lapic_bytes: {d}", .{arch_state_parts.kvm_lapic_bytes});
+            result.arch.kvm_lapic = @ptrCast(@alignCast(pm[0..arch_state_parts.kvm_lapic_bytes]));
+            pm = pm[arch_state_parts.kvm_lapic_bytes..];
         }
 
         log.debug(@src(), "config_devices_bytes: {d}", .{pm.len - @sizeOf(ConfigState)});

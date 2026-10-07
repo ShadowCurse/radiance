@@ -29,7 +29,7 @@ Experimental KVM based VMM platform.
 | io_uring (Block) | Yes | Yes |
 | vhost-net (Network) | Yes | Yes |
 | **Features** | | |
-| Snapshot/Restore | Yes | No |
+| Snapshot/Restore | Yes | Yes |
 | API (pause/resume) | Yes | Yes |
 | GDB | Yes | Yes |
 

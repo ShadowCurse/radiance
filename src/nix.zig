@@ -456,6 +456,7 @@ pub inline fn _IOWR(comptime @"type": u32, comptime nr: u32, comptime arg_type: 
 pub const KVM_CREATE_VM = _IO(KVMIO, 0x01);
 pub const KVM_SET_USER_MEMORY_REGION = _IOW(KVMIO, 0x46, kvm_userspace_memory_region);
 pub const KVM_CREATE_VCPU = _IO(KVMIO, 0x41);
+pub const KVM_CHECK_EXTENSION = _IO(KVMIO, 0x03);
 pub const KVM_GET_VCPU_MMAP_SIZE = _IO(KVMIO, 0x04);
 pub const KVM_CREATE_DEVICE = _IOWR(KVMIO, 0xe0, kvm_create_device);
 pub const KVM_IRQFD = _IOW(KVMIO, 0x76, kvm_irqfd);
@@ -467,28 +468,47 @@ pub const KVM_RUN = _IO(KVMIO, 0x80);
 pub const KVM_MAX_CPUID_ENTRIES = 256;
 pub const KVM_SET_TSS_ADDR = _IO(KVMIO, @as(c_int, 0x47));
 pub const KVM_GET_SUPPORTED_CPUID = _IOWR(KVMIO, @as(c_int, 0x05), kvm_cpuid2);
-pub const KVM_GET_REGS = _IOR(KVMIO, @as(c_int, 0x81), kvm_regs);
-pub const KVM_SET_REGS = _IOW(KVMIO, @as(c_int, 0x82), kvm_regs);
-pub const KVM_GET_SREGS = _IOR(KVMIO, @as(c_int, 0x83), kvm_sregs);
-pub const KVM_SET_SREGS = _IOW(KVMIO, @as(c_int, 0x84), kvm_sregs);
-pub const KVM_GET_MSRS = _IOWR(KVMIO, @as(c_int, 0x88), kvm_msrs);
-pub const KVM_SET_MSRS = _IOW(KVMIO, @as(c_int, 0x89), kvm_msrs);
+pub const KVM_GET_REGS = _IOR(KVMIO, 0x81, kvm_regs);
+pub const KVM_SET_REGS = _IOW(KVMIO, 0x82, kvm_regs);
+pub const KVM_GET_SREGS = _IOR(KVMIO, 0x83, kvm_sregs);
+pub const KVM_SET_SREGS = _IOW(KVMIO, 0x84, kvm_sregs);
+pub const KVM_GET_XCRS = _IOR(KVMIO, 0xa6, kvm_xcrs);
+pub const KVM_SET_XCRS = _IOW(KVMIO, 0xa7, kvm_xcrs);
+pub const KVM_GET_DEBUGREGS = _IOR(KVMIO, 0xa1, kvm_debugregs);
+pub const KVM_SET_DEBUGREGS = _IOW(KVMIO, 0xa2, kvm_debugregs);
+pub const KVM_SET_TSC_KHZ = _IO(KVMIO, 0xa2);
+pub const KVM_GET_TSC_KHZ = _IO(KVMIO, 0xa3);
+pub const KVM_MAX_MSR_ENTRIES = 256;
+pub const KVM_GET_MSRS = _IOWR(KVMIO, 0x88, kvm_msrs);
+pub const KVM_SET_MSRS = _IOW(KVMIO, 0x89, kvm_msrs);
+pub const KVM_GET_MSR_INDEX_LIST = _IOWR(KVMIO, 0x02, kvm_msr_list);
+pub const KVM_GET_VCPU_EVENTS = _IOR(KVMIO, 0x9f, kvm_vcpu_events);
+pub const KVM_SET_VCPU_EVENTS = _IOW(KVMIO, 0xa0, kvm_vcpu_events);
 // pub const KVM_SET_CPUID = _IOW(KVMIO, @as(c_int, 0x8a), struct_kvm_cpuid);
-pub const KVM_GET_FPU = _IOR(KVMIO, @as(c_int, 0x8c), kvm_fpu);
-pub const KVM_SET_FPU = _IOW(KVMIO, @as(c_int, 0x8d), kvm_fpu);
-pub const KVM_GET_LAPIC = _IOR(KVMIO, @as(c_int, 0x8e), kvm_lapic_state);
-pub const KVM_SET_LAPIC = _IOW(KVMIO, @as(c_int, 0x8f), kvm_lapic_state);
-pub const KVM_SET_CPUID2 = _IOW(KVMIO, @as(c_int, 0x90), kvm_cpuid2);
-pub const KVM_GET_CPUID2 = _IOWR(KVMIO, @as(c_int, 0x91), kvm_cpuid2);
-pub const KVM_CREATE_IRQCHIP = _IO(KVMIO, @as(c_int, 0x60));
-pub const KVM_CREATE_PIT2 = _IOW(KVMIO, @as(c_int, 0x77), kvm_pit_config);
+pub const KVM_GET_FPU = _IOR(KVMIO, 0x8c, kvm_fpu);
+pub const KVM_SET_FPU = _IOW(KVMIO, 0x8d, kvm_fpu);
+pub const KVM_GET_LAPIC = _IOR(KVMIO, 0x8e, kvm_lapic_state);
+pub const KVM_SET_LAPIC = _IOW(KVMIO, 0x8f, kvm_lapic_state);
+pub const KVM_SET_CPUID2 = _IOW(KVMIO, 0x90, kvm_cpuid2);
+pub const KVM_GET_CPUID2 = _IOWR(KVMIO, 0x91, kvm_cpuid2);
+pub const KVM_CREATE_IRQCHIP = _IO(KVMIO, 0x60);
+pub const KVM_CREATE_PIT2 = _IOW(KVMIO, 0x77, kvm_pit_config);
+pub const KVM_GET_XSAVE = _IOR(KVMIO, 0xa4, kvm_xsave);
+pub const KVM_SET_XSAVE = _IOW(KVMIO, 0xa5, kvm_xsave);
+pub const KVM_GET_XSAVE2 = _IOR(KVMIO, 0xcf, kvm_xsave);
+pub const KVM_GET_PIT2 = _IOR(KVMIO, 0x9f, kvm_pit_state2);
+pub const KVM_SET_PIT2 = _IOW(KVMIO, 0xa0, kvm_pit_state2);
+pub const KVM_SET_CLOCK = _IOW(KVMIO, 0x7b, kvm_clock_data);
+pub const KVM_GET_CLOCK = _IOR(KVMIO, 0x7c, kvm_clock_data);
+pub const KVM_GET_IRQCHIP = _IOWR(KVMIO, 0x62, kvm_irqchip);
+pub const KVM_SET_IRQCHIP = _IOR(KVMIO, 0x63, kvm_irqchip);
 
 // aarch64
 pub const KVM_GET_ONE_REG = _IOW(KVMIO, 0xab, kvm_one_reg);
 pub const KVM_SET_ONE_REG = _IOW(KVMIO, 0xac, kvm_one_reg);
-pub const KVM_GET_REG_LIST = _IOWR(KVMIO, @as(c_int, 0xb0), kvm_reg_list);
-pub const KVM_GET_MP_STATE = _IOR(KVMIO, @as(c_int, 0x98), kvm_mp_state);
-pub const KVM_SET_MP_STATE = _IOW(KVMIO, @as(c_int, 0x99), kvm_mp_state);
+pub const KVM_GET_REG_LIST = _IOWR(KVMIO, 0xb0, kvm_reg_list);
+pub const KVM_GET_MP_STATE = _IOR(KVMIO, 0x98, kvm_mp_state);
+pub const KVM_SET_MP_STATE = _IOW(KVMIO, 0x99, kvm_mp_state);
 pub const KVM_SET_DEVICE_ATTR = _IOW(KVMIO, 0xe1, kvm_device_attr);
 pub const KVM_GET_DEVICE_ATTR = _IOW(KVMIO, 0xe2, kvm_device_attr);
 
@@ -520,6 +540,9 @@ pub const KVM_DEV_ARM_VGIC_CPUID_SHIFT = 32;
 pub const KVM_DEV_ARM_VGIC_CPUID_MASK = 0xff << KVM_DEV_ARM_VGIC_CPUID_SHIFT;
 pub const KVM_DEV_ARM_VGIC_OFFSET_SHIFT = 0;
 pub const KVM_DEV_ARM_VGIC_OFFSET_MASK = 0xffff_ffff << KVM_DEV_ARM_VGIC_OFFSET_SHIFT;
+
+// x64
+pub const KVM_CAP_XSAVE2 = 208;
 
 //
 // MSI_TYPER:
@@ -746,6 +769,22 @@ pub const kvm_msrs = extern struct {
         };
     }
 };
+pub const kvm_msr_list = extern struct {
+    nmsrs: u32 = 0,
+    pub fn indices(self: *kvm_msr_list, size: usize) []u32 {
+        return @as([*]u32, @ptrFromInt(@intFromPtr(self) + 4))[0..size];
+    }
+    pub fn with_entries(comptime N: u32) type {
+        return extern struct {
+            nmsrs: u32 = N,
+            entries: [N]u32 = undefined,
+            const Self = @This();
+            pub fn as(self: *Self) *kvm_msr_list {
+                return @ptrCast(self);
+            }
+        };
+    }
+};
 pub const kvm_cpuid_entry2 = extern struct {
     // leaf
     function: u32 = 0,
@@ -775,6 +814,128 @@ pub const kvm_cpuid2 = extern struct {
             }
         };
     }
+};
+pub const kvm_xsave = extern struct {
+    region: [1024]u32 = .{0} ** 1024,
+    pub fn extra(self: *kvm_xsave, size: usize) []u32 {
+        return @as([*]u32, @ptrFromInt(@intFromPtr(self) + 4096))[0..size];
+    }
+};
+pub const kvm_xcr = extern struct {
+    xcr: u32 = 0,
+    reserved: u32 = 0,
+    value: u64 = 0,
+};
+pub const kvm_xcrs = extern struct {
+    nr_xcrs: u32 = 0,
+    flags: u32 = 0,
+    xcrs: [16]kvm_xcr = .{kvm_xcr{}} ** 16,
+    padding: [16]u64 = .{0} ** 16,
+};
+pub const kvm_debugregs = extern struct {
+    db: [4]u64 = .{0} ** 4,
+    dr6: u64 = 0,
+    dr7: u64 = 0,
+    flags: u64 = 0,
+    reserved: [9]u64 = .{0} ** 9,
+};
+pub const kvm_vcpu_events = extern struct {
+    exception: extern struct {
+        injected: u8 = 0,
+        nr: u8 = 0,
+        has_error_code: u8 = 0,
+        pending: u8 = 0,
+        error_code: u32 = 0,
+    } = .{},
+    interrupt: extern struct {
+        injected: u8 = 0,
+        nr: u8 = 0,
+        soft: u8 = 0,
+        shadow: u8 = 0,
+    } = .{},
+    nmi: extern struct {
+        injected: u8 = 0,
+        pending: u8 = 0,
+        masked: u8 = 0,
+        pad: u8 = 0,
+    } = .{},
+    sipi_vector: u32 = 0,
+    flags: u32 = 0,
+    smi: extern struct {
+        smm: u8 = 0,
+        pending: u8 = 0,
+        smm_inside_nmi: u8 = 0,
+        latched_init: u8 = 0,
+    } = .{},
+    triple_fault: extern struct {
+        pending: u8 = 0,
+    } = .{},
+    reserved: [26]u8 = .{0} ** 26,
+    exception_has_payload: u8 = 0,
+    exception_payload: u64 = 0,
+};
+pub const kvm_pit_channel_state = extern struct {
+    count: u32 = 0,
+    latched_count: u16 = 0,
+    count_latched: u8 = 0,
+    status_latched: u8 = 0,
+    status: u8 = 0,
+    read_state: u8 = 0,
+    write_state: u8 = 0,
+    write_latch: u8 = 0,
+    rw_mode: u8 = 0,
+    mode: u8 = 0,
+    bcd: u8 = 0,
+    gate: u8 = 0,
+    count_load_time: i64 = 0,
+};
+pub const kvm_pit_state2 = extern struct {
+    channels: [3]kvm_pit_channel_state = .{kvm_pit_channel_state{}} ** 3,
+    flags: u32 = 0,
+    reserved: [9]u32 = .{0} ** 9,
+};
+pub const kvm_clock_data = extern struct {
+    clock: u64 = 0,
+    flags: u32 = 0,
+    pad0: u32 = 0,
+    realtime: u64 = 0,
+    host_tsc: u64 = 0,
+    pad: [4]u32 = .{0} ** 4,
+};
+pub const kvm_pic_state = extern struct {
+    last_irr: u8 = 0,
+    irr: u8 = 0,
+    imr: u8 = 0,
+    isr: u8 = 0,
+    priority_add: u8 = 0,
+    irq_base: u8 = 0,
+    read_reg_select: u8 = 0,
+    poll: u8 = 0,
+    special_mask: u8 = 0,
+    init_state: u8 = 0,
+    auto_eoi: u8 = 0,
+    rotate_on_auto_eoi: u8 = 0,
+    special_fully_nested_mode: u8 = 0,
+    init4: u8 = 0,
+    elcr: u8 = 0,
+    elcr_mask: u8 = 0,
+};
+pub const kvm_ioapic_state = extern struct {
+    base_address: u64 = 0,
+    ioregsel: u32 = 0,
+    id: u32 = 0,
+    irr: u32 = 0,
+    pad: u32 = 0,
+    redirtbl: [24]u64 = .{0} ** 24,
+};
+pub const kvm_irqchip = extern struct {
+    chip_id: u32 = 0,
+    pad: u32 = 0,
+    chip: extern union {
+        dummy: [512]u8,
+        pic: kvm_pic_state,
+        ioapic: kvm_ioapic_state,
+    } = undefined,
 };
 
 pub const kvm_ioeventfd = extern struct {
