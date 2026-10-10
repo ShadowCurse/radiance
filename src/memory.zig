@@ -48,28 +48,34 @@ pub const Guest = struct {
 
     const Self = @This();
 
-    pub fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
+    pub inline fn get_ptr(self: *const Self, comptime T: type, addr: u64) *volatile T {
         log.assert(@src(), DRAM_START <= addr, "Acessing guest memory bellow DRAM_START: 0x{x}", .{addr});
         const offset = addr - DRAM_START;
-        const end_of_type = offset + @sizeOf(T);
+        // Don't do additions to avoid overflows.
         log.assert(
             @src(),
-            end_of_type <= self.mem.len,
-            "Guest memory type access reaches beyond the end of the RAM: {} <= {}",
-            .{ self.mem.len, end_of_type },
+            offset <= self.mem.len - @sizeOf(T),
+            "Guest memory type access reaches beyond the end of the RAM: 0x{X} <= 0x{x} + 0x{x}",
+            .{ DRAM_START, addr, @sizeOf(T) },
         );
         return @ptrFromInt(@as(u64, @intFromPtr(self.mem.ptr)) + offset);
     }
 
-    pub fn get_slice(self: *const Self, comptime T: type, len: u64, addr: u64) []volatile T {
+    pub inline fn get_slice(self: *const Self, comptime T: type, len: u64, addr: u64) []volatile T {
         log.assert(@src(), DRAM_START <= addr, "Acessing guest memory bellow DRAM_START: 0x{x}", .{addr});
         const offset = addr - DRAM_START;
-        const end_of_slice = offset + @sizeOf(T) * len;
+        // Don't do additions to avoid overflows.
         log.assert(
             @src(),
-            end_of_slice <= self.mem.len,
-            "Guest memory slice access reaches beyond the end of the RAM: {} <= {}",
-            .{ self.mem.len, end_of_slice },
+            offset <= self.mem.len,
+            "Guest memory slice starts beyond the end of the RAM: 0x{x} <= 0x{x}",
+            .{ DRAM_START, addr },
+        );
+        log.assert(
+            @src(),
+            len <= (self.mem.len - offset) / @sizeOf(T),
+            "Guest memory slice access reaches beyond the end of the RAM: 0x{} <= 0x{x} + 0x{x} * 0x{x}",
+            .{ DRAM_START, addr, len, @as(u64, @sizeOf(T)) },
         );
         var slice: []T = undefined;
         slice.ptr = @ptrFromInt(@as(u64, @intFromPtr(self.mem.ptr)) + offset);
