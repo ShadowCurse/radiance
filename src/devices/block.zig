@@ -186,70 +186,96 @@ pub fn Block(comptime Context: type) type {
             _ = queue_event.read(System);
             self.process_queue(System);
         }
-        fn process_queue(self: *Self, comptime System: type) void {
-            var segments: [MAX_SEGMENTS][]volatile u8 = undefined;
-            var segments_n: u32 = 0;
-            var total_segments_len: u32 = 0;
-
+        pub fn process_queue(self: *Self, comptime System: type) void {
             const queue = &self.context.queues[self.context.selected_queue];
             while (queue.pop_desc_chain(self.memory)) |dc| {
-                segments_n = 0;
-                total_segments_len = 0;
-
                 var desc_chain = dc;
-                const header_desc_index = desc_chain.index.?;
-                const header_desc = desc_chain.next().?;
-                const header = self.memory.get_ptr(nix.virtio_blk_outhdr, header_desc.addr);
-                var offset = header.sector << SECTOR_SHIFT;
+                const head_index = desc_chain.index.?;
 
-                var data_desc = desc_chain.next().?;
-                while ((data_desc.flags & nix.VRING_DESC_F_NEXT) != 0) {
-                    log.assert(
-                        @src(),
-                        segments_n < MAX_SEGMENTS,
-                        "Got descriptor chain with more data segments than MAX_SEGMENTS({d})",
-                        .{@as(u32, MAX_SEGMENTS)},
-                    );
-                    segments[segments_n] = self.memory.get_slice(u8, data_desc.len, data_desc.addr);
-                    total_segments_len += data_desc.len;
-                    segments_n += 1;
-                    data_desc = desc_chain.next().?;
-                }
-                const status_desc = data_desc;
-
-                switch (header.type) {
-                    nix.VIRTIO_BLK_T_IN => {
-                        for (segments[0..segments_n]) |segment| {
-                            @memcpy(segment, self.file_mem[offset .. offset + segment.len]);
-                            offset += segment.len;
-                        }
-                    },
-                    nix.VIRTIO_BLK_T_OUT => {
-                        for (segments[0..segments_n]) |segment| {
-                            @memcpy(self.file_mem[offset .. offset + segment.len], segment);
-                            offset += segment.len;
-                        }
-                    },
-                    nix.VIRTIO_BLK_T_FLUSH => {
-                        self.sync(System);
-                    },
-                    nix.VIRTIO_BLK_T_GET_ID => {
+                var desc = desc_chain.next().?;
+                const header = self.memory.get_ptr(nix.virtio_blk_outhdr, desc.addr);
+                // Read guest header only once, so it can not be changed after validation.
+                const request_type = header.type;
+                const sector = header.sector;
+                switch (request_type) {
+                    nix.VIRTIO_BLK_T_IN, nix.VIRTIO_BLK_T_OUT => {
                         log.assert(
                             @src(),
-                            segments_n == 1,
-                            "Descriptor chain has more than 1 data descriptor for VIRTIO_BLK_T_GET_ID request",
-                            .{},
+                            sector <= self.file_mem.len >> SECTOR_SHIFT,
+                            "Request sector {} is beyond the end of the device",
+                            .{sector},
                         );
-                        const segment = segments[0];
-                        @memcpy(segment, &self.block_id);
-                        total_segments_len = nix.VIRTIO_BLK_ID_BYTES;
                     },
-                    else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
+                    nix.VIRTIO_BLK_T_FLUSH, nix.VIRTIO_BLK_T_GET_ID => {},
+                    else => log.err(@src(), "unknown virtio request type: {}", .{request_type}),
                 }
-                const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
-                status_ptr.* = nix.VIRTIO_BLK_S_OK;
+                var offset = sector << SECTOR_SHIFT;
 
-                queue.add_used_desc(self.memory, header_desc_index, total_segments_len);
+                // Data descriptors are processed while walking the chain.
+                var data_len: u32 = 0;
+                for (0..MAX_SEGMENTS + 1) |_| {
+                    const next = desc_chain.next();
+                    log.assert(@src(), next != null, "Descriptor chain ends before the status descriptor", .{});
+                    desc = next.?;
+                    // The status descriptor is the only one without the NEXT flag.
+                    if (desc_chain.index == null) {
+                        break;
+                    }
+
+                    const segment = self.memory.get_slice(u8, desc.len, desc.addr);
+                    switch (request_type) {
+                        nix.VIRTIO_BLK_T_IN => {
+                            log.assert(
+                                @src(),
+                                segment.len <= self.file_mem.len - offset,
+                                "Read request reaches beyond the end of the device: offset: {} len: {}",
+                                .{ offset, segment.len },
+                            );
+                            @memcpy(segment, self.file_mem[offset..][0..segment.len]);
+                            offset += segment.len;
+                        },
+                        nix.VIRTIO_BLK_T_OUT => {
+                            log.assert(
+                                @src(),
+                                segment.len <= self.file_mem.len - offset,
+                                "Write request reaches beyond the end of the device: offset: {} len: {}",
+                                .{ offset, segment.len },
+                            );
+                            @memcpy(self.file_mem[offset..][0..segment.len], segment);
+                            offset += segment.len;
+                        },
+                        nix.VIRTIO_BLK_T_GET_ID => {
+                            log.assert(
+                                @src(),
+                                segment.len == nix.VIRTIO_BLK_ID_BYTES,
+                                "VIRTIO_BLK_T_GET_ID data descriptor has invalid length: {}",
+                                .{segment.len},
+                            );
+                            @memcpy(segment, &self.block_id);
+                        },
+                        else => {},
+                    }
+                    data_len +%= desc.len;
+                } else log.panic(
+                    @src(),
+                    "Got descriptor chain with more data segments than MAX_SEGMENTS({d})",
+                    .{@as(u32, MAX_SEGMENTS)},
+                );
+
+                if (request_type == nix.VIRTIO_BLK_T_GET_ID) {
+                    log.assert(
+                        @src(),
+                        data_len == nix.VIRTIO_BLK_ID_BYTES,
+                        "Descriptor chain has more than 1 data descriptor for VIRTIO_BLK_T_GET_ID request",
+                        .{},
+                    );
+                }
+                if (request_type == nix.VIRTIO_BLK_T_FLUSH) {
+                    self.sync(System);
+                }
+
+                self.memory.get_ptr(u8, desc.addr).* = nix.VIRTIO_BLK_S_OK;
+                queue.add_used_desc(self.memory, head_index, data_len);
             }
 
             if (queue.publish_used(self.memory)) {
@@ -312,6 +338,9 @@ pub fn BlockIoUring(comptime Context: type) type {
         read_only: bool,
         memory: Memory.Guest,
         file_fd: nix.fd_t,
+        // Trusted device size. The config capacity can not be used, since
+        // the MMIO transport lets the guest write the config.
+        file_size: u64,
         block_id: [nix.VIRTIO_BLK_ID_BYTES]u8,
 
         io_uring_device: IoUring.Device,
@@ -340,6 +369,7 @@ pub fn BlockIoUring(comptime Context: type) type {
             });
 
             const statx = nix.assert(@src(), System, "statx", .{self.file_fd});
+            self.file_size = statx.size;
             const nsectors = statx.size >> SECTOR_SHIFT;
             self.block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
 
@@ -421,64 +451,74 @@ pub fn BlockIoUring(comptime Context: type) type {
             self.process_queue(System);
         }
         fn process_queue(self: *Self, comptime System: type) void {
-            var segments: [MAX_SEGMENTS_IO_URING][]volatile u8 = undefined;
-            var segments_n: u32 = 0;
-            var total_segments_len: u32 = 0;
+            var completed = false;
 
             const queue = &self.context.queues[self.context.selected_queue];
             while (queue.pop_desc_chain(self.memory)) |dc| {
-                segments_n = 0;
-                total_segments_len = 0;
-
                 var desc_chain = dc;
-                const header_desc_index = desc_chain.index.?;
-                const header_desc = desc_chain.next().?;
-                const header = self.memory.get_ptr(nix.virtio_blk_outhdr, header_desc.addr);
-                const offset = header.sector << SECTOR_SHIFT;
+                const head_index = desc_chain.index.?;
 
-                var data_desc = desc_chain.next().?;
+                var desc = desc_chain.next().?;
+                const header = self.memory.get_ptr(nix.virtio_blk_outhdr, desc.addr);
+                // Read guest header only once, so it can not be changed after validation.
+                const request_type = header.type;
+                const sector = header.sector;
+                switch (request_type) {
+                    nix.VIRTIO_BLK_T_IN, nix.VIRTIO_BLK_T_OUT => {
+                        log.assert(
+                            @src(),
+                            sector <= self.file_size >> SECTOR_SHIFT,
+                            "Request sector {} is beyond the end of the device",
+                            .{sector},
+                        );
+                    },
+                    nix.VIRTIO_BLK_T_FLUSH, nix.VIRTIO_BLK_T_GET_ID => {},
+                    else => log.err(@src(), "unknown virtio request type: {}", .{request_type}),
+                }
+                const offset = sector << SECTOR_SHIFT;
 
-                while ((data_desc.flags & nix.VRING_DESC_F_NEXT) != 0) {
+                var segment: ?[]volatile u8 = null;
+                const next = desc_chain.next();
+                log.assert(@src(), next != null, "Descriptor chain ends before the status descriptor", .{});
+                desc = next.?;
+                // The status descriptor is the only one without the NEXT flag.
+                if (desc_chain.index != null) {
+                    segment = self.memory.get_slice(u8, desc.len, desc.addr);
+                    desc = desc_chain.next().?;
                     log.assert(
                         @src(),
-                        segments_n <= MAX_SEGMENTS_IO_URING,
+                        desc_chain.index == null,
                         "Got descriptor chain with more data segments than MAX_SEGMENTS({d})",
                         .{@as(u32, MAX_SEGMENTS_IO_URING)},
                     );
-                    segments[segments_n] = self.memory.get_slice(u8, data_desc.len, data_desc.addr);
-                    total_segments_len += data_desc.len;
-                    segments_n += 1;
-                    data_desc = desc_chain.next().?;
                 }
-                const status_desc = data_desc;
 
-                switch (header.type) {
-                    nix.VIRTIO_BLK_T_IN => {
+                self.memory.get_ptr(u8, desc.addr).* = nix.VIRTIO_BLK_S_OK;
+
+                switch (request_type) {
+                    nix.VIRTIO_BLK_T_IN, nix.VIRTIO_BLK_T_OUT => {
+                        log.assert(@src(), segment != null, "Read/write request without data descriptor", .{});
+                        const data = segment.?;
+                        log.assert(
+                            @src(),
+                            data.len <= self.file_size - offset,
+                            "Request reaches beyond the end of the device: offset: {} len: {}",
+                            .{ offset, data.len },
+                        );
                         const i = self.submission_ring.add(
                             self.context.selected_queue,
-                            header_desc_index,
-                            @intCast(segments[0].len),
+                            head_index,
+                            @intCast(data.len),
                         );
                         const sqe = self.io_uring_device.next_sqe();
-                        sqe.prep_read(self.file_fd, @volatileCast(segments[0]), offset);
-                        self.io_uring_device.finish_sqe(sqe, i);
-                    },
-                    nix.VIRTIO_BLK_T_OUT => {
-                        const i = self.submission_ring.add(
-                            self.context.selected_queue,
-                            header_desc_index,
-                            @intCast(segments[0].len),
-                        );
-                        const sqe = self.io_uring_device.next_sqe();
-                        sqe.prep_write(self.file_fd, @volatileCast(segments[0]), offset);
+                        if (request_type == nix.VIRTIO_BLK_T_IN)
+                            sqe.prep_read(self.file_fd, @volatileCast(data), offset)
+                        else
+                            sqe.prep_write(self.file_fd, @volatileCast(data), offset);
                         self.io_uring_device.finish_sqe(sqe, i);
                     },
                     nix.VIRTIO_BLK_T_FLUSH => {
-                        const i = self.submission_ring.add(
-                            self.context.selected_queue,
-                            header_desc_index,
-                            0,
-                        );
+                        const i = self.submission_ring.add(self.context.selected_queue, head_index, 0);
                         const sqe = self.io_uring_device.next_sqe();
                         sqe.prep_fsync(self.file_fd, nix.MSF.ASYNC);
                         self.io_uring_device.finish_sqe(sqe, i);
@@ -486,31 +526,25 @@ pub fn BlockIoUring(comptime Context: type) type {
                     nix.VIRTIO_BLK_T_GET_ID => {
                         log.assert(
                             @src(),
-                            segments_n == 1,
-                            "Descriptor chain has more than 1 data descriptor for VIRTIO_BLK_T_GET_ID request",
+                            segment != null and segment.?.len == nix.VIRTIO_BLK_ID_BYTES,
+                            "VIRTIO_BLK_T_GET_ID data descriptor is missing or has invalid length",
                             .{},
                         );
-                        @memcpy(segments[0], &self.block_id);
-
-                        const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
-                        status_ptr.* = nix.VIRTIO_BLK_S_OK;
-
-                        queue.add_used_desc(
-                            self.memory,
-                            header_desc_index,
-                            nix.VIRTIO_BLK_ID_BYTES,
-                        );
-                        if (queue.publish_used(self.memory))
-                            self.context.notify_current_queue(System);
-                        continue;
+                        @memcpy(segment.?, &self.block_id);
+                        queue.add_used_desc(self.memory, head_index, nix.VIRTIO_BLK_ID_BYTES);
+                        completed = true;
                     },
-                    else => log.err(@src(), "unknown virtio request type: {}", .{header.type}),
+                    else => {
+                        const len: u32 = if (segment) |data| @intCast(data.len) else 0;
+                        queue.add_used_desc(self.memory, head_index, len);
+                        completed = true;
+                    },
                 }
-
-                const status_ptr = self.memory.get_ptr(u32, status_desc.addr);
-                status_ptr.* = nix.VIRTIO_BLK_S_OK;
             }
 
+            if (completed and queue.publish_used(self.memory)) {
+                self.context.notify_current_queue(System);
+            }
             self.io_uring_device.submit(System);
         }
 
