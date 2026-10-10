@@ -4,7 +4,14 @@ const builtin = @import("builtin");
 pub const load_store_barrier = if (builtin.cpu.arch == .aarch64)
     aarch64.load_store_barrier
 else if (builtin.cpu.arch == .x86_64)
-    x64.noop
+    x64.load_store_barrier
+else
+    @compileError("Only aarch64 and x64 are supported");
+
+pub const store_barrier = if (builtin.cpu.arch == .aarch64)
+    aarch64.store_barrier
+else if (builtin.cpu.arch == .x86_64)
+    x64.store_barrier
 else
     @compileError("Only aarch64 and x64 are supported");
 
@@ -33,15 +40,18 @@ else
 // https://developer.arm.com/documentation/100941/0101/Barriers?lang=en
 pub const aarch64 = struct {
     /// Forbids load/store ops to be reordered across this fence.
-    /// Replacement for removed `@fence(.release)`
     pub inline fn load_store_barrier() void {
-        asm volatile ("dmb ish");
+        asm volatile ("dmb ish" ::: .{ .memory = true });
+    }
+
+    /// Forbids store ops to be reordered across this fence.
+    pub inline fn store_barrier() void {
+        asm volatile ("dmb ishst" ::: .{ .memory = true });
     }
 
     /// Forbids load ops to be reordered across this fence.
-    /// Replacement for removed `@fence(.acquire)`
     pub inline fn load_barrier() void {
-        asm volatile ("dmb ishld");
+        asm volatile ("dmb ishld" ::: .{ .memory = true });
     }
 
     pub inline fn cntvct_el0() u64 {
@@ -59,6 +69,18 @@ pub const aarch64 = struct {
 
 pub const x64 = struct {
     pub inline fn noop() void {}
+
+    /// x86 TSO can reorder a store with a later load, so a full fence is needed.
+    /// Same as Linux `__smp_mb`: a locked no-op add on the stack.
+    pub inline fn load_store_barrier() void {
+        asm volatile ("lock addl $0, -4(%%rsp)" ::: .{ .memory = true, .cc = true });
+    }
+
+    /// x86 TSO does not reorder stores with other stores, so only the compiler
+    /// needs to be stopped (same as Linux `__smp_wmb`).
+    pub inline fn store_barrier() void {
+        asm volatile ("" ::: .{ .memory = true });
+    }
 
     pub const CpuidResult = struct {
         eax: u32,

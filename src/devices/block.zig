@@ -149,11 +149,10 @@ pub fn Block(comptime Context: type) type {
             switch (self.context.write(System, offset, data)) {
                 .NoAction => {},
                 .ActivateDevice => {
-                    // Only VIRTIO_MMIO_INT_VRING notification type is supported.
-                    if (self.context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
-                        for (&self.context.queues) |*q| {
-                            q.notification_suppression = true;
-                        }
+                    const notification_suppression =
+                        self.context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0;
+                    for (&self.context.queues) |*q| {
+                        q.activate(notification_suppression);
                     }
                 },
                 else => |action| {
@@ -253,7 +252,7 @@ pub fn Block(comptime Context: type) type {
                 queue.add_used_desc(self.memory, header_desc_index, total_segments_len);
             }
 
-            if (queue.send_notification(self.memory)) {
+            if (queue.publish_used(self.memory)) {
                 self.context.notify_current_queue(System);
             }
         }
@@ -388,11 +387,10 @@ pub fn BlockIoUring(comptime Context: type) type {
             switch (self.context.write(System, offset, data)) {
                 .NoAction => {},
                 .ActivateDevice => {
-                    // Only VIRTIO_MMIO_INT_VRING notification type is supported.
-                    if (self.context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
-                        for (&self.context.queues) |*q| {
-                            q.notification_suppression = true;
-                        }
+                    const notification_suppression =
+                        self.context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0;
+                    for (&self.context.queues) |*q| {
+                        q.activate(notification_suppression);
                     }
                 },
                 else => |action| {
@@ -502,7 +500,7 @@ pub fn BlockIoUring(comptime Context: type) type {
                             header_desc_index,
                             nix.VIRTIO_BLK_ID_BYTES,
                         );
-                        if (queue.send_notification(self.memory))
+                        if (queue.publish_used(self.memory))
                             self.context.notify_current_queue(System);
                         continue;
                     },
@@ -531,7 +529,7 @@ pub fn BlockIoUring(comptime Context: type) type {
             const queue = &self.context.queues[submission_info.queue];
             queue.add_used_desc(self.memory, submission_info.desc_index, submission_info.len);
 
-            if (queue.send_notification(self.memory))
+            if (queue.publish_used(self.memory))
                 self.context.notify_current_queue(System);
         }
     };

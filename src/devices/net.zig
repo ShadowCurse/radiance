@@ -166,11 +166,10 @@ pub const NetMmio = struct {
         switch (self.context.write(System, offset, data)) {
             .NoAction => {},
             .ActivateDevice => {
-                // Only VIRTIO_MMIO_INT_VRING notification type is supported.
-                if (self.context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0) {
-                    for (&self.context.queues) |*q| {
-                        q.notification_suppression = true;
-                    }
+                const notification_suppression =
+                    self.context.acked_features & (1 << nix.VIRTIO_RING_F_EVENT_IDX) != 0;
+                for (&self.context.queues) |*q| {
+                    q.activate(notification_suppression);
                 }
                 self.activate(System);
                 self.activated = true;
@@ -222,7 +221,9 @@ pub const NetMmio = struct {
             self.tx_chain.finish_used(self.memory, queue);
         }
 
-        if (queue.send_notification(self.memory)) self.context.irq_evt.write(System, 1);
+        if (queue.publish_used(self.memory)) {
+            self.context.irq_evt.write(System, 1);
+        }
     }
 
     pub fn process_tap_event_with_system(self: *Self) void {
@@ -267,7 +268,9 @@ pub const NetMmio = struct {
             self.rx_chains.mark_used_bytes(self.memory, queue, @intCast(bytes));
         }
 
-        if (queue.send_notification(self.memory)) self.context.irq_evt.write(System, 1);
+        if (queue.publish_used(self.memory)) {
+            self.context.irq_evt.write(System, 1);
+        }
     }
 };
 
@@ -369,7 +372,8 @@ const RxChains = struct {
         queue.next_used = queue.next_used +% chains_used;
         queue.suppressed = queue.suppressed +% chains_used;
 
-        arch.load_store_barrier();
+        // Used ring entries must be visible before the used idx.
+        arch.store_barrier();
         used_ring.idx = queue.next_used;
     }
 };

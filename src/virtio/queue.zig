@@ -17,6 +17,12 @@ pub const DescriptorChain = struct {
         if (self.index) |index| {
             const desc = self.desc_table[index];
             if (desc.flags & nix.VRING_DESC_F_NEXT != 0) {
+                log.assert(
+                    @src(),
+                    desc.next < self.desc_table.len,
+                    "Next descriptor index {} outside queue size {}",
+                    .{ desc.next, self.desc_table.len },
+                );
                 self.index = desc.next;
             } else {
                 self.index = null;
@@ -95,9 +101,30 @@ pub const Queue = struct {
         }
     }
 
-    pub fn send_notification(self: *Self, memory: Memory.Guest) bool {
+    pub fn activate(self: *Self, notification_suppression: bool) void {
+        log.assert(@src(), self.size != 0, "Queue size is 0", .{});
+        log.assert(
+            @src(),
+            self.size & (self.size - 1) == 0,
+            "Queue size {} is not a power of 2",
+            .{self.size},
+        );
+        self.notification_suppression = notification_suppression;
+    }
+
+    /// Makes all descriptors added with `add_used_desc` visible to the driver.
+    /// Returns true if the driver needs to be notified.
+    pub fn publish_used(self: *Self, memory: Memory.Guest) bool {
+        // used_ring is only written by the device
+        const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
+        // Used ring entries must be visible before the used idx.
+        arch.store_barrier();
+        used_ring.idx = self.next_used;
+
         if (self.notification_suppression) {
-            arch.load_barrier();
+            // The used_event must be read after used idx is visible to the driver,
+            // otherwise the driver can miss an interrupt.
+            arch.load_store_barrier();
             // avail_ring is only written by the driver
             const avail_ring = memory.get_ptr(nix.vring_avail, self.avail_ring);
             const used_event = avail_ring.used_event(self.size).*;
@@ -112,23 +139,26 @@ pub const Queue = struct {
 
     /// Pop the first available descriptor chain from the avail ring.
     pub fn pop_desc_chain(self: *Self, memory: Memory.Guest) ?DescriptorChain {
-        if (self.notification_suppression) {
+        // avail_ring is only written by the driver
+        const avail_ring = memory.get_ptr(nix.vring_avail, self.avail_ring);
+        if (self.next_avail == avail_ring.idx) {
+            if (!self.notification_suppression) {
+                return null;
+            }
+            // Only ask driver for notifications once the ring looks empty and re-check it after,
+            // so the entries added before driver saw the new avail_event are not missed.
             // used_ring is only written by the device
             const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
             used_ring.avail_event(self.size).* = self.next_avail;
             arch.load_store_barrier();
-        }
-
-        // avail_ring is only written by the driver
-        const avail_ring = memory.get_ptr(nix.vring_avail, self.avail_ring);
-        if (self.next_avail == avail_ring.idx) {
-            return null;
+            if (self.next_avail == avail_ring.idx) {
+                return null;
+            }
         }
 
         arch.load_barrier();
 
-        const next_avail = self.next_avail % self.size;
-        const desc_index = avail_ring.ring()[next_avail];
+        const desc_index = avail_ring.ring()[self.next_avail & (self.size - 1)];
         log.assert(
             @src(),
             desc_index < self.size,
@@ -145,7 +175,8 @@ pub const Queue = struct {
         };
     }
 
-    /// Puts an available descriptor head into the used ring for use by the guest.
+    /// Puts an available descriptor head into the used ring.
+    /// It is visible to the guest only after `publish_used`.
     pub fn add_used_desc(
         self: *Self,
         memory: Memory.Guest,
@@ -154,17 +185,13 @@ pub const Queue = struct {
     ) void {
         // used_ring is only written by the device
         const used_ring = memory.get_ptr(nix.vring_used, self.used_ring);
-        const next_used = self.next_used % self.size;
-        used_ring.ring()[next_used] = .{
+        used_ring.ring()[self.next_used & (self.size - 1)] = .{
             .id = desc_id,
             .len = data_len,
         };
 
         self.next_used = self.next_used +% 1;
         self.suppressed = self.suppressed +% 1;
-
-        arch.load_store_barrier();
-        used_ring.idx = self.next_used;
     }
 };
 
@@ -175,8 +202,8 @@ const TestSystem = struct {
 test "test_queue_pop_desc_chain" {
     const memory: Memory.Guest = .{ .mem = TestSystem.M[0..] };
 
-    var queue = Queue.init(10);
-    queue.size = 10;
+    var queue = Queue.init(16);
+    queue.size = 16;
     queue.desc_table = Memory.DRAM_START;
     queue.avail_ring = Memory.DRAM_START + 0x100;
     queue.used_ring = Memory.DRAM_START + 0x200;
@@ -202,8 +229,8 @@ test "test_queue_pop_desc_chain" {
 test "test_queue_add_used_desc" {
     var memory: Memory.Guest = .{ .mem = TestSystem.M[0..] };
 
-    var queue = Queue.init(10);
-    queue.size = 10;
+    var queue = Queue.init(16);
+    queue.size = 16;
     queue.desc_table = Memory.DRAM_START;
     queue.avail_ring = Memory.DRAM_START + 0x100;
     queue.used_ring = Memory.DRAM_START + 0x200;
@@ -211,6 +238,8 @@ test "test_queue_add_used_desc" {
     const used_ring = memory.get_ptr(nix.vring_used, queue.used_ring);
     for (0..10) |i| {
         queue.add_used_desc(memory, @intCast(i), 69);
+        try std.testing.expectEqual(i, used_ring.idx);
+        try std.testing.expect(queue.publish_used(memory));
         const a = used_ring.ring()[i];
         try std.testing.expectEqual(i, a.id);
         try std.testing.expectEqual(69, a.len);
