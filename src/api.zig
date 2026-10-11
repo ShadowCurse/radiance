@@ -13,6 +13,7 @@ const KERNEL_BACKLOG = 128;
 
 fd: nix.fd_t,
 
+running: bool,
 vcpus: []Vcpu,
 vcpu_threads: []std.Thread,
 vcpus_barrier: *Vcpu.Barrier,
@@ -42,6 +43,7 @@ pub fn init(
     _ = nix.assert(@src(), System, "bind", .{ fd, @ptrCast(&sock_addr), @sizeOf(std.os.linux.sockaddr.un) });
     _ = nix.assert(@src(), System, "listen", .{ fd, KERNEL_BACKLOG });
     return .{
+        .running = false,
         .fd = fd,
         .vcpus = vcpus,
         .vcpu_threads = vcpu_threads,
@@ -84,11 +86,9 @@ pub fn handle(self: *Self, comptime System: type) void {
         log.debug(@src(), "Got message: {s} len: {d}", .{ msg, msg.len });
 
         if (std.mem.eql(u8, msg, "pause")) {
-            self.vcpus_barrier.reset();
-            for (self.vcpus) |vcpu| vcpu.pause(nix.System);
+            self.pause();
         } else if (std.mem.eql(u8, msg, "resume")) {
-            for (self.vcpus) |vcpu| vcpu.kvm_run.immediate_exit = 0;
-            self.vcpus_barrier.set();
+            self.@"resume"();
         } else if (std.mem.startsWith(u8, msg, "snapshot ")) {
             const snapshot_path = msg["snapshot ".len..];
 
@@ -102,44 +102,9 @@ pub fn handle(self: *Self, comptime System: type) void {
             _ = std.os.linux.ftruncate(snapshot_fd, @intCast(self.permanent_memory.mem.len));
 
             if (builtin.cpu.arch == .aarch64) {
-                self.runtime.arch.gicv2.save_state(
-                    nix.System,
-                    self.state.arch.gicv2_state,
-                    @intCast(self.vcpus.len),
-                );
-                // No reason to query list more than 1 time
-                if (self.state.arch.vcpu_reg_list[0] == 0) {
-                    Vcpu.aarch64.get_reg_list(&self.vcpus[0], nix.System, self.state.arch.vcpu_reg_list);
-                }
-                var regs_bytes = self.state.arch.vcpu_regs;
-                for (self.vcpus, self.state.arch.vcpu_mp_states) |*vcpu, *mpstate| {
-                    const used = Vcpu.aarch64.save_regs(
-                        vcpu,
-                        nix.System,
-                        self.state.arch.vcpu_reg_list,
-                        regs_bytes,
-                        mpstate,
-                    );
-                    regs_bytes = regs_bytes[used..];
-                }
+                self.snapshot_aarch64();
             } else if (builtin.cpu.arch == .x86_64) {
-                Apic.save_state(System, self.runtime.vm, self.state.arch.apic_state);
-                const arch_config = self.state.config_state.arch;
-                var msr_list = self.runtime.kvm.get_msr_list(System);
-                log.assert(
-                    @src(),
-                    msr_list.nmsrs == arch_config.msr_list_n,
-                    "msr list has {d} entries, expected {d}",
-                    .{ msr_list.nmsrs, arch_config.msr_list_n },
-                );
-                const msr_indices = msr_list.as().indices(msr_list.nmsrs);
-                for (self.vcpus, 0..) |*vcpu, i|
-                    Vcpu.x64.save_state(
-                        vcpu,
-                        System,
-                        self.state.arch.vcpu_state(i, arch_config),
-                        msr_indices,
-                    );
+                self.snapshot_x64(System);
             } else @compileError("Only aarch64 and x64 are supported");
 
             _ = nix.assert(
@@ -151,4 +116,63 @@ pub fn handle(self: *Self, comptime System: type) void {
             _ = std.os.linux.fsync(snapshot_fd);
         }
     }
+}
+
+fn pause(self: *Self) void {
+    if (self.running) {
+        self.vcpus_barrier.reset();
+        for (self.vcpus) |vcpu| vcpu.pause(nix.System);
+        self.running = false;
+    }
+}
+
+fn @"resume"(self: *Self) void {
+    if (!self.running) {
+        for (self.vcpus) |vcpu| vcpu.kvm_run.immediate_exit = 0;
+        self.vcpus_barrier.set();
+        self.running = true;
+    }
+}
+
+fn snapshot_aarch64(self: *Self) void {
+    self.runtime.arch.gicv2.save_state(
+        nix.System,
+        self.state.arch.gicv2_state,
+        @intCast(self.vcpus.len),
+    );
+    // No reason to query list more than 1 time
+    if (self.state.arch.vcpu_reg_list[0] == 0) {
+        Vcpu.aarch64.get_reg_list(&self.vcpus[0], nix.System, self.state.arch.vcpu_reg_list);
+    }
+    var regs_bytes = self.state.arch.vcpu_regs;
+    for (self.vcpus, self.state.arch.vcpu_mp_states) |*vcpu, *mpstate| {
+        const used = Vcpu.aarch64.save_regs(
+            vcpu,
+            nix.System,
+            self.state.arch.vcpu_reg_list,
+            regs_bytes,
+            mpstate,
+        );
+        regs_bytes = regs_bytes[used..];
+    }
+}
+
+fn snapshot_x64(self: *Self, comptime System: type) void {
+    Apic.save_state(System, self.runtime.vm, self.state.arch.apic_state);
+    const arch_config = self.state.config_state.arch;
+    var msr_list = self.runtime.kvm.get_msr_list(System);
+    log.assert(
+        @src(),
+        msr_list.nmsrs == arch_config.msr_list_n,
+        "msr list has {d} entries, expected {d}",
+        .{ msr_list.nmsrs, arch_config.msr_list_n },
+    );
+    const msr_indices = msr_list.as().indices(msr_list.nmsrs);
+    for (self.vcpus, 0..) |*vcpu, i|
+        Vcpu.x64.save_state(
+            vcpu,
+            System,
+            self.state.arch.vcpu_state(i, arch_config),
+            msr_indices,
+        );
 }
