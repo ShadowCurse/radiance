@@ -156,7 +156,7 @@ pub fn VirtioContext(
             self.* = .{
                 .queues = undefined,
                 .queue_events = undefined,
-                .irq_evt = .init(System, 0, nix.EFD_NONBLOCK),
+                .irq_evt = undefined,
                 .vm = vm,
                 .addr = info.addr,
                 .mem_ptr = info.mem_ptr,
