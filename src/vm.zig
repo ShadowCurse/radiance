@@ -1,9 +1,10 @@
+const log = @import("log.zig");
 const nix = @import("nix.zig");
 const Kvm = @import("kvm.zig");
 const Memory = @import("memory.zig");
 
 fd: nix.fd_t,
-num_slots: u32,
+num_slots: u8,
 
 const Self = @This();
 
@@ -15,15 +16,29 @@ pub fn init(comptime System: type, kvm: Kvm) Self {
     };
 }
 
-pub fn set_memory(self: *Self, comptime System: type, memory: nix.kvm_userspace_memory_region) void {
-    var memory_region = memory;
-    memory_region.slot = self.num_slots;
+pub fn alloc_kvm_slot(self: *Self) u8 {
+    log.assert(
+        @src(),
+        self.num_slots < 255,
+        "Out of memory slots: {d}",
+        .{self.num_slots},
+    );
+    const slot = self.num_slots;
     self.num_slots += 1;
+    return slot;
+}
 
+pub fn set_memory(self: *const Self, comptime System: type, memory: nix.kvm_userspace_memory_region) void {
+    log.assert(
+        @src(),
+        memory.slot < self.num_slots,
+        "Memory slot: {d} is not allocated. Allocated slots: {d}",
+        .{ memory.slot, self.num_slots },
+    );
     _ = nix.assert(@src(), System, "ioctl", .{
         self.fd,
         nix.KVM_SET_USER_MEMORY_REGION,
-        @intFromPtr(&memory_region),
+        @intFromPtr(&memory),
     });
 }
 

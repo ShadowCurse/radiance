@@ -140,6 +140,7 @@ pub fn VirtioContext(
         vm: *Vm,
         addr: u64,
         mem_ptr: [*]align(Memory.HOST_PAGE_SIZE) u8,
+        memory_slot: u8,
 
         const Self = @This();
 
@@ -160,6 +161,7 @@ pub fn VirtioContext(
                 .vm = vm,
                 .addr = info.addr,
                 .mem_ptr = info.mem_ptr,
+                .memory_slot = vm.alloc_kvm_slot(),
             };
             for (&self.queues, queue_sizes) |*q, size| q.* = .init(size);
             self.init_events_and_irqs(System, info);
@@ -172,6 +174,14 @@ pub fn VirtioContext(
             info: Mmio.Resources.MmioVirtioInfo,
         ) void {
             self.vm = vm;
+            // Slots are allocated in the same order as on the boot.
+            const memory_slot = vm.alloc_kvm_slot();
+            log.assert(
+                @src(),
+                memory_slot == self.memory_slot,
+                "Allocated memory slot: {d} differs from the snapshot one: {d}",
+                .{ memory_slot, self.memory_slot },
+            );
             self.init_events_and_irqs(System, info);
             if (self.device_status.driver_ok) self.set_memory(System);
         }
@@ -224,6 +234,7 @@ pub fn VirtioContext(
             self.vm.set_memory(
                 System,
                 .{
+                    .slot = self.memory_slot,
                     .guest_phys_addr = guest_phys_addr,
                     .memory_size = mem.len,
                     .userspace_addr = @intFromPtr(mem.ptr),

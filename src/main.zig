@@ -215,6 +215,7 @@ fn build_from_config(config_path: [:0]const u8, runtime: *Runtime, state: *State
 
     runtime.vm = .init(nix.System, runtime.kvm);
     runtime.vm.set_memory(nix.System, .{
+        .slot = runtime.vm.alloc_kvm_slot(),
         .guest_phys_addr = Memory.DRAM_START,
         .memory_size = state.memory.mem.len,
         .userspace_addr = @intFromPtr(state.memory.mem.ptr),
@@ -742,6 +743,7 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
     runtime.kvm = .init(nix.System);
     runtime.vm = .init(nix.System, runtime.kvm);
     runtime.vm.set_memory(nix.System, .{
+        .slot = runtime.vm.alloc_kvm_slot(),
         .guest_phys_addr = Memory.DRAM_START,
         .memory_size = state.memory.mem.len,
         .userspace_addr = @intFromPtr(state.memory.mem.ptr),

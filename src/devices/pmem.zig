@@ -38,6 +38,7 @@ pub fn attach(
         vm.set_memory(
             System,
             .{
+                .slot = vm.alloc_kvm_slot(),
                 .guest_phys_addr = guest_addr,
                 .memory_size = statx.size,
                 .userspace_addr = @intFromPtr(file_mem.ptr),
@@ -70,6 +71,7 @@ pub fn attach(
         vm.set_memory(
             System,
             .{
+                .slot = vm.alloc_kvm_slot(),
                 .guest_phys_addr = guest_addr,
                 .memory_size = alined_size,
                 .userspace_addr = @intFromPtr(file_mem.ptr),
