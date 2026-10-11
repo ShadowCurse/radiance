@@ -567,10 +567,10 @@ pub fn create(
 
     const size: usize = @intCast(vcpu_mmap_size);
     const kvm_run = nix.assert(@src(), System, "mmap", .{
-        null,
+        memory.Permanent.alloc_persistent_address(size),
         size,
         .{ .READ = true, .WRITE = true },
-        .{ .TYPE = .SHARED },
+        .{ .TYPE = .SHARED, .FIXED_NOREPLACE = true },
         fd,
         @as(u64, 0),
     });

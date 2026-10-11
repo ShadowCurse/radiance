@@ -81,10 +81,10 @@ pub fn Block(comptime Context: type) type {
 
             const statx = nix.assert(@src(), System, "statx", .{fd});
             self.file_mem = nix.assert(@src(), System, "mmap", .{
-                null,
+                Memory.Permanent.alloc_persistent_address(statx.size),
                 statx.size,
                 .{ .READ = true, .WRITE = !read_only },
-                .{ .TYPE = if (read_only) .PRIVATE else .SHARED },
+                .{ .TYPE = if (read_only) .PRIVATE else .SHARED, .FIXED_NOREPLACE = true },
                 fd,
                 0,
             });
@@ -127,10 +127,10 @@ pub fn Block(comptime Context: type) type {
 
             const statx = nix.assert(@src(), System, "statx", .{fd});
             self.file_mem = nix.assert(@src(), System, "mmap", .{
-                null,
+                Memory.Permanent.alloc_persistent_address(statx.size),
                 statx.size,
                 .{ .READ = true, .WRITE = !read_only },
-                .{ .TYPE = if (read_only) .PRIVATE else .SHARED },
+                .{ .TYPE = if (read_only) .PRIVATE else .SHARED, .FIXED_NOREPLACE = true },
                 fd,
                 0,
             });

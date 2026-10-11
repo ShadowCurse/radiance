@@ -250,6 +250,11 @@ pub const Permanent = struct {
 
     const LOCATION = 0x8000000;
 
+    // All additional `mmap`s must be placed after the permanent memory
+    // and are tracked useng this global.
+    // TODO remove this global
+    var hva_end: u64 = LOCATION;
+
     const Self = @This();
 
     pub fn init(comptime System: type, size: usize) Self {
@@ -261,6 +266,7 @@ pub const Permanent = struct {
             -1,
             0,
         });
+        hva_end = align_addr(LOCATION + size, HOST_PAGE_SIZE);
         return .{ .mem = mem };
     }
 
@@ -281,7 +287,22 @@ pub const Permanent = struct {
             fd,
             0,
         });
+        hva_end = align_addr(LOCATION + statx.size, HOST_PAGE_SIZE);
         return .{ .mem = mem };
+    }
+
+    /// Returns the address for the next host mapping of the `size` bytes.
+    pub fn alloc_persistent_address(size: u64) [*]align(HOST_PAGE_SIZE) u8 {
+        log.assert(@src(), 0 < size, "Host mapping size is 0", .{});
+        log.assert(
+            @src(),
+            is_aligned(hva_end, HOST_PAGE_SIZE),
+            "HVA end: 0x{x} is not aligned to the page size",
+            .{hva_end},
+        );
+        const address = hva_end;
+        hva_end += align_addr(size, HOST_PAGE_SIZE);
+        return @ptrFromInt(address);
     }
 };
 

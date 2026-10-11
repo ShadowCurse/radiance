@@ -2,7 +2,8 @@ const std = @import("std");
 const nix = @import("../nix.zig");
 const log = @import("../log.zig");
 
-const HOST_PAGE_SIZE = @import("../memory.zig").HOST_PAGE_SIZE;
+const Memory = @import("../memory.zig");
+const HOST_PAGE_SIZE = Memory.HOST_PAGE_SIZE;
 
 pub const BACKING_SIZE = HOST_PAGE_SIZE;
 pub const MAX_IOVECS = HOST_PAGE_SIZE / @sizeOf(nix.iovec);
@@ -17,10 +18,10 @@ pub fn init(comptime System: type, memory: []align(HOST_PAGE_SIZE) u8) Self {
     const memfd = nix.assert(@src(), System, "memfd_create", .{ "iov_ring", nix.FD_CLOEXEC });
     nix.assert(@src(), System, "ftruncate", .{ memfd, HOST_PAGE_SIZE });
     const mem = nix.assert(@src(), System, "mmap", .{
-        null,
+        Memory.Permanent.alloc_persistent_address(HOST_PAGE_SIZE * 2),
         HOST_PAGE_SIZE * 2,
         .{},
-        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED_NOREPLACE = true },
         -1,
         0,
     });
@@ -58,10 +59,10 @@ pub fn restore(self: *Self, comptime System: type, memory: []align(HOST_PAGE_SIZ
     const memfd = nix.assert(@src(), System, "memfd_create", .{ "iov_ring", nix.FD_CLOEXEC });
     nix.assert(@src(), System, "ftruncate", .{ memfd, HOST_PAGE_SIZE });
     const mem = nix.assert(@src(), System, "mmap", .{
-        null,
+        Memory.Permanent.alloc_persistent_address(HOST_PAGE_SIZE * 2),
         HOST_PAGE_SIZE * 2,
         .{},
-        .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
+        .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED_NOREPLACE = true },
         -1,
         0,
     });
