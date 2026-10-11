@@ -753,38 +753,72 @@ pub fn run_threaded(
     }
 }
 
-pub const Barrier = enum(u32) {
-    unset,
-    waiting,
-    is_set,
+pub const Barrier = packed struct(u32) {
+    waiters: u16,
+    generation: u15,
+    open: bool,
+
+    pub const unset: Barrier = .{ .waiters = 0, .open = false, .generation = 0 };
+
+    const WAITER: Barrier = .{ .waiters = 1, .open = false, .generation = 0 };
+    const OPEN_NEXT_GENERATION: Barrier = .{ .waiters = 0, .open = true, .generation = 1 };
+    const CLOSE: Barrier = .{ .waiters = 0, .open = false, .generation = std.math.maxInt(u15) };
+
+    const VCPU_MASK = 1 << 0;
+    const CLOSER_MASK = 1 << 1;
 
     pub fn wait(barrier: *Barrier) void {
-        if (@cmpxchgStrong(Barrier, barrier, .unset, .waiting, .acquire, .acquire)) |prev| switch (prev) {
-            .unset => unreachable,
-            .waiting => {},
-            .is_set => return,
-        };
-        loop: while (true) {
-            nix.System.futex2_wait(barrier, @intFromEnum(Barrier.waiting)) catch |e| {
-                if (e == nix.SystemError.EAGAIN) continue :loop;
-            };
-            switch (@atomicLoad(Barrier, barrier, .acquire)) {
-                .unset => unreachable,
-                .waiting => continue,
-                .is_set => return,
-            }
+        if (@atomicLoad(Barrier, barrier, .acquire).open) return;
+
+        const arrived = @atomicRmw(Barrier, barrier, .Add, WAITER, .acq_rel);
+        log.assert(
+            @src(),
+            arrived.waiters < std.math.maxInt(u16),
+            "Too many barrier waiters: {d}",
+            .{arrived.waiters},
+        );
+        if (arrived.open) {
+            return;
+        }
+        nix.System.futex2_wake(barrier, CLOSER_MASK, std.math.maxInt(i32)) catch unreachable;
+
+        var current = @atomicLoad(Barrier, barrier, .acquire);
+        while (current.generation == arrived.generation) {
+            log.assert(@src(), !current.open, "Barrier is open in the arrival generation", .{});
+            // Errors only mean the value has changed or the wait was interrupted.
+            nix.System.futex2_wait(barrier, @as(u32, @bitCast(current)), VCPU_MASK) catch {};
+            current = @atomicLoad(Barrier, barrier, .acquire);
         }
     }
 
-    pub fn set(e: *Barrier) void {
-        log.info(@src(), "barrier set", .{});
-        switch (@atomicRmw(Barrier, e, .Xchg, .is_set, .release)) {
-            .unset, .is_set => {},
-            .waiting => nix.System.futex2_wake(e, std.math.maxInt(i32)) catch unreachable,
-        }
+    pub fn set(barrier: *Barrier) void {
+        const previous = @atomicRmw(Barrier, barrier, .Add, OPEN_NEXT_GENERATION, .release);
+        log.assert(@src(), !previous.open, "Barrier is already open", .{});
+        nix.System.futex2_wake(barrier, VCPU_MASK, std.math.maxInt(i32)) catch unreachable;
     }
 
-    pub fn reset(e: *Barrier) void {
-        @atomicStore(Barrier, e, .unset, .monotonic);
+    pub fn reset(barrier: *Barrier) void {
+        const previous = @atomicRmw(Barrier, barrier, .And, CLOSE, .acq_rel);
+        log.assert(@src(), previous.open, "Barrier is already closed", .{});
+    }
+
+    pub fn is_set(barrier: *const Barrier) bool {
+        return @atomicLoad(Barrier, barrier, .acquire).open;
+    }
+
+    pub fn wait_for_waiters(barrier: *Barrier, n: u16) void {
+        var current = @atomicLoad(Barrier, barrier, .acquire);
+        log.assert(@src(), !current.open, "Waiting for waiters on the open barrier", .{});
+        while (current.waiters != n) {
+            log.assert(
+                @src(),
+                current.waiters < n,
+                "Barrier has {d} waiters, expected at most {d}",
+                .{ current.waiters, n },
+            );
+            // Errors only mean the value has changed or the wait was interrupted.
+            nix.System.futex2_wait(barrier, @as(u32, @bitCast(current)), CLOSER_MASK) catch {};
+            current = @atomicLoad(Barrier, barrier, .acquire);
+        }
     }
 };

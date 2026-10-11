@@ -13,7 +13,6 @@ const KERNEL_BACKLOG = 128;
 
 fd: nix.fd_t,
 
-running: bool,
 vcpus: []Vcpu,
 vcpu_threads: []std.Thread,
 vcpus_barrier: *Vcpu.Barrier,
@@ -43,7 +42,6 @@ pub fn init(
     _ = nix.assert(@src(), System, "bind", .{ fd, @ptrCast(&sock_addr), @sizeOf(std.os.linux.sockaddr.un) });
     _ = nix.assert(@src(), System, "listen", .{ fd, KERNEL_BACKLOG });
     return .{
-        .running = false,
         .fd = fd,
         .vcpus = vcpus,
         .vcpu_threads = vcpu_threads,
@@ -90,6 +88,10 @@ pub fn handle(self: *Self, comptime System: type) void {
         } else if (std.mem.eql(u8, msg, "resume")) {
             self.@"resume"();
         } else if (std.mem.startsWith(u8, msg, "snapshot ")) {
+            const running = self.vcpus_barrier.is_set();
+            self.pause();
+            defer if (running) self.@"resume"();
+
             const snapshot_path = msg["snapshot ".len..];
 
             const snapshot_fd = nix.assert(@src(), System, "open", .{
@@ -119,18 +121,21 @@ pub fn handle(self: *Self, comptime System: type) void {
 }
 
 fn pause(self: *Self) void {
-    if (self.running) {
+    if (self.vcpus_barrier.is_set()) {
         self.vcpus_barrier.reset();
-        for (self.vcpus) |vcpu| vcpu.pause(nix.System);
-        self.running = false;
+        for (self.vcpus) |vcpu| {
+            vcpu.pause(nix.System);
+        }
+        self.vcpus_barrier.wait_for_waiters(@intCast(self.vcpus.len));
     }
 }
 
 fn @"resume"(self: *Self) void {
-    if (!self.running) {
-        for (self.vcpus) |vcpu| vcpu.kvm_run.immediate_exit = 0;
+    if (!self.vcpus_barrier.is_set()) {
+        for (self.vcpus) |vcpu| {
+            vcpu.kvm_run.immediate_exit = 0;
+        }
         self.vcpus_barrier.set();
-        self.running = true;
     }
 }
 

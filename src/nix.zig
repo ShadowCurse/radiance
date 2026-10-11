@@ -356,11 +356,11 @@ pub const System = struct {
         return std.Thread.spawn(config, function, args);
     }
 
-    pub fn futex2_wait(uaddr: *const anyopaque, val: usize) SystemError!void {
+    pub fn futex2_wait(uaddr: *const anyopaque, val: usize, mask: usize) SystemError!void {
         const r = std.os.linux.futex2_wait(
             uaddr,
             val,
-            0xffffffff,
+            mask,
             .{ .size = .U32, .private = true },
             null,
             .MONOTONIC,
@@ -368,14 +368,13 @@ pub const System = struct {
         return syscall_ret_to_system_error(r);
     }
 
-    pub fn futex2_wake(uaddr: *const anyopaque, nr_wake: i32) SystemError!void {
+    pub fn futex2_wake(uaddr: *const anyopaque, mask: usize, nr_wake: i32) SystemError!void {
         const r = std.os.linux.futex2_wake(
             uaddr,
-            0xffffffff,
+            mask,
             nr_wake,
             .{ .size = .U32, .private = true },
         );
-        log.warn(@src(), "wake: {d}", .{r});
         return syscall_ret_to_system_error(r);
     }
 };
