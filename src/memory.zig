@@ -115,8 +115,9 @@ pub const Guest = struct {
             },
             0,
         });
-        const meta = nix.assert(@src(), System, "statx", .{fd});
+        defer System.close(fd);
 
+        const meta = nix.assert(@src(), System, "statx", .{fd});
         const file_mem = nix.assert(@src(), System, "mmap", .{
             self.mem.ptr,
             meta.size,
