@@ -174,3 +174,11 @@ pub fn print(comptime types: []const type) void {
     const global_time_ms = global_elapsed / freq * 1000.0;
     log.info(@src(), "Total {d:>6.6}ms", .{global_time_ms});
 }
+
+pub fn print_manual(message: []const u8, start_time: u64) void {
+    const freq: f64 = @floatFromInt(global_freq);
+    const end_time = arch.get_perf_counter();
+    const elapsed: f64 = @floatFromInt(end_time - start_time);
+    const time_ms = elapsed / freq * 1000.0;
+    log.info(@src(), "{s}: total {d:>6.6}ms", .{ message, time_ms });
+}

@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const root = @import("root");
 const log = @import("log.zig");
 const nix = @import("nix.zig");
+const arch = @import("arch.zig");
+const profiler = @import("profiler.zig");
 
 const Apic = @import("apic.zig");
 const Vcpu = @import("vcpu.zig");
@@ -84,10 +86,19 @@ pub fn handle(self: *Self, comptime System: type) void {
         log.debug(@src(), "Got message: {s} len: {d}", .{ msg, msg.len });
 
         if (std.mem.eql(u8, msg, "pause")) {
+            const now = arch.get_perf_counter();
+            defer profiler.print_manual("pause", now);
+
             self.pause();
         } else if (std.mem.eql(u8, msg, "resume")) {
+            const now = arch.get_perf_counter();
+            defer profiler.print_manual("resume", now);
+
             self.@"resume"();
         } else if (std.mem.startsWith(u8, msg, "snapshot ")) {
+            const now = arch.get_perf_counter();
+            defer profiler.print_manual("snapshot", now);
+
             const running = self.vcpus_barrier.is_set();
             self.pause();
             defer if (running) self.@"resume"();
