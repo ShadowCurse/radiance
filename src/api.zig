@@ -127,6 +127,15 @@ pub fn handle(self: *Self, comptime System: type) void {
                 .{ snapshot_fd, self.permanent_memory.mem },
             );
             _ = std.os.linux.fsync(snapshot_fd);
+        } else if (std.mem.startsWith(u8, msg, "reset ")) {
+            const now = arch.get_perf_counter();
+            defer profiler.print_manual("reset", now);
+
+            const running = self.vcpus_barrier.is_set();
+            self.pause();
+            defer if (running) self.@"resume"();
+
+            self.reset(System, msg["reset ".len..]);
         }
     }
 }
@@ -191,4 +200,77 @@ fn snapshot_x64(self: *Self, comptime System: type) void {
             self.state.arch.vcpu_state(i, arch_config),
             msr_indices,
         );
+}
+
+fn reset(self: *Self, comptime System: type, snapshot_path: []const u8) void {
+    const snapshot_fd = nix.assert(@src(), System, "open", .{
+        snapshot_path,
+        .{ .ACCMODE = .RDONLY },
+        0,
+    });
+    defer System.close(snapshot_fd);
+
+    const statx = nix.assert(@src(), System, "statx", .{snapshot_fd});
+    const permanent_memory = self.permanent_memory.mem;
+    log.assert(
+        @src(),
+        statx.size == permanent_memory.len,
+        "Snapshot size: {d} differs from the VM state size: {d}",
+        .{ statx.size, permanent_memory.len },
+    );
+
+    const state = self.state;
+    const config_state = state.config_state.*;
+    log.assert(@src(), config_state.net_vhost_mmio_count == 0, "Can not reset vhost-net", .{});
+
+    // Release MSIx before they are overwritten
+    for (state.block_pci) |*block| block.context.release_msix(System);
+    for (state.block_pci_io_uring) |*block| block.context.release_msix(System);
+
+    // Net iov rings memory is shared with memfds, so it is read into instead of being mapped over.
+    const iov_ring_start = @intFromPtr(state.net_iov_ring.ptr) - @intFromPtr(permanent_memory.ptr);
+    const iov_ring_end = iov_ring_start + state.net_iov_ring.len;
+    _ = nix.assert(@src(), System, "mmap", .{
+        permanent_memory.ptr,
+        iov_ring_start,
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .PRIVATE, .FIXED = true, .NORESERVE = true },
+        snapshot_fd,
+        0,
+    });
+    _ = nix.assert(@src(), System, "mmap", .{
+        @as([*]align(Memory.HOST_PAGE_SIZE) u8, @alignCast(permanent_memory.ptr + iov_ring_end)),
+        permanent_memory.len - iov_ring_end,
+        .{ .READ = true, .WRITE = true },
+        .{ .TYPE = .PRIVATE, .FIXED = true, .NORESERVE = true },
+        snapshot_fd,
+        iov_ring_end,
+    });
+    const iov_ring_bytes = nix.assert(@src(), System, "pread", .{
+        snapshot_fd,
+        state.net_iov_ring,
+        iov_ring_start,
+    });
+    log.assert(
+        @src(),
+        iov_ring_bytes == state.net_iov_ring.len,
+        "Read {d} iov ring bytes instead of {d}",
+        .{ iov_ring_bytes, state.net_iov_ring.len },
+    );
+    log.assert(
+        @src(),
+        std.meta.eql(config_state, state.config_state.*),
+        "Snapshot config: {any} differs from the VM config: {any}",
+        .{ state.config_state.*, config_state },
+    );
+
+    // Do nothing with vcpu `tid` since it will be overwritten with correct value on vcpu resume.
+    root.restore_vcpus_and_interrupt_controller(self.runtime, state);
+
+    // Devices can raise interrupts, so they are reset after interrupt controllers.
+    for (state.block_mmio) |*block| block.reset(System);
+    for (state.block_pci) |*block| block.reset(System);
+    for (state.block_mmio_io_uring) |*block| block.reset(System);
+    for (state.block_pci_io_uring) |*block| block.reset(System);
+    for (state.net_mmio) |*net| net.reset(System);
 }

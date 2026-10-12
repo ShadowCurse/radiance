@@ -224,6 +224,13 @@ pub const System = struct {
         try syscall_ret_to_system_error(r);
         return r;
     }
+    pub fn pread(fd: fd_t, buf: []u8, offset: u64) SystemError!usize {
+        const prof_point = MEASUREMENTS.start(@src());
+        defer MEASUREMENTS.end(prof_point);
+        const r = std.os.linux.pread(fd, buf.ptr, buf.len, @intCast(offset));
+        try syscall_ret_to_system_error(r);
+        return r;
+    }
     pub fn readv(fd: fd_t, iov: []const iovec) SystemError!usize {
         const prof_point = MEASUREMENTS.start(@src());
         defer MEASUREMENTS.end(prof_point);
@@ -515,6 +522,8 @@ pub const KVM_GET_DEVICE_ATTR = _IOW(KVMIO, 0xe2, kvm_device_attr);
 pub const KVM_SET_GUEST_DEBUG = _IOW(KVMIO, 0x9b, kvm_guest_debug);
 // GDB x64
 pub const KVM_TRANSLATE = _IOWR(KVMIO, 0x85, kvm_translation);
+
+pub const KVM_IRQFD_FLAG_DEASSIGN = 1 << 0;
 
 // x64
 pub const KVM_PIT_SPEAKER_DUMMY = @as(c_int, 1);

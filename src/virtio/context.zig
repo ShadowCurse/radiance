@@ -186,6 +186,12 @@ pub fn VirtioContext(
             if (self.device_status.driver_ok) self.set_memory(System);
         }
 
+        pub fn reset(self: *Self, comptime System: type) void {
+            if (self.device_status.driver_ok) {
+                self.set_memory(System);
+            }
+        }
+
         fn init_events_and_irqs(
             self: *Self,
             comptime System: type,

@@ -750,6 +750,8 @@ pub fn run_threaded(
     while (true) {
         while (self.run(System, mmio)) {}
         barrier.wait();
+        // If VM is reset tid will be invalid so overwrite it
+        self.tid = std.Thread.getCurrentId();
     }
 }
 

@@ -145,13 +145,18 @@ fn check_aligments() void {
     }
 }
 
+// Pointers to Runtime are stored in some places and if VM is reset, these pointers need to remain valid.
+// For this reason Runtime is made gloabal. It's location does not change in the binary because it is not PIC.
+// Alternative might be to store Runtime at the end of permanent memory, but this is a task for future me.
+var g_runtime: Runtime = undefined;
+
 pub fn main(init: std.process.Init.Minimal) !void {
     comptime check_aligments();
 
     profiler.start();
     const args = try args_parser.parse(init.args, Args);
 
-    var runtime: Runtime = undefined;
+    const runtime = &g_runtime;
     var state: State = undefined;
 
     if (args.config_path) |config_path| {
@@ -725,6 +730,31 @@ fn create_net_mmio_vhost(
     }
 }
 
+pub fn restore_vcpus_and_interrupt_controller(runtime: *const Runtime, state: *const State) void {
+    if (builtin.cpu.arch == .aarch64) {
+        var regs_bytes = state.arch.vcpu_regs;
+        for (state.vcpus, state.arch.vcpu_mp_states) |*vcpu, *mp_state| {
+            const used = Vcpu.aarch64.restore_regs(
+                vcpu,
+                nix.System,
+                state.arch.vcpu_reg_list,
+                regs_bytes,
+                mp_state,
+            );
+            regs_bytes = regs_bytes[used..];
+        }
+        runtime.arch.gicv2.restore_state(nix.System, state.arch.gicv2_state, @intCast(state.vcpus.len));
+    } else if (builtin.cpu.arch == .x86_64) {
+        apic.restore_state(nix.System, runtime.vm, state.arch.apic_state);
+        for (state.vcpus, 0..) |*vcpu, i|
+            Vcpu.x64.restore_state(
+                vcpu,
+                nix.System,
+                state.arch.vcpu_state(i, state.config_state.arch),
+            );
+    }
+}
+
 fn create_api(runtime: *Runtime, state: *State, socket_path: []const u8) void {
     runtime.api = .init(
         nix.System,
@@ -794,29 +824,10 @@ fn build_from_snapshot(
         const kvi = runtime.vm.get_preferred_target(nix.System);
         for (state.vcpus, 0..) |*vcpu, i| vcpu.init(nix.System, i, kvi);
         runtime.arch.gicv2 = .init(nix.System, runtime.vm);
-
-        var regs_bytes = state.arch.vcpu_regs;
-        for (state.vcpus, state.arch.vcpu_mp_states) |*vcpu, *mp_state| {
-            const used = Vcpu.aarch64.restore_regs(
-                vcpu,
-                nix.System,
-                state.arch.vcpu_reg_list,
-                regs_bytes,
-                mp_state,
-            );
-            regs_bytes = regs_bytes[used..];
-        }
-        runtime.arch.gicv2.restore_state(nix.System, state.arch.gicv2_state, @intCast(state.vcpus.len));
     } else if (builtin.cpu.arch == .x86_64) {
         x64_set_tss_addr(runtime.vm);
-        apic.restore_state(nix.System, runtime.vm, state.arch.apic_state);
-        for (state.vcpus, 0..) |*vcpu, i|
-            Vcpu.x64.restore_state(
-                vcpu,
-                nix.System,
-                state.arch.vcpu_state(i, state.config_state.arch),
-            );
     }
+    restore_vcpus_and_interrupt_controller(runtime, state);
 
     if (state.config_state.uart_enabled) {
         runtime.terminal_state = try configure_terminal(nix.System);

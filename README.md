@@ -11,6 +11,7 @@ Experimental KVM based VMM platform.
 - support for PCI (currently only for Block)
 - optimized MMIO device path which makes MMIO devices as fast as PCI ones
 - snapshot creation/restoration
+- ability to reset VM to the previously known snapshot state
 
 ### Architecture Support
 
@@ -30,6 +31,7 @@ Experimental KVM based VMM platform.
 | vhost-net (Network) | Yes | Yes |
 | **Features** | | |
 | Snapshot/Restore | Yes | Yes |
+| VM resetting | Yes | Yes |
 | API (pause/resume) | Yes | Yes |
 | GDB | Yes | Yes |
 

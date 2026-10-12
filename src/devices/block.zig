@@ -142,6 +142,14 @@ pub fn Block(comptime Context: type) type {
             self.process_queue(System);
         }
 
+        pub fn reset(self: *Self, comptime System: type) void {
+            self.context.reset(System);
+
+            // Rerun queue processing in case there was an event
+            // before state was saved
+            self.process_queue(System);
+        }
+
         pub fn write_with_system(self: *Self, offset: u64, data: []u8) void {
             self.write(nix.System, offset, data);
         }
@@ -404,6 +412,14 @@ pub fn BlockIoUring(comptime Context: type) type {
                 0,
             });
             self.context.restore(System, vm, info);
+
+            // Rerun queue processing in case there was an event
+            // before state was saved
+            self.process_queue(System);
+        }
+
+        pub fn reset(self: *Self, comptime System: type) void {
+            self.context.reset(System);
 
             // Rerun queue processing in case there was an event
             // before state was saved

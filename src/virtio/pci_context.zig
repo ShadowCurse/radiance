@@ -121,7 +121,21 @@ pub fn PciVirtioContext(
         ) void {
             self.vm = vm;
             self.init_events_and_irqs(System, info);
-            for (0..self.msix_table.len) |i| self.init_msix(System, i);
+            for (0..self.msix_table.len) |i| {
+                self.init_msix(System, i, 0);
+            }
+        }
+
+        pub fn reset(self: *const Self, comptime System: type) void {
+            for (0..self.msix_table.len) |i| {
+                self.init_msix(System, i, 0);
+            }
+        }
+
+        pub fn release_msix(self: *const Self, comptime System: type) void {
+            for (0..self.msix_table.len) |i| {
+                self.init_msix(System, i, nix.KVM_IRQFD_FLAG_DEASSIGN);
+            }
         }
 
         fn init_events_and_irqs(
@@ -149,7 +163,7 @@ pub fn PciVirtioContext(
             }
         }
 
-        fn init_msix(self: *const Self, comptime System: type, index: u64) void {
+        fn init_msix(self: *const Self, comptime System: type, index: u64, flags: u32) void {
             const entry = &self.msix_table[index];
             if (entry.vector_control != 0) return;
             const kvm_irqfd: nix.kvm_irqfd = .{
@@ -157,6 +171,7 @@ pub fn PciVirtioContext(
                 // The MSI number provided by the guest is converted to KVM
                 // usable SPI by decrementing the KVM added offset
                 .gsi = self.msix_table[index].message_data - Gicv2.GIC_INTERNAL_OFFSET,
+                .flags = flags,
             };
             _ = nix.assert(@src(), System, "ioctl", .{
                 self.vm.fd,
@@ -267,8 +282,9 @@ pub fn PciVirtioContext(
 
                 const msi = table_offset / @sizeOf(MsixEntry);
                 const field_offset = table_offset - msi * @sizeOf(MsixEntry);
-                if (field_offset == @offsetOf(MsixEntry, "vector_control"))
-                    self.init_msix(System, msi);
+                if (field_offset == @offsetOf(MsixEntry, "vector_control")) {
+                    self.init_msix(System, msi, 0);
+                }
             } else {
                 t = "msix_pba";
             }

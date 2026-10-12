@@ -155,6 +155,16 @@ pub const NetMmio = struct {
         self.process_tx(System);
     }
 
+    pub fn reset(self: *Self, comptime System: type) void {
+        self.activate(System);
+        self.context.reset(System);
+
+        // Rerun rx/tx processing in case there was an event
+        // before state was saved
+        self.process_tap(System);
+        self.process_tx(System);
+    }
+
     pub fn activate(self: *Self, comptime System: type) void {
         configure_tun_flags(System, self.tun, self.context.acked_features);
     }
