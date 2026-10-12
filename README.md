@@ -65,7 +65,7 @@ echo "resume" | sudo socat - UNIX-CONNECT:./test.socket
 
 Restore VM from snapshot
 ```bash
-radiance --snapshot-path ./snap.rad
+radiance --snapshot-path ./snap.rad --api-socket-path ./test.socket
 ```
 
 ### Example config file:
@@ -74,9 +74,6 @@ radiance --snapshot-path ./snap.rad
 vcpus = 2
 memory_mb = 128
 cmdline = "reboot=k panic=1"
-
-[api]
-socket_path = "./test.socket"
 
 [uart]
 enabled = true

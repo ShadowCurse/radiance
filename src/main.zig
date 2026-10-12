@@ -87,6 +87,7 @@ const ALL_MEASUREMENTS = &.{
 const Args = struct {
     config_path: ?[:0]const u8 = null,
     snapshot_path: ?[:0]const u8 = null,
+    api_socket_path: ?[:0]const u8 = null,
     gdb_socket_path: ?[:0]const u8 = null,
 };
 
@@ -154,9 +155,9 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var state: State = undefined;
 
     if (args.config_path) |config_path| {
-        try build_from_config(config_path, &runtime, &state);
+        try build_from_config(config_path, args.api_socket_path, runtime, &state);
     } else if (args.snapshot_path) |snapshot_path| {
-        try build_from_snapshot(snapshot_path, &runtime, &state);
+        try build_from_snapshot(snapshot_path, args.api_socket_path, runtime, &state);
     } else {
         args_parser.print_help(Args);
         return;
@@ -200,7 +201,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
     return;
 }
 
-fn build_from_config(config_path: [:0]const u8, runtime: *Runtime, state: *State) !void {
+fn build_from_config(
+    config_path: [:0]const u8,
+    api_socket_path: ?[]const u8,
+    runtime: *Runtime,
+    state: *State,
+) !void {
     const prof_point = MEASUREMENTS.start(@src());
     defer MEASUREMENTS.end(prof_point);
 
@@ -211,7 +217,7 @@ fn build_from_config(config_path: [:0]const u8, runtime: *Runtime, state: *State
 
     runtime.kvm = .init(nix.System);
 
-    state.* = .from_config(config, runtime.kvm);
+    state.* = .from_config(config, api_socket_path, runtime.kvm);
 
     runtime.vm = .init(nix.System, runtime.kvm);
     runtime.vm.set_memory(nix.System, .{
@@ -233,23 +239,8 @@ fn build_from_config(config_path: [:0]const u8, runtime: *Runtime, state: *State
         );
     }
     runtime.vcpu_barrier = .unset;
-    if (config.api.socket_path) |socket_path| {
-        runtime.api = .init(
-            nix.System,
-            socket_path,
-            state.vcpus,
-            state.vcpu_threads,
-            &runtime.vcpu_barrier,
-            runtime,
-            state,
-            state.permanent_memory,
-        );
-        runtime.el.add_event(
-            nix.System,
-            runtime.api.fd,
-            @ptrCast(&Api.handle_default),
-            &runtime.api,
-        );
+    if (api_socket_path) |socket_path| {
+        create_api(runtime, state, socket_path);
     }
 
     const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
@@ -734,7 +725,31 @@ fn create_net_mmio_vhost(
     }
 }
 
-fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *State) !void {
+fn create_api(runtime: *Runtime, state: *State, socket_path: []const u8) void {
+    runtime.api = .init(
+        nix.System,
+        socket_path,
+        state.vcpus,
+        state.vcpu_threads,
+        &runtime.vcpu_barrier,
+        runtime,
+        state,
+        state.permanent_memory,
+    );
+    runtime.el.add_event(
+        nix.System,
+        runtime.api.fd,
+        @ptrCast(&Api.handle_default),
+        &runtime.api,
+    );
+}
+
+fn build_from_snapshot(
+    snapshot_path: []const u8,
+    api_socket_path: ?[]const u8,
+    runtime: *Runtime,
+    state: *State,
+) !void {
     const prof_point = MEASUREMENTS.start(@src());
     defer MEASUREMENTS.end(prof_point);
 
@@ -761,6 +776,9 @@ fn build_from_snapshot(snapshot_path: []const u8, runtime: *Runtime, state: *Sta
         );
     }
     runtime.vcpu_barrier = .unset;
+    if (api_socket_path) |socket_path| {
+        create_api(runtime, state, socket_path);
+    }
 
     const vcpu_exit_event = EventFd.init(nix.System, 0, nix.EFD_NONBLOCK);
     runtime.el.add_event(nix.System, vcpu_exit_event.fd, @ptrCast(&EventLoop.stop), &runtime.el);
@@ -1102,7 +1120,7 @@ pub const State = struct {
     config_devices_state: []u8,
     config_state: *ConfigState,
 
-    pub fn from_config(config: *const config_parser.Config, kvm: Kvm) State {
+    pub fn from_config(config: *const config_parser.Config, api_socket_path: ?[]const u8, kvm: Kvm) State {
         const prof_point = MEASUREMENTS.start_named("State.from_config");
         defer MEASUREMENTS.end(prof_point);
 
@@ -1251,7 +1269,7 @@ pub const State = struct {
             uart_bytes +
             rtc_bytes;
 
-        if (config.api.socket_path != null) {
+        if (api_socket_path != null) {
             permanent_memory_size += arch_state_bytes + config_devices_bytes;
 
             // Need to store ConfigState last and it needs aligment update;
@@ -1331,7 +1349,7 @@ pub const State = struct {
             //
         } else @compileError("Only aarch64 and x64 are supported");
 
-        if (config.api.socket_path != null) {
+        if (api_socket_path != null) {
             if (builtin.cpu.arch == .aarch64) {
                 result.arch.vcpu_reg_list =
                     @ptrCast(@alignCast(pm[0..arch_state_parts.vcpu_reg_list_bytes]));

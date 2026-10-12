@@ -26,17 +26,6 @@ pub const MachineConfig = struct {
     }
 };
 
-pub const ApiConfig = struct {
-    socket_path: ?[]const u8 = null,
-
-    const Self = @This();
-
-    fn update(self: *Self, line_iter: *SplitIterator(u8, .scalar)) !void {
-        const new_self = try parse_type(Self, line_iter);
-        self.* = new_self;
-    }
-};
-
 pub const KernelConfig = struct {
     path: []const u8 = "",
 
@@ -117,7 +106,6 @@ pub const PmemConfigs = struct {
 
 pub const Config = struct {
     machine: MachineConfig = .{},
-    api: ApiConfig = .{},
     kernel: KernelConfig = .{},
     uart: UartConfig = .{},
     block: BlockConfigs = .{},
