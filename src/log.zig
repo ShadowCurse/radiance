@@ -172,7 +172,7 @@ const Output = struct {
         iovecs[0] = .{ .base = io_w.buffer.ptr, .len = io_w.end };
         defer io_w.end = 0;
 
-        const n_data_iovecs = @min(iovecs.len - 1, data.len - 1);
+        const n_data_iovecs = @min(iovecs.len - 1, data.len);
         var n_data_bytes: usize = 0;
         for (iovecs[1..][0..n_data_iovecs], data[0..n_data_iovecs]) |*iov, d| {
             iov.* = .{ .base = d.ptr, .len = d.len };
@@ -180,9 +180,9 @@ const Output = struct {
         }
         assert(
             @src(),
-            n_data_iovecs == data.len - 1,
+            n_data_iovecs == data.len,
             "Number of `data` segments is {d}, which is bigger than `iovecs` buffer of 16",
-            .{data.len - 1},
+            .{data.len},
         );
 
         while (true) {
