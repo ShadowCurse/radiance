@@ -17,7 +17,7 @@ pub const LogLevel = enum {
 pub const Options = struct {
     colors: bool = true,
     level: LogLevel = .info,
-    asserts: bool = true,
+    assert_message: bool = true,
     buffer_size: u32 = 256,
 
     const Self = @This();
@@ -60,8 +60,11 @@ pub fn comptime_assert(
     comptime format: []const u8,
     comptime args: anytype,
 ) void {
-    if (comptime !options.asserts) return;
-    if (!ok) comptime_err(src, format, args);
+    if (comptime !options.assert_message) {
+        if (!ok) unreachable;
+    } else {
+        if (!ok) comptime_err(src, format, args);
+    }
 }
 
 pub fn panic(
@@ -83,16 +86,21 @@ pub fn assert(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (comptime !options.asserts) return;
-
-    if (!ok) {
-        @branchHint(.cold);
-        const T = make_struct(@TypeOf(args));
-        const t = fill_struct(T, src.file, src.line, args);
-        if (comptime options.colors)
-            std.debug.panic(RED ++ "[{s}:{}:ASSERT][{d}] " ++ format ++ DEFAULT_COLOR, t)
-        else
-            std.debug.panic("[{s}:{}:ASSERT][{d}] " ++ format, t);
+    if (comptime !options.assert_message) {
+        if (!ok) {
+            @branchHint(.cold);
+            @trap();
+        }
+    } else {
+        if (!ok) {
+            @branchHint(.cold);
+            const T = make_struct(@TypeOf(args));
+            const t = fill_struct(T, src.file, src.line, args);
+            if (comptime options.colors)
+                std.debug.panic(RED ++ "[{s}:{}:ASSERT][{d}] " ++ format ++ DEFAULT_COLOR, t)
+            else
+                std.debug.panic("[{s}:{}:ASSERT][{d}] " ++ format, t);
+        }
     }
 }
 
