@@ -22,8 +22,8 @@ pub const Options = struct {
 
     const Self = @This();
     pub fn log_enabled(self: Self, level: LogLevel) bool {
-        const self_level_int = @intFromEnum(self.level);
-        const level_int = @intFromEnum(level);
+        const self_level_int = @backingInt(self.level);
+        const level_int = @backingInt(level);
         return level_int <= self_level_int;
     }
 };
@@ -39,7 +39,7 @@ var output_mutex: Mutex = .init;
 var output_buffer: [options.buffer_size]u8 = undefined;
 
 pub fn comptime_err(
-    comptime src: std.builtin.SourceLocation,
+    comptime src: std.lang.SourceLocation,
     comptime format: []const u8,
     comptime args: anytype,
 ) noreturn {
@@ -55,7 +55,7 @@ pub fn comptime_err(
 }
 
 pub fn comptime_assert(
-    comptime src: std.builtin.SourceLocation,
+    comptime src: std.lang.SourceLocation,
     comptime ok: bool,
     comptime format: []const u8,
     comptime args: anytype,
@@ -65,7 +65,7 @@ pub fn comptime_assert(
 }
 
 pub fn panic(
-    src: std.builtin.SourceLocation,
+    src: std.lang.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) noreturn {
@@ -78,7 +78,7 @@ pub fn panic(
 }
 
 pub fn assert(
-    src: std.builtin.SourceLocation,
+    src: std.lang.SourceLocation,
     ok: bool,
     comptime format: []const u8,
     args: anytype,
@@ -97,7 +97,7 @@ pub fn assert(
 }
 
 pub fn info(
-    src: std.builtin.SourceLocation,
+    src: std.lang.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
@@ -112,7 +112,7 @@ pub fn info(
 }
 
 pub fn debug(
-    src: std.builtin.SourceLocation,
+    src: std.lang.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
@@ -127,7 +127,7 @@ pub fn debug(
 }
 
 pub fn warn(
-    src: std.builtin.SourceLocation,
+    src: std.lang.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
@@ -142,7 +142,7 @@ pub fn warn(
 }
 
 pub fn err(
-    src: std.builtin.SourceLocation,
+    src: std.lang.SourceLocation,
     comptime format: []const u8,
     args: anytype,
 ) void {
@@ -208,7 +208,7 @@ pub fn output(comptime format: []const u8, args: anytype) void {
 }
 
 fn fill_struct_comptime(comptime T: type, args: anytype) T {
-    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
+    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".field_names;
     var t: T = undefined;
 
     inline for (args_fields, 0..) |_, i| {
@@ -219,13 +219,13 @@ fn fill_struct_comptime(comptime T: type, args: anytype) T {
     return t;
 }
 
-fn make_struct_comptime(comptime src: std.builtin.SourceLocation, comptime T: type) type {
-    const type_fields = comptime @typeInfo(T).@"struct".fields;
-    // var fields: [type_fields.len + 2]std.builtin.Type.StructField = undefined;
+fn make_struct_comptime(comptime src: std.lang.SourceLocation, comptime T: type) type {
+    const type_info = comptime @typeInfo(T).@"struct";
+    const fields_count = type_info.field_names.len;
 
-    var field_names: [type_fields.len + 2][]const u8 = undefined;
-    var field_types: [type_fields.len + 2]type = undefined;
-    var field_attrs: [type_fields.len + 2]std.builtin.Type.StructField.Attributes = undefined;
+    var field_names: [fields_count + 2][]const u8 = undefined;
+    var field_types: [fields_count + 2]type = undefined;
+    var field_attrs: [fields_count + 2]std.lang.Type.Struct.FieldAttributes = undefined;
 
     // file
     field_names[0] = "0";
@@ -243,14 +243,10 @@ fn make_struct_comptime(comptime src: std.builtin.SourceLocation, comptime T: ty
         .@"align" = @alignOf(@TypeOf(src.line)),
         .default_value_ptr = @ptrCast(&src.line),
     };
-    for (type_fields, 2..) |f, i| {
+    for (type_info.field_types, type_info.field_attrs, 2..) |field_type, field_attr, i| {
         field_names[i] = std.fmt.comptimePrint("{d}", .{i});
-        field_types[i] = f.type;
-        field_attrs[i] = .{
-            .@"comptime" = f.is_comptime,
-            .@"align" = f.alignment,
-            .default_value_ptr = f.default_value_ptr,
-        };
+        field_types[i] = field_type;
+        field_attrs[i] = field_attr;
     }
 
     return @Struct(
@@ -265,7 +261,7 @@ fn make_struct_comptime(comptime src: std.builtin.SourceLocation, comptime T: ty
 fn fill_struct(comptime T: type, file: [:0]const u8, line: u32, args: anytype) T {
     @setEvalBranchQuota(5000);
 
-    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
+    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".field_names;
     var t: T = undefined;
 
     @field(t, "0") = file;
@@ -281,10 +277,12 @@ fn fill_struct(comptime T: type, file: [:0]const u8, line: u32, args: anytype) T
 }
 
 fn make_struct(comptime T: type) type {
-    const type_fields = comptime @typeInfo(T).@"struct".fields;
-    var field_names: [type_fields.len + 3][]const u8 = undefined;
-    var field_types: [type_fields.len + 3]type = undefined;
-    var field_attrs: [type_fields.len + 3]std.builtin.Type.StructField.Attributes = undefined;
+    const type_info = comptime @typeInfo(T).@"struct";
+    const fields_count = type_info.field_names.len;
+
+    var field_names: [fields_count + 3][]const u8 = undefined;
+    var field_types: [fields_count + 3]type = undefined;
+    var field_attrs: [fields_count + 3]std.lang.Type.Struct.FieldAttributes = undefined;
     // file
     field_names[0] = "0";
     field_types[0] = [:0]const u8;
@@ -308,14 +306,10 @@ fn make_struct(comptime T: type) type {
         .@"align" = @alignOf(u32),
         .default_value_ptr = null,
     };
-    for (type_fields, 3..) |f, i| {
+    for (type_info.field_types, type_info.field_attrs, 3..) |field_type, field_attr, i| {
         field_names[i] = std.fmt.comptimePrint("{d}", .{i});
-        field_types[i] = f.type;
-        field_attrs[i] = .{
-            .@"comptime" = f.is_comptime,
-            .@"align" = f.alignment,
-            .default_value_ptr = f.default_value_ptr,
-        };
+        field_types[i] = field_type;
+        field_attrs[i] = field_attr;
     }
 
     return @Struct(

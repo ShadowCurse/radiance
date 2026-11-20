@@ -264,7 +264,7 @@ const VirtioPciDeviceCapabilities = extern struct {
 };
 
 pub const HeaderBarSizes = struct {
-    sizes: [6]Size = .{Size{}} ** 6,
+    sizes: [6]Size = @splat(.{}),
 
     pub const Size = packed struct(u32) {
         read: bool = false,

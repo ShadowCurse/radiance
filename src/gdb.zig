@@ -1282,7 +1282,7 @@ pub const GdbServer = struct {
     selected_vcpu: u32 = 0,
 
     // Software breakpoint storage
-    sw_breakpoints: [MAX_SW_BREAKPOINTS]SwBreakpoint = [_]SwBreakpoint{.{}} ** MAX_SW_BREAKPOINTS,
+    sw_breakpoints: [MAX_SW_BREAKPOINTS]SwBreakpoint = @splat(.{}),
     sw_breakpoint_count: u32 = 0,
 
     const MAX_SW_BREAKPOINTS = 64;

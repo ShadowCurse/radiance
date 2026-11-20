@@ -152,12 +152,12 @@ pub fn parse_fd(comptime System: type, fd: nix.fd_t) !ParseResult {
     );
 
     var line_iter = std.mem.splitScalar(u8, file_mem, '\n');
-    const type_fields = comptime @typeInfo(Config).@"struct".fields;
+    const type_info = comptime @typeInfo(Config).@"struct";
     var config: Config = .{};
 
     while (line_iter.next()) |line| {
         if (line.len != 0) {
-            const field_name = blk: {
+            const table_name = blk: {
                 // Skip comments
                 if (std.mem.startsWith(u8, line, "#")) {
                     continue;
@@ -175,15 +175,14 @@ pub fn parse_fd(comptime System: type, fd: nix.fd_t) !ParseResult {
                 }
             };
             var found: bool = false;
-            inline for (type_fields) |field| {
-                if (std.mem.eql(u8, field.name, field_name)) {
+            inline for (type_info.field_names, type_info.field_types) |field_name, field_type| {
+                if (std.mem.eql(u8, field_name, table_name)) {
                     found = true;
-                    const field_type = @typeInfo(field.type);
-                    if (field_type == .optional) {
-                        @field(config, field.name) = .{};
-                        try @field(config, field.name).?.update(&line_iter);
+                    if (@typeInfo(field_type) == .optional) {
+                        @field(config, field_name) = .{};
+                        try @field(config, field_name).?.update(&line_iter);
                     } else {
-                        try @field(config, field.name).update(&line_iter);
+                        try @field(config, field_name).update(&line_iter);
                     }
                     break;
                 }
@@ -202,7 +201,7 @@ pub fn parse_fd(comptime System: type, fd: nix.fd_t) !ParseResult {
 }
 
 fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
-    const type_fields = comptime @typeInfo(T).@"struct".fields;
+    const type_info = comptime @typeInfo(T).@"struct";
     var t: T = .{};
     while (line_iter.next()) |line| {
         if (line.len == 0 or line[0] == '[') {
@@ -210,7 +209,7 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
         }
 
         var iter = std.mem.splitScalar(u8, line, '=');
-        const field_name = blk: {
+        const key_name = blk: {
             if (iter.next()) |name| {
                 break :blk std.mem.trim(u8, name, " ");
             } else {
@@ -225,11 +224,11 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
             }
         };
 
-        inline for (type_fields) |field| {
-            if (std.mem.eql(u8, field.name, field_name)) {
-                switch (field.type) {
+        inline for (type_info.field_names, type_info.field_types) |field_name, field_type| {
+            if (std.mem.eql(u8, field_name, key_name)) {
+                switch (field_type) {
                     ?[nix.VIRTIO_BLK_ID_BYTES]u8 => {
-                        var array: [nix.VIRTIO_BLK_ID_BYTES]u8 = .{0} ** nix.VIRTIO_BLK_ID_BYTES;
+                        var array: [nix.VIRTIO_BLK_ID_BYTES]u8 = @splat(0);
                         var i: usize = 0;
                         const val_array = std.mem.trim(u8, field_value, "[]");
                         var val_iter = std.mem.splitScalar(u8, val_array, ',');
@@ -239,7 +238,7 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
                             const n = try std.fmt.parseInt(u8, v, 16);
                             array[i] = n;
                         }
-                        @field(t, field.name) = array;
+                        @field(t, field_name) = array;
                     },
                     ?[6]u8 => {
                         var array: [6]u8 = undefined;
@@ -255,21 +254,21 @@ fn parse_type(comptime T: type, line_iter: *SplitIterator(u8, .scalar)) !T {
                         if (i != 6) {
                             return error.NoFieldValue;
                         }
-                        @field(t, field.name) = array;
+                        @field(t, field_name) = array;
                     },
                     [:0]const u8 => {
                         const string = std.mem.trim(u8, field_value, "\"");
-                        @field(t, field.name) = string;
+                        @field(t, field_name) = string;
                     },
                     []const u8, ?[]const u8 => {
                         const string = std.mem.trim(u8, field_value, "\"");
-                        @field(t, field.name) = string;
+                        @field(t, field_name) = string;
                     },
                     u32 => {
-                        @field(t, field.name) = try std.fmt.parseInt(u32, field_value, 10);
+                        @field(t, field_name) = try std.fmt.parseInt(u32, field_value, 10);
                     },
                     bool => {
-                        @field(t, field.name) = std.mem.eql(u8, field_value, "true");
+                        @field(t, field_name) = std.mem.eql(u8, field_value, "true");
                     },
                     else => unreachable,
                 }
@@ -294,15 +293,15 @@ fn dump_file(comptime System: type, config: Config, config_path: []const u8) voi
 }
 
 fn dump_fd(comptime System: type, config: Config, fd: nix.fd_t) void {
-    const type_fields = comptime @typeInfo(Config).@"struct".fields;
-    inline for (type_fields, 0..) |field, i| {
-        const last = type_fields.len - 1 == i;
-        if (@typeInfo(field.type) == .optional) {
-            if (@field(config, field.name)) |v| {
-                dump_section(System, field.name, v, fd, last);
+    const type_info = comptime @typeInfo(Config).@"struct";
+    inline for (type_info.field_names, type_info.field_types, 0..) |field_name, field_type, i| {
+        const last = type_info.field_names.len - 1 == i;
+        if (@typeInfo(field_type) == .optional) {
+            if (@field(config, field_name)) |v| {
+                dump_section(System, field_name, v, fd, last);
             }
         } else {
-            dump_section(System, field.name, @field(config, field.name), fd, last);
+            dump_section(System, field_name, @field(config, field_name), fd, last);
         }
     }
 }
@@ -317,9 +316,8 @@ fn dump_section(
     const t_type = @TypeOf(t);
     switch (t_type) {
         BlockConfigs, PmemConfigs, NetConfigs => {
-            const type_fields = @typeInfo(t_type).@"struct".fields;
-            const first_field = type_fields[0];
-            const items = @field(t, first_field.name).slice_const();
+            const first_field_name = @typeInfo(t_type).@"struct".field_names[0];
+            const items = @field(t, first_field_name).slice_const();
             for (items) |item| {
                 dump_type(System, name, item, fd);
                 if (!last)
@@ -335,7 +333,7 @@ fn dump_section(
 }
 
 fn dump_type(comptime System: type, comptime name: []const u8, t: anytype, fd: nix.fd_t) void {
-    const type_fields = @typeInfo(@TypeOf(t)).@"struct".fields;
+    const type_info = @typeInfo(@TypeOf(t)).@"struct";
 
     const header = if (std.mem.endsWith(u8, name, "s"))
         std.fmt.comptimePrint("[[{s}]]\n", .{name})
@@ -343,11 +341,11 @@ fn dump_type(comptime System: type, comptime name: []const u8, t: anytype, fd: n
         std.fmt.comptimePrint("[{s}]\n", .{name});
     _ = nix.assert(@src(), System, "write", .{ fd, header });
 
-    inline for (type_fields) |field| {
-        switch (field.type) {
+    inline for (type_info.field_names, type_info.field_types) |field_name, field_type| {
+        switch (field_type) {
             ?[6]u8 => {
-                if (@field(t, field.name)) |value| {
-                    const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
+                if (@field(t, field_name)) |value| {
+                    const field_start = std.fmt.comptimePrint("{s} = ", .{field_name});
                     _ = nix.assert(@src(), System, "write", .{ fd, field_start });
 
                     var buff: [24]u8 = undefined;
@@ -362,19 +360,19 @@ fn dump_type(comptime System: type, comptime name: []const u8, t: anytype, fd: n
                 }
             },
             [:0]const u8, []const u8 => {
-                if (@field(t, field.name).len != 0) {
-                    const field_start = std.fmt.comptimePrint("{s} = \"", .{field.name});
+                if (@field(t, field_name).len != 0) {
+                    const field_start = std.fmt.comptimePrint("{s} = \"", .{field_name});
                     _ = nix.assert(@src(), System, "write", .{ fd, field_start });
-                    _ = nix.assert(@src(), System, "write", .{ fd, @field(t, field.name) });
+                    _ = nix.assert(@src(), System, "write", .{ fd, @field(t, field_name) });
                     _ = nix.assert(@src(), System, "write", .{ fd, "\"\n" });
                 }
             },
             u32, bool => {
-                const field_start = std.fmt.comptimePrint("{s} = ", .{field.name});
+                const field_start = std.fmt.comptimePrint("{s} = ", .{field_name});
                 _ = nix.assert(@src(), System, "write", .{ fd, field_start });
 
                 var buff: [16]u8 = undefined;
-                const v = std.fmt.bufPrint(&buff, "{}", .{@field(t, field.name)}) catch unreachable;
+                const v = std.fmt.bufPrint(&buff, "{}", .{@field(t, field_name)}) catch unreachable;
                 _ = nix.assert(@src(), System, "write", .{ fd, v });
 
                 _ = nix.assert(@src(), System, "write", .{ fd, "\n" });

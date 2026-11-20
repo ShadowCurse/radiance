@@ -78,7 +78,7 @@ pub fn PciVirtioContext(
         // There are max 2 queues
         selected_queue: u1 = 0,
         queues: [NUM_QUEUES]Queue,
-        queue_msi: [NUM_QUEUES]u8 = .{0} ** NUM_QUEUES,
+        queue_msi: [NUM_QUEUES]u8 = @splat(0),
         queue_events: [NUM_QUEUES]EventFd,
 
         // 0 - config irq
@@ -86,7 +86,7 @@ pub fn PciVirtioContext(
         irqs: [NUM_QUEUES + 1]EventFd,
 
         config: CONFIG = undefined,
-        msix_table: [NUM_IRQS]MsixEntry = .{MsixEntry{}} ** NUM_IRQS,
+        msix_table: [NUM_IRQS]MsixEntry = @splat(.{}),
 
         vm: *Vm,
 

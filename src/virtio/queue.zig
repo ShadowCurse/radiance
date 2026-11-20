@@ -197,7 +197,7 @@ pub const Queue = struct {
 
 const TestSystem = struct {
     const memory = @import("../memory.zig");
-    var M align(memory.HOST_PAGE_SIZE) = [_]u8{0} ** 4096;
+    var M: [4096]u8 align(memory.HOST_PAGE_SIZE) = @splat(0);
 };
 test "test_queue_pop_desc_chain" {
     const memory: Memory.Guest = .{ .mem = TestSystem.M[0..] };

@@ -22,7 +22,7 @@ pub const aarch64 = struct {
     fn core_regs_ids() [31]u64 {
         log.comptime_assert(
             @src(),
-            @typeInfo(@typeInfo(nix.user_pt_regs).@"struct".fields[0].type).array.len == 31,
+            @typeInfo(@typeInfo(nix.user_pt_regs).@"struct".field_types[0]).array.len == 31,
             "",
             .{},
         );
@@ -53,7 +53,7 @@ pub const aarch64 = struct {
     fn fp_vreg_ids() [32]u64 {
         log.comptime_assert(
             @src(),
-            @typeInfo(@typeInfo(nix.user_fpsimd_state).@"struct".fields[0].type).array.len == 32,
+            @typeInfo(@typeInfo(nix.user_fpsimd_state).@"struct".field_types[0]).array.len == 32,
             "",
             .{},
         );
@@ -546,13 +546,13 @@ fn set_thread_handler(comptime System: type) void {
         .flags = 4,
         .mask = std.mem.zeroes(nix.sigset_t),
     };
-    _ = nix.assert(@src(), System, "sigaction", .{ @enumFromInt(VCPU_SIGNAL), &sigact, null });
+    _ = nix.assert(@src(), System, "sigaction", .{ @fromBackingInt(@intCast(VCPU_SIGNAL)), &sigact, null });
 }
 
 pub fn pause(self: *const Self, comptime System: type) void {
     self.kvm_run.immediate_exit = 1;
     arch.load_store_barrier();
-    _ = System.tkill(self.tid, @enumFromInt(VCPU_SIGNAL)) catch {};
+    _ = System.tkill(self.tid, @fromBackingInt(@intCast(VCPU_SIGNAL))) catch {};
 }
 
 pub fn create(

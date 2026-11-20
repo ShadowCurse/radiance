@@ -90,7 +90,7 @@ pub fn Block(comptime Context: type) type {
             });
 
             const nsectors = statx.size >> SECTOR_SHIFT;
-            self.block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
+            self.block_id = if (id) |i| i else @splat(0);
 
             self.context.init(
                 System,
@@ -294,7 +294,7 @@ pub fn Block(comptime Context: type) type {
 }
 
 const SubmissionsRing = struct {
-    submissions: [MAX_SUBMISSIONS]Submission = .{Submission{}} ** MAX_SUBMISSIONS,
+    submissions: [MAX_SUBMISSIONS]Submission = @splat(.{}),
     submission_idx: u32 = 0,
 
     // Each request consists of 3 descriptors, so
@@ -379,7 +379,7 @@ pub fn BlockIoUring(comptime Context: type) type {
             const statx = nix.assert(@src(), System, "statx", .{self.file_fd});
             self.file_size = statx.size;
             const nsectors = statx.size >> SECTOR_SHIFT;
-            self.block_id = if (id) |i| i else .{0} ** nix.VIRTIO_BLK_ID_BYTES;
+            self.block_id = if (id) |i| i else @splat(0);
 
             self.io_uring_device = undefined;
             self.submission_ring = .{};

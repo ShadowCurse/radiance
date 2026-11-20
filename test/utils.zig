@@ -193,19 +193,19 @@ pub const ProcessResourceUsage = struct {
     pub fn update(self: *Self, io: std.Io, process: *const Process, alloc: Allocator) !void {
         const rusage = process.child.resource_usage_statistics.rusage.?;
         const t = @TypeOf(rusage);
-        const fields = @typeInfo(t).@"struct".fields;
-        inline for (fields) |field| {
-            switch (field.type) {
+        const info = @typeInfo(t).@"struct";
+        inline for (info.field_names, info.field_types) |field_name, field_type| {
+            switch (field_type) {
                 isize => {
-                    const s = try std.fmt.allocPrint(alloc, "{s} {}\n", .{ field.name, @field(rusage, field.name) });
+                    const s = try std.fmt.allocPrint(alloc, "{s} {}\n", .{ field_name, @field(rusage, field_name) });
                     defer alloc.free(s);
 
                     var w = self.file.writer(io, &.{});
                     _ = try w.interface.write(s);
                 },
                 std.os.linux.timeval => {
-                    const f = @field(rusage, field.name);
-                    const s = try std.fmt.allocPrint(alloc, "{s} {} {}\n", .{ field.name, f.sec, f.usec });
+                    const f = @field(rusage, field_name);
+                    const s = try std.fmt.allocPrint(alloc, "{s} {} {}\n", .{ field_name, f.sec, f.usec });
                     defer alloc.free(s);
 
                     var w = self.file.writer(io, &.{});

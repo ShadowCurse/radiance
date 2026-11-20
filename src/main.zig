@@ -49,7 +49,7 @@ pub const std_options = std.Options{
 };
 
 pub const log_options = log.Options{
-    .level = .debug,
+    .level = .info,
     .colors = true,
 };
 
@@ -564,8 +564,8 @@ fn create_block_pci(
             const info = mmio_resources.allocate_pci();
             runtime.ecam.add_header(
                 block_devices.TYPE_BLOCK,
-                @intFromEnum(Ecam.PciClass.MassStorage),
-                @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
+                @backingInt(Ecam.PciClass.MassStorage),
+                @backingInt(Ecam.PciMassStorageSubclass.NvmeController),
                 info.bar_addr,
             );
             block.init(
@@ -610,8 +610,8 @@ fn create_block_pci_io_uring(
             const info = mmio_resources.allocate_pci();
             runtime.ecam.add_header(
                 block_devices.TYPE_BLOCK,
-                @intFromEnum(Ecam.PciClass.MassStorage),
-                @intFromEnum(Ecam.PciMassStorageSubclass.NvmeController),
+                @backingInt(Ecam.PciClass.MassStorage),
+                @backingInt(Ecam.PciMassStorageSubclass.NvmeController),
                 info.bar_addr,
             );
             block.init(

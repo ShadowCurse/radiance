@@ -137,7 +137,7 @@ pub fn slice(self: *Self) []nix.iovec {
 
 const TestSystem = struct {
     const memory = @import("../memory.zig");
-    var M align(memory.HOST_PAGE_SIZE) = [_]u8{0} ** 4096;
+    var M: [4096]u8 align(memory.HOST_PAGE_SIZE) = @splat(0);
 };
 test "test_iov_ring_push_back" {
     const System = nix.System;
@@ -199,17 +199,13 @@ test "test_iov_ring_slice" {
     try std.testing.expectEqual(ir.capacity, 256);
 
     {
-        const expected_slice = [_]nix.iovec{
-            .{ .base = undefined, .len = 1 },
-        } ** 256;
+        const expected_slice: [256]nix.iovec = @splat(.{ .base = undefined, .len = 1 });
         try std.testing.expectEqualSlices(nix.iovec, &expected_slice, ir.slice());
     }
 
     ir.pop_front_n(128);
     {
-        const expected_slice = [_]nix.iovec{
-            .{ .base = undefined, .len = 1 },
-        } ** 128;
+        const expected_slice: [128]nix.iovec = @splat(.{ .base = undefined, .len = 1 });
         try std.testing.expectEqualSlices(nix.iovec, &expected_slice, ir.slice());
     }
 }

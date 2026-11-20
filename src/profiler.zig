@@ -53,7 +53,7 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
 
     return if (!options.enabled)
         struct {
-            pub fn start(comptime _: std.builtin.SourceLocation) void {}
+            pub fn start(comptime _: std.lang.SourceLocation) void {}
             pub fn start_named(comptime _: []const u8) void {}
             pub fn end(_: void) void {}
             pub fn print() void {}
@@ -61,7 +61,7 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
     else
         struct {
             pub var measurements: [options.num_threads][num_of_measurements]Measurement =
-                .{.{Measurement{}} ** num_of_measurements} ** options.num_threads;
+                @splat(@splat(.{}));
 
             pub const Point = struct {
                 start_time: u64,
@@ -70,7 +70,7 @@ pub fn Measurements(comptime FILE: []const u8, comptime NAMES: []const []const u
                 current_with_children: u64,
             };
 
-            pub fn start(comptime src: std.builtin.SourceLocation) Point {
+            pub fn start(comptime src: std.lang.SourceLocation) Point {
                 return start_named(src.fn_name);
             }
 

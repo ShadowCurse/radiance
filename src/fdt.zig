@@ -350,10 +350,11 @@ fn create_ecam_node(builder: *FdtBuilder) void {
     // https://github.com/devicetree-org/dt-schema/blob/main/dtschema/schemas/pci/pci-host-bridge.yaml
 
     var print_buff: [20]u8 = undefined;
-    const name = std.fmt.bufPrintZ(
+    const name = std.mem.printSentinel(
         &print_buff,
         "pcie@{x}",
         .{Memory.PCI_CONFIG_START},
+        0,
     ) catch unreachable;
 
     builder.begin_node(name);
@@ -402,7 +403,7 @@ fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, cpu_ids: []const 
 
     var print_buff: [20]u8 = undefined;
     for (cpu_ids, 0..) |id, i| {
-        const cpu_name = std.fmt.bufPrintZ(&print_buff, "cpu@{x}", .{i}) catch unreachable;
+        const cpu_name = std.mem.printSentinel(&print_buff, "cpu@{x}", .{i}, 0) catch unreachable;
         builder.begin_node(cpu_name);
         defer builder.end_node();
 
@@ -447,7 +448,7 @@ fn create_cpu_fdt(comptime System: type, builder: *FdtBuilder, cpu_ids: []const 
         for (0..cpu_ids.len) |i| {
             const l2_cache_phandle: u32 = LAST_CACHE_PHANDLE - @as(u32, @intCast(i));
 
-            const node_name = std.fmt.bufPrintZ(&print_buff, "l2-cache-{}", .{i}) catch unreachable;
+            const node_name = std.mem.printSentinel(&print_buff, "l2-cache-{}", .{i}, 0) catch unreachable;
             builder.begin_node(node_name);
             defer builder.end_node();
 
@@ -568,10 +569,11 @@ fn create_gicv2_node(builder: *FdtBuilder) void {
     builder.add_property([]const u32, "interrupts", &gic_intr);
     {
         var print_buff: [20]u8 = undefined;
-        const name = std.fmt.bufPrintZ(
+        const name = std.mem.printSentinel(
             &print_buff,
             "v2m@{x}",
             .{Memory.GICV2M_MSI_ADDR},
+            0,
         ) catch unreachable;
 
         builder.begin_node(name);
@@ -636,7 +638,7 @@ fn create_psci_node(builder: *FdtBuilder) void {
 fn create_uart_node(builder: *FdtBuilder) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/serial/8250.yaml
     var buff: [20]u8 = undefined;
-    const name = std.fmt.bufPrintZ(&buff, "uart@{x:.8}", .{Mmio.UART_ADDR}) catch unreachable;
+    const name = std.mem.printSentinel(&buff, "uart@{x:.8}", .{Mmio.UART_ADDR}, 0) catch unreachable;
     builder.begin_node(name);
     defer builder.end_node();
 
@@ -678,7 +680,7 @@ fn create_virtio_node(
 ) void {
     // https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/virtio/mmio.yaml
     var buff: [30]u8 = undefined;
-    const name = std.fmt.bufPrintZ(&buff, "virtio_mmio@{x:.8}", .{device_info.addr}) catch unreachable;
+    const name = std.mem.printSentinel(&buff, "virtio_mmio@{x:.8}", .{device_info.addr}, 0) catch unreachable;
     builder.begin_node(name);
     defer builder.end_node();
 
@@ -695,7 +697,7 @@ fn create_virtio_node(
 
 fn create_pmem_node(builder: *FdtBuilder, info: Pmem.Info) void {
     var buff: [20]u8 = undefined;
-    const name = std.fmt.bufPrintZ(&buff, "pmem@{x:.8}", .{info.start}) catch unreachable;
+    const name = std.mem.printSentinel(&buff, "pmem@{x:.8}", .{info.start}, 0) catch unreachable;
     builder.begin_node(name);
     defer builder.end_node();
 

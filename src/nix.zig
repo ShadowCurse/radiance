@@ -4,15 +4,7 @@ const log = @import("log.zig");
 const memory = @import("memory.zig");
 const profiler = @import("profiler.zig");
 
-pub const MEASUREMENTS = profiler.Measurements("nix", type_decl_names(System));
-
-fn type_decl_names(comptime T: type) []const [:0]const u8 {
-    const type_info = @typeInfo(T);
-    var result: []const [:0]const u8 = &.{};
-    for (type_info.@"struct".decls) |decl|
-        result = result ++ &[1][:0]const u8{decl.name};
-    return result;
-}
+pub const MEASUREMENTS = profiler.Measurements("nix", @typeInfo(System).@"struct".decl_names);
 
 pub const SystemError = error{
     EPERM, // Operation not permitted
@@ -625,7 +617,7 @@ pub const KVM_IOEVENTFD_FLAG_NR_DATAMATCH = 1;
 
 pub const kvm_vcpu_init = extern struct {
     target: u32 = 0,
-    features: [7]u32 = .{0} ** 7,
+    features: [7]u32 = @splat(0),
 };
 
 pub const kvm_userspace_memory_region = extern struct {
@@ -647,7 +639,7 @@ pub const kvm_irqfd = extern struct {
     gsi: u32 = 0,
     flags: u32 = 0,
     resamplefd: u32 = 0,
-    pad: [16]u8 = .{0} ** 16,
+    pad: [16]u8 = @splat(0),
 };
 
 pub const kvm_irq_routing_irqchip = extern struct {
@@ -696,10 +688,10 @@ pub const kvm_irq_routing = extern struct {
 // x64
 pub const kvm_pit_config = extern struct {
     flags: u32 = 0,
-    pad: [15]u32 = .{0} ** 15,
+    pad: [15]u32 = @splat(0),
 };
 pub const kvm_fpu = extern struct {
-    fpr: [8][16]u8 = .{.{0} ** 16} ** 8,
+    fpr: [8][16]u8 = @splat(@splat(0)),
     fcw: u16 = 0,
     fsw: u16 = 0,
     ftwx: u8 = 0,
@@ -707,7 +699,7 @@ pub const kvm_fpu = extern struct {
     last_opcode: u16 = 0,
     last_ip: u64 = 0,
     last_dp: u64 = 0,
-    xmm: [16][16]u8 = .{.{0} ** 16} ** 16,
+    xmm: [16][16]u8 = @splat(@splat(0)),
     mxcsr: u32 = 0,
     pad2: u32 = 0,
 };
@@ -729,7 +721,7 @@ pub const kvm_segment = extern struct {
 pub const kvm_dtable = extern struct {
     base: u64 = 0,
     limit: u16 = 0,
-    padding: [3]u16 = .{0} ** 3,
+    padding: [3]u16 = @splat(0),
 };
 pub const kvm_sregs = extern struct {
     cs: kvm_segment = .{},
@@ -749,10 +741,10 @@ pub const kvm_sregs = extern struct {
     cr8: u64 = 0,
     efer: u64 = 0,
     apic_base: u64 = 0,
-    interrupt_bitmap: [4]u64 = .{0} ** 4,
+    interrupt_bitmap: [4]u64 = @splat(0),
 };
 pub const kvm_lapic_state = extern struct {
-    regs: [1024]u8 = .{0} ** 1024,
+    regs: [1024]u8 = @splat(0),
 };
 pub const kvm_msr_entry = extern struct {
     index: u32 = 0,
@@ -803,7 +795,7 @@ pub const kvm_cpuid_entry2 = extern struct {
     ebx: u32 = 0,
     ecx: u32 = 0,
     edx: u32 = 0,
-    padding: [3]u32 = .{0} ** 3,
+    padding: [3]u32 = @splat(0),
 };
 pub const kvm_cpuid2 = extern struct {
     nent: u32 = 0,
@@ -824,7 +816,7 @@ pub const kvm_cpuid2 = extern struct {
     }
 };
 pub const kvm_xsave = extern struct {
-    region: [1024]u32 = .{0} ** 1024,
+    region: [1024]u32 = @splat(0),
     pub fn extra(self: *kvm_xsave, size: usize) []u32 {
         return @as([*]u32, @ptrFromInt(@intFromPtr(self) + 4096))[0..size];
     }
@@ -837,15 +829,15 @@ pub const kvm_xcr = extern struct {
 pub const kvm_xcrs = extern struct {
     nr_xcrs: u32 = 0,
     flags: u32 = 0,
-    xcrs: [16]kvm_xcr = .{kvm_xcr{}} ** 16,
-    padding: [16]u64 = .{0} ** 16,
+    xcrs: [16]kvm_xcr = @splat(.{}),
+    padding: [16]u64 = @splat(0),
 };
 pub const kvm_debugregs = extern struct {
-    db: [4]u64 = .{0} ** 4,
+    db: [4]u64 = @splat(0),
     dr6: u64 = 0,
     dr7: u64 = 0,
     flags: u64 = 0,
-    reserved: [9]u64 = .{0} ** 9,
+    reserved: [9]u64 = @splat(0),
 };
 pub const kvm_vcpu_events = extern struct {
     exception: extern struct {
@@ -878,7 +870,7 @@ pub const kvm_vcpu_events = extern struct {
     triple_fault: extern struct {
         pending: u8 = 0,
     } = .{},
-    reserved: [26]u8 = .{0} ** 26,
+    reserved: [26]u8 = @splat(0),
     exception_has_payload: u8 = 0,
     exception_payload: u64 = 0,
 };
@@ -898,9 +890,9 @@ pub const kvm_pit_channel_state = extern struct {
     count_load_time: i64 = 0,
 };
 pub const kvm_pit_state2 = extern struct {
-    channels: [3]kvm_pit_channel_state = .{kvm_pit_channel_state{}} ** 3,
+    channels: [3]kvm_pit_channel_state = @splat(.{}),
     flags: u32 = 0,
-    reserved: [9]u32 = .{0} ** 9,
+    reserved: [9]u32 = @splat(0),
 };
 pub const kvm_clock_data = extern struct {
     clock: u64 = 0,
@@ -908,7 +900,7 @@ pub const kvm_clock_data = extern struct {
     pad0: u32 = 0,
     realtime: u64 = 0,
     host_tsc: u64 = 0,
-    pad: [4]u32 = .{0} ** 4,
+    pad: [4]u32 = @splat(0),
 };
 pub const kvm_pic_state = extern struct {
     last_irr: u8 = 0,
@@ -934,7 +926,7 @@ pub const kvm_ioapic_state = extern struct {
     id: u32 = 0,
     irr: u32 = 0,
     pad: u32 = 0,
-    redirtbl: [24]u64 = .{0} ** 24,
+    redirtbl: [24]u64 = @splat(0),
 };
 pub const kvm_irqchip = extern struct {
     chip_id: u32 = 0,
@@ -952,7 +944,7 @@ pub const kvm_ioeventfd = extern struct {
     len: u32 = 0,
     fd: fd_t = 0,
     flags: u32 = 0,
-    pad: [36]u8 = .{0} ** 36,
+    pad: [36]u8 = @splat(0),
 };
 
 pub const kvm_device_attr = extern struct {
@@ -965,12 +957,12 @@ pub const kvm_device_attr = extern struct {
 // GDB
 pub const KVM_ARM_MAX_DBG_REGS = 16;
 pub const kvm_guest_debug_arch = if (builtin.cpu.arch == .aarch64) extern struct {
-    dbg_bcr: [KVM_ARM_MAX_DBG_REGS]u64 = .{0} ** KVM_ARM_MAX_DBG_REGS,
-    dbg_bvr: [KVM_ARM_MAX_DBG_REGS]u64 = .{0} ** KVM_ARM_MAX_DBG_REGS,
-    dbg_wcr: [KVM_ARM_MAX_DBG_REGS]u64 = .{0} ** KVM_ARM_MAX_DBG_REGS,
-    dbg_wvr: [KVM_ARM_MAX_DBG_REGS]u64 = .{0} ** KVM_ARM_MAX_DBG_REGS,
+    dbg_bcr: [KVM_ARM_MAX_DBG_REGS]u64 = @splat(0),
+    dbg_bvr: [KVM_ARM_MAX_DBG_REGS]u64 = @splat(0),
+    dbg_wcr: [KVM_ARM_MAX_DBG_REGS]u64 = @splat(0),
+    dbg_wvr: [KVM_ARM_MAX_DBG_REGS]u64 = @splat(0),
 } else if (builtin.cpu.arch == .x86_64) extern struct {
-    debugreg: [8]u64 = .{0} ** 8,
+    debugreg: [8]u64 = @splat(0),
 } else @compileError("Only aarch64 and x64 are supported");
 pub const kvm_guest_debug = extern struct {
     control: u32 = 0,
@@ -984,13 +976,13 @@ pub const kvm_translation = extern struct {
     valid: u8 = 0,
     writeable: u8 = 0,
     usermode: u8 = 0,
-    pad: [5]u8 = .{0} ** 5,
+    pad: [5]u8 = @splat(0),
 };
 
 pub const kvm_run = extern struct {
     request_interrupt_window: u8 = 0,
     immediate_exit: u8 = 0,
-    padding1: [6]u8 = .{0} ** 6,
+    padding1: [6]u8 = @splat(0),
     exit_reason: u32 = 0,
     ready_for_interrupt_injection: u8 = 0,
     if_flag: u8 = 0,
@@ -1014,7 +1006,7 @@ pub const kvm_run = extern struct {
         },
         mmio: extern struct {
             phys_addr: u64 = 0,
-            data: [8]u8 = .{0} ** 8,
+            data: [8]u8 = @splat(0),
             len: u32 = 0,
             is_write: u8 = 0,
         },
@@ -1030,7 +1022,7 @@ pub const kvm_run = extern struct {
     },
     kvm_valid_regs: u64 = 0,
     kvm_dirty_regs: u64 = 0,
-    padding: [2048]u8 = .{0} ** 2048,
+    padding: [2048]u8 = @splat(0),
 };
 
 // aarch64
@@ -1047,16 +1039,16 @@ pub const kvm_mp_state = extern struct {
     mp_state: u32 = 0,
 };
 pub const user_pt_regs = extern struct {
-    regs: [31]u64 = .{0} ** 31,
+    regs: [31]u64 = @splat(0),
     sp: u64 = 0,
     pc: u64 = 0,
     pstate: u64 = 0,
 };
 pub const user_fpsimd_state = extern struct {
-    vregs: [32]u128 = .{0} ** 32,
+    vregs: [32]u128 = @splat(0),
     fpsr: u32 = 0,
     fpcr: u32 = 0,
-    reserved: [2]u32 = .{0} ** 2,
+    reserved: [2]u32 = @splat(0),
 };
 
 pub const kvm_regs = if (builtin.cpu.arch == .x86_64) extern struct {
@@ -1082,7 +1074,7 @@ pub const kvm_regs = if (builtin.cpu.arch == .x86_64) extern struct {
     regs: user_pt_regs = .{},
     sp_el1: u64 = 0,
     elr_el1: u64 = 0,
-    spsr: [5]u64 = .{0} ** 5,
+    spsr: [5]u64 = @splat(0),
     fp_regs: user_fpsimd_state = .{},
 } else @compileError("Only aarch64 and x64 are supported");
 
@@ -1108,11 +1100,39 @@ pub const virtio_blk_outhdr = extern struct {
 };
 
 pub const Elf64_Magic = std.elf.MAGIC;
-pub const Elf64_Ehdr = std.elf.Elf64_Ehdr;
-pub const Elf64_Phdr = std.elf.Elf64_Phdr;
+pub const Elf64_Ehdr = extern struct {
+    e_ident: [std.elf.EI_NIDENT]u8,
+    e_type: u16,
+    e_machine: u16,
+    e_version: u32,
+    e_entry: u64,
+    e_phoff: u64,
+    e_shoff: u64,
+    e_flags: u32,
+    e_ehsize: u16,
+    e_phentsize: u16,
+    e_phnum: u16,
+    e_shentsize: u16,
+    e_shnum: u16,
+    e_shstrndx: u16,
+};
+pub const Elf64_Phdr = extern struct {
+    p_type: u32,
+    p_flags: u32,
+    p_offset: u64,
+    p_vaddr: u64,
+    p_paddr: u64,
+    p_filesz: u64,
+    p_memsz: u64,
+    p_align: u64,
+};
+comptime {
+    std.debug.assert(@sizeOf(Elf64_Ehdr) == @sizeOf(std.elf.Elf64.Ehdr));
+    std.debug.assert(@sizeOf(Elf64_Phdr) == @sizeOf(std.elf.Elf64.Phdr));
+}
 pub const ELFDATA2LSB = std.elf.ELFDATA2LSB;
 pub const EI_DATA = std.elf.EI_DATA;
-pub const PT_LOAD = std.elf.PT_LOAD;
+pub const PT_LOAD = @backingInt(std.elf.PT.LOAD);
 
 pub const IFF = packed struct(u16) {
     _0: u1 = 0,
@@ -1130,7 +1150,7 @@ pub const IFF = packed struct(u16) {
 };
 pub const IFNAMESIZE = 16;
 pub const ifreq = extern struct {
-    name: [IFNAMESIZE]u8 = .{0} ** IFNAMESIZE,
+    name: [IFNAMESIZE]u8 = @splat(0),
     flags: IFF = .{},
 };
 
@@ -1263,7 +1283,7 @@ pub const E820_RESERVED = @as(c_int, 2);
 
 // x64
 pub const mpf_intel = extern struct {
-    signature: [4]u8 = .{0} ** 4,
+    signature: [4]u8 = @splat(0),
     physptr: u32 = 0,
     length: u8 = 0,
     specification: u8 = 0,
@@ -1281,12 +1301,12 @@ pub const mpc_cpu = extern struct {
     cpuflag: u8 = 0,
     cpufeature: u32 = 0,
     featureflag: u32 = 0,
-    reserved: [2]u32 = .{0} ** 2,
+    reserved: [2]u32 = @splat(0),
 };
 pub const mpc_bus = extern struct {
     type: u8 = 0,
     busid: u8 = 0,
-    bustype: [6]u8 = .{0} ** 6,
+    bustype: [6]u8 = @splat(0),
 };
 pub const mpc_ioapic = extern struct {
     type: u8 = 0,
@@ -1314,12 +1334,12 @@ pub const mpc_lintsrc = extern struct {
     destapiclint: u8 = 0,
 };
 pub const mpc_table = extern struct {
-    signature: [4]u8 = .{0} ** 4,
+    signature: [4]u8 = @splat(0),
     length: u16 = 0,
     spec: u8 = 0,
     checksum: u8 = 0,
-    oem: [8]u8 = .{0} ** 8,
-    productid: [12]u8 = .{0} ** 12,
+    oem: [8]u8 = @splat(0),
+    productid: [12]u8 = @splat(0),
     oemptr: u32 = 0,
     oemsize: u16 = 0,
     oemcount: u16 = 0,
@@ -1327,17 +1347,17 @@ pub const mpc_table = extern struct {
     reserved: u32 = 0,
 };
 pub const boot_params = extern struct {
-    _0: [0x1e8]u8 = .{0} ** 0x1e8,
+    _0: [0x1e8]u8 = @splat(0),
     // 0x1e8
     e820_entries: u8 align(1) = 0,
-    _1: [0x1f1 - 0x1e8 - @sizeOf(u8)]u8 = .{0} ** (0x1f1 - 0x1e8 - @sizeOf(u8)),
+    _1: [0x1f1 - 0x1e8 - @sizeOf(u8)]u8 = @splat(0),
     // 0x1f1
     hdr: setup_header align(1) = .{},
-    _2: [0x2d0 - 0x1f1 - @sizeOf(setup_header)]u8 = .{0} ** (0x2d0 - 0x1f1 - @sizeOf(setup_header)),
+    _2: [0x2d0 - 0x1f1 - @sizeOf(setup_header)]u8 = @splat(0),
     // 0x2d0
-    e820_table: [128]boot_e820_entry align(1) = .{boot_e820_entry{}} ** 128,
+    e820_table: [128]boot_e820_entry align(1) = @splat(.{}),
     // other fields follow
-    _3: [816]u8 = .{0} ** 816,
+    _3: [816]u8 = @splat(0),
 };
 // Can this be used for pmem?
 // pub const E820_PMEM = @as(c_int, 7);
@@ -1433,9 +1453,9 @@ fn clean_return_type(comptime function: anytype) type {
 pub fn args_fmt(comptime args_type: type) []const u8 {
     var s: []const u8 = "";
     const args_type_info = @typeInfo(args_type);
-    inline for (args_type_info.@"struct".fields, 0..) |field, i| {
+    inline for (args_type_info.@"struct".field_types, 0..) |field_type, i| {
         const template = std.fmt.comptimePrint("\n{d}: ", .{i});
-        switch (field.type) {
+        switch (field_type) {
             []const u8 => s = s ++ template ++ "{s}",
             i8, u8, i16, u16, i32, u32, i64, u64 => s = s ++ template ++ "{d}",
             else => s = s ++ template ++ "{any}",
@@ -1445,11 +1465,11 @@ pub fn args_fmt(comptime args_type: type) []const u8 {
 }
 
 pub fn make_struct(comptime T: type, comptime Err: type) type {
-    const type_fields = comptime @typeInfo(T).@"struct".fields;
-    // var fields: [type_fields.len + 2]std.builtin.Type.StructField = undefined;
-    var field_names: [type_fields.len + 2][]const u8 = undefined;
-    var field_types: [type_fields.len + 2]type = undefined;
-    var field_attrs: [type_fields.len + 2]std.builtin.Type.StructField.Attributes = undefined;
+    const type_info = comptime @typeInfo(T).@"struct";
+    const fields_count = type_info.field_names.len;
+    var field_names: [fields_count + 2][]const u8 = undefined;
+    var field_types: [fields_count + 2]type = undefined;
+    var field_attrs: [fields_count + 2]std.lang.Type.Struct.FieldAttributes = undefined;
 
     field_names[0] = "0";
     field_types[0] = []const u8;
@@ -1465,14 +1485,10 @@ pub fn make_struct(comptime T: type, comptime Err: type) type {
         .@"align" = @alignOf(Err),
         .default_value_ptr = null,
     };
-    for (type_fields, 2..) |f, i| {
+    for (type_info.field_types, type_info.field_attrs, 2..) |field_type, field_attr, i| {
         field_names[i] = std.fmt.comptimePrint("{d}", .{i});
-        field_types[i] = f.type;
-        field_attrs[i] = .{
-            .@"comptime" = f.is_comptime,
-            .@"align" = f.alignment,
-            .default_value_ptr = f.default_value_ptr,
-        };
+        field_types[i] = field_type;
+        field_attrs[i] = field_attr;
     }
 
     return @Struct(
@@ -1485,7 +1501,7 @@ pub fn make_struct(comptime T: type, comptime Err: type) type {
 }
 
 pub fn fill_struct(comptime T: type, fn_name: []const u8, e: anytype, args: anytype) T {
-    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".fields;
+    const args_fields = comptime @typeInfo(@TypeOf(args)).@"struct".field_names;
     var t: T = undefined;
 
     @field(t, "0") = fn_name;
@@ -1500,7 +1516,7 @@ pub fn fill_struct(comptime T: type, fn_name: []const u8, e: anytype, args: anyt
 }
 
 pub inline fn assert(
-    comptime src: std.builtin.SourceLocation,
+    comptime src: std.lang.SourceLocation,
     comptime S: type,
     comptime function_name: []const u8,
     args: std.meta.ArgsTuple(@TypeOf(@field(S, function_name))),
@@ -1548,33 +1564,7 @@ test "test_bindings" {
         }
     };
 
-    const C = @cImport({
-        @cInclude("linux/kvm.h");
-        @cInclude("linux/if.h");
-        @cInclude("linux/if_tun.h");
-        @cInclude("linux/vhost.h");
-        @cInclude("linux/virtio_ring.h");
-        @cInclude("linux/virtio_config.h");
-        @cInclude("linux/virtio_blk.h");
-        @cInclude("linux/virtio_net.h");
-        @cInclude("linux/virtio_mmio.h");
-
-        // x64
-        if (builtin.cpu.arch == .x86_64) {
-            @cInclude("linux/elf.h");
-            @cInclude("asm/bootparam.h");
-            @cInclude("asm/setup_data.h");
-            @cInclude("asm/e820.h");
-            // @cInclude("mpspec_def.h");
-            // @cInclude("asm/apicdef.h");
-        }
-
-        @cInclude("sys/epoll.h");
-        @cInclude("sys/eventfd.h");
-        @cInclude("fcntl.h");
-        @cInclude("signal.h");
-        @cInclude("pthread.h");
-    });
+    const C = @import("linux_bindings");
 
     try std.testing.expectEqual(KVMIO, C.KVMIO);
     try std.testing.expectEqual(_IOC_NRBITS, C._IOC_NRBITS);
