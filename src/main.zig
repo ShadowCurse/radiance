@@ -44,20 +44,53 @@ const x64_boot = @import("x64_boot.zig");
 const Gicv2 = @import("gicv2.zig");
 const Rtc = @import("devices/rtc.zig");
 
+// default impl uses std.Io.Threaded which bloats the binary
+fn log_std(
+    comptime level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = level;
+    _ = scope;
+    log.err(@src(), format, args);
+}
+
 pub const std_options = std.Options{
     .page_size_min = build_options.host_page_size,
+    .allow_stack_tracing = builtin.mode == .debug,
+    .signal_stack_size = null,
+    .networking = false,
+    .logFn = log_std,
 };
+
+pub const std_options_debug_threaded_io: ?*std.Io.Threaded = if (builtin.mode == .fast)
+    null
+else
+    std.Io.Threaded.global_single_threaded;
 
 pub const log_options = log.Options{
     .level = .info,
     .colors = true,
+    .assert_message = builtin.mode == .debug,
+    .assert_mode = .{ .exit = -1 },
 };
 
 pub const profiler_options = profiler.Options{
     .enabled = false,
 };
 
-// pub const panic = if (builtin.mode == .ReleaseFast) std.debug.simple_panic else void;
+// std.debug.simple_panic uses std.Io.Threaded which bloats the binary
+fn panic_small(message: []const u8, _: ?usize) noreturn {
+    @branchHint(.cold);
+    _ = nix.System.write(std.posix.STDERR_FILENO, message) catch {};
+    nix.System.exit_group(-1);
+}
+
+pub const panic = if (builtin.mode == .fast)
+    std.debug.FullPanic(panic_small)
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
 
 pub const MEASUREMENTS = profiler.Measurements("main", &.{
     "build_from_config",

@@ -85,6 +85,9 @@ pub fn syscall_ret_to_system_error(r: usize) SystemError!void {
 }
 
 pub const System = struct {
+    pub fn exit_group(status: i32) noreturn {
+        std.os.linux.exit_group(status);
+    }
     pub fn epoll_ctl(
         epfd: i32,
         op: u32,
