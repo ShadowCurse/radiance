@@ -18,6 +18,7 @@ pub const Options = struct {
     colors: bool = true,
     level: LogLevel = .info,
     assert_message: bool = true,
+    assert_mode: union(enum) { panic, trap, exit: i32 } = .panic,
     buffer_size: u32 = 256,
 
     const Self = @This();
@@ -86,20 +87,31 @@ pub fn assert(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (comptime !options.assert_message) {
-        if (!ok) {
-            @branchHint(.cold);
-            @trap();
-        }
-    } else {
-        if (!ok) {
-            @branchHint(.cold);
-            const T = make_struct(@TypeOf(args));
-            const t = fill_struct(T, src.file, src.line, args);
-            if (comptime options.colors)
-                std.debug.panic(RED ++ "[{s}:{}:ASSERT][{d}] " ++ format ++ DEFAULT_COLOR, t)
-            else
-                std.debug.panic("[{s}:{}:ASSERT][{d}] " ++ format, t);
+    if (!ok) {
+        @branchHint(.cold);
+
+        const T = make_struct(@TypeOf(args));
+        const t = fill_struct(T, src.file, src.line, args);
+        const message = if (comptime options.colors)
+            RED ++ "[{s}:{}:ASSERT][{d}] " ++ format ++ DEFAULT_COLOR
+        else
+            "[{s}:{}:ASSERT][{d}] " ++ format;
+
+        switch (options.assert_mode) {
+            .panic => {
+                if (comptime options.assert_message) {
+                    std.debug.panic(message, t);
+                } else {
+                    std.debug.panic("", .{});
+                }
+            },
+            .trap => @trap(),
+            .exit => |status| {
+                if (comptime options.assert_message) {
+                    output(message, t);
+                }
+                std.os.linux.exit_group(status);
+            },
         }
     }
 }
